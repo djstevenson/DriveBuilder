@@ -1,0 +1,6 @@
+        <svg viewBox="0 0 120 120" width="420" height="420" role="img">
+            <title >Altitude</title>
+            <g fill="#111" stroke="none">
+                <path d="M10 90 L35 50 L55 70 L75 30 L100 90 Z" />
+            </g>
+        </svg>

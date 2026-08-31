@@ -1,0 +1,12 @@
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+
+# Don't include OS data
+Sources/DriveBuilder/Resources/opname_gb.gpkg
+Sources/DriveBuilder/Resources/oproad_gb.gpkg

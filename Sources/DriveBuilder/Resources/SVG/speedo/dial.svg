@@ -1,0 +1,47 @@
+<svg viewBox="0 0 120 120" width="420" height="420" role="img">
+
+    <circle cx="60" cy="60" r="50" fill="white" stroke="#333" stroke-width="8"/>
+
+    <g stroke="#111" stroke-width="1" stroke-linecap="round">
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(-130 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(-97.5 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(-65 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(-32.5 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(0 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(32.5 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(65 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(97.5 60 60)"/>
+        <line x1="60" y1="14" x2="60" y2="19" transform="rotate(130 60 60)"/>
+    </g>
+
+    <circle cx="60" cy="60" r="6"
+        fill="#d8d8d8"
+        stroke="#666"
+        stroke-width="1.2"/>
+
+    <circle cx="58" cy="58" r="2"
+        fill="white"
+        opacity="0.55"/>
+
+    <!-- speed labels (uppercase-style bold, rendered last so they aren't overlapped) -->
+    <g fill="#111" font-family="sans-serif" font-size="9" font-weight="bold" text-anchor="middle" dominant-baseline="middle">
+        <text x="34.0" y="81.9">0</text>
+        <text x="26.3" y="64.4">10</text>
+        <text x="29.2" y="45.6">20</text>
+        <text x="41.7" y="31.3">30</text>
+        <text x="60.0" y="26.0">40</text>
+        <text x="78.3" y="31.3">50</text>
+        <text x="90.8" y="45.6">60</text>
+        <text x="93.7" y="64.4">70</text>
+        <text x="86.0" y="81.9">80</text>
+    </g>
+
+    <text x="60" y="90"
+        font-family="sans-serif"
+        text-anchor="middle"
+        font-size="9"
+        fill="#111">
+        mph
+    </text>
+
+</svg>
