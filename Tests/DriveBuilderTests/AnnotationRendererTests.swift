@@ -31,11 +31,11 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
     let renderer = AnnotationRenderer(text: "Test")
     let textWidth = AnnotationRenderer.textWidth(of: renderer.textLine)
 
-    let duration = 0.7 + Double(3840 + textWidth) / 300.0 + 0.7
+    let duration = 0.7 + Double(3840 + textWidth) / 540.0 + 0.7
     #expect(renderer.frameCount == Int((duration * 30).rounded(.up)) + 1)
-    // The advance of "Test" in bold 42px Helvetica plus the padding.
-    #expect(textWidth > 100)
-    #expect(textWidth < 250)
+    // The advance of "Test" in bold 92px Helvetica plus the padding.
+    #expect(textWidth > 200)
+    #expect(textWidth < 500)
 }
 
 @Test func bannerOpensFromTwoLinesMeetingAtTheCentre() throws {
@@ -45,11 +45,11 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
     // At t = 0 the two lines coincide at the centre; everything else is
     // transparent.
     let first = try renderer.frame(at: 0, artwork: artwork)
-    #expect(isBorderGreen(colour(first, 10, 40)))
-    #expect(isTransparent(colour(first, 10, 30)))
-    #expect(isTransparent(colour(first, 10, 50)))
+    #expect(isBorderGreen(colour(first, 10, 80)))
+    #expect(isTransparent(colour(first, 10, 70)))
+    #expect(isTransparent(colour(first, 10, 90)))
     #expect(isTransparent(colour(first, 10, 0)))
-    #expect(isTransparent(colour(first, 10, 79)))
+    #expect(isTransparent(colour(first, 10, 159)))
 }
 
 @Test func openBannerHasGreenEdgesAndABlackBand() throws {
@@ -61,21 +61,21 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
     let frame = try renderer.frame(at: 30, artwork: artwork)
     #expect(isBorderGreen(colour(frame, 100, 0)))
     #expect(isBorderGreen(colour(frame, 100, 1)))
-    #expect(isBlack(colour(frame, 100, 40)))
-    #expect(isBorderGreen(colour(frame, 100, 78)))
-    #expect(isBorderGreen(colour(frame, 100, 79)))
+    #expect(isBlack(colour(frame, 100, 80)))
+    #expect(isBorderGreen(colour(frame, 100, 158)))
+    #expect(isBorderGreen(colour(frame, 100, 159)))
 }
 
 @Test func textScrollsAcrossInYellow() throws {
     let renderer = AnnotationRenderer(text: "Test")
     let artwork = try renderer.makeArtwork()
 
-    // t = 7.5s: the text (which entered at the right edge at t = 0.7 and
-    // scrolls at 300 px/s) sits around x = 1800, well inside the frame.
-    let frame = try renderer.frame(at: 225, artwork: artwork)
+    // t ≈ 4.47s: the text (which entered at the right edge at t = 0.7 and
+    // scrolls at 540 px/s) sits around x = 1806, well inside the frame.
+    let frame = try renderer.frame(at: 134, artwork: artwork)
     var sawYellow = false
-    for y in 10..<70 {
-        for x in stride(from: 1700, to: 2200, by: 2) {
+    for y in 10..<150 {
+        for x in stride(from: 1700, to: 2600, by: 2) {
             guard let colour = colour(frame, x, y) else { continue }
             if colour.redComponent > 0.8 && colour.greenComponent > 0.8
                 && colour.blueComponent < 0.3
@@ -92,7 +92,7 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
     let artwork = try renderer.makeArtwork()
 
     let last = try renderer.frame(at: renderer.frameCount - 1, artwork: artwork)
-    for (x, y) in [(0, 0), (1920, 40), (3839, 79), (100, 1), (100, 78)] {
+    for (x, y) in [(0, 0), (1920, 80), (3839, 159), (100, 1), (100, 158)] {
         #expect(isTransparent(colour(last, x, y)))
     }
 }

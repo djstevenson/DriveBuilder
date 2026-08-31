@@ -16,7 +16,7 @@ struct AnnotationRenderer {
     let text: String
 
     var width = 3840
-    var height = 80
+    var height = 160
     var framesPerSecond: Int32 = 30
 
     /// Seconds for the lines to open before, and close after, the scroll.
@@ -24,7 +24,7 @@ struct AnnotationRenderer {
     static let closeSeconds = 0.7
 
     /// How fast the text scrolls, in pixels per second.
-    static let scrollSpeed = 300.0
+    static let scrollSpeed = 540.0
 
     /// Thickness of each green boundary line.
     static let lineHeight = 2
@@ -32,7 +32,7 @@ struct AnnotationRenderer {
     /// Horizontal padding either side of the text's ink.
     static let textPadding = 24.0
 
-    static let fontSize = 42.0
+    static let fontSize = 92.0
 
     static let borderColour = CGColor(
         srgbRed: 0x66 / 255, green: 0x99 / 255, blue: 0x33 / 255, alpha: 1)
