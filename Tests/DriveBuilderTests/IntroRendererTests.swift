@@ -38,6 +38,22 @@ private func isMidGrey(_ colour: NSColor?, alpha: Double = 1) -> Bool {
         && abs(colour.blueComponent - 0.5) < 0.05 && abs(colour.alphaComponent - alpha) < 0.1
 }
 
+/// True if `colour` is a fully opaque blend of the sign's green and white
+/// text, `fraction` of the way from green to white - the look of white text
+/// fading in over the sign's already-opaque green interior (rather than the
+/// text's own alpha channel dropping, since there's no transparency left to
+/// carry that).
+private func isGreenWhiteBlend(_ colour: NSColor?, whiteFraction: Double) -> Bool {
+    guard let colour else { return false }
+    let expectedRed = whiteFraction
+    let expectedGreen = 0.502 + (1 - 0.502) * whiteFraction
+    let expectedBlue = whiteFraction
+    return abs(colour.redComponent - expectedRed) < 0.1
+        && abs(colour.greenComponent - expectedGreen) < 0.1
+        && abs(colour.blueComponent - expectedBlue) < 0.1
+        && abs(colour.alphaComponent - 1) < 0.1
+}
+
 /// True if any sampled pixel in the horizontal band around vertical centre
 /// is yellow ink, without depending on exactly where a proportional font
 /// places any particular glyph.
@@ -99,8 +115,8 @@ private func hasInk(
         IntroRenderer(roadType: "B", roadNumber: 9999, title: "Test Drive").roadText == "B9999")
 }
 
-@Test func frameCountCoversAllFourPhases() {
-    #expect(IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive").frameCount == 10 + 60 + 90 + 10)
+@Test func frameCountCoversAllThreePhases() {
+    #expect(IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive").frameCount == 10 + 60 + 90)
 }
 
 @Test func randomRoadTextMatchesTheRequestedDigitCount() {
@@ -151,29 +167,26 @@ private func hasInk(
     #expect(isTransparent(colour(frame, 830, 160)))
 }
 
-@Test func openBadgeShowsTheCreditLineWithTheDestinationsStillBlank() throws {
+@Test func openBadgeShowsNeitherTheDestinationsNorTheCreditLine() throws {
     let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     let artwork = try renderer.makeArtwork()
-    // Last fade-in frame: fully opaque. On the default canvas the two
+    // Last fade-in frame: fully opaque badge. On the default canvas the two
     // destination-line rows are bitmap rows 341...425, top-left origin, and
-    // the credit line's row is 433...461, both inside the sign itself. The
-    // destinations only appear once the spin starts, so they're still blank
-    // here; the credit line fades in with the sign.
+    // the credit line's row is 433...461, both inside the sign itself. Both
+    // stay blank until later: destinations appear once the spin starts, and
+    // the credit line only fades in partway through the reveal.
     let frame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
 
     #expect(!hasInk(frame, bitmapYRange: 341...425) { isWhite($0) })
-    #expect(hasInk(frame, bitmapYRange: 433...461) { isWhite($0) })
+    #expect(!hasInk(frame, bitmapYRange: 433...461) { isWhite($0) })
 }
 
-@Test func creditLineFadesInWithTheBadgeWhileDestinationsStayBlank() throws {
+@Test func creditLineStaysBlankThroughTheSpin() throws {
     let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     let artwork = try renderer.makeArtwork()
-    // Frame 5 of 10 fade-in frames: fraction 5/9, matching
-    // midFadeInFrameIsPartiallyTransparent's check on the badge itself.
-    let frame = try renderer.frame(at: 5, artwork: artwork)
+    let frame = try renderer.frame(at: IntroRenderer.fadeInFrames + 10, artwork: artwork)
 
-    #expect(!hasInk(frame, bitmapYRange: 341...425) { isWhite($0) })
-    #expect(hasInk(frame, bitmapYRange: 433...461) { isWhite($0, alpha: 5.0 / 9.0) })
+    #expect(!hasInk(frame, bitmapYRange: 433...461) { isWhite($0) })
 }
 
 @Test func spinFrameShowsRandomDigitsOverTheOpenBadge() throws {
@@ -253,13 +266,44 @@ private func hasInk(
     #expect(hasYellowNearCentre(frame))
 }
 
-@Test func fadeOutEndsFullyTransparent() throws {
+@Test func creditLineIsStillBlankRightAfterTheReveal() throws {
+    let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
+    let artwork = try renderer.makeArtwork()
+    let frame = try renderer.frame(
+        at: IntroRenderer.fadeInFrames + IntroRenderer.spinFrames + 5, artwork: artwork)
+
+    #expect(!hasInk(frame, bitmapYRange: 433...461) { isWhite($0) })
+}
+
+@Test func creditLineFadesInPartwayThroughTheReveal() throws {
+    let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
+    let artwork = try renderer.makeArtwork()
+    // 7 of 15 credit-fade frames in, after the delay: fraction 7/14.
+    let frame = try renderer.frame(
+        at: IntroRenderer.fadeInFrames + IntroRenderer.spinFrames
+            + IntroRenderer.creditFadeInDelayFrames + 7, artwork: artwork)
+
+    #expect(hasInk(frame, bitmapYRange: 433...461) { isGreenWhiteBlend($0, whiteFraction: 7.0 / 14.0) })
+}
+
+@Test func creditLineIsFullyOpaqueOnceItsFadeCompletes() throws {
+    let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
+    let artwork = try renderer.makeArtwork()
+    let frame = try renderer.frame(
+        at: IntroRenderer.fadeInFrames + IntroRenderer.spinFrames
+            + IntroRenderer.creditFadeInDelayFrames + IntroRenderer.creditFadeInFrames + 5,
+        artwork: artwork)
+
+    #expect(hasInk(frame, bitmapYRange: 433...461) { isWhite($0) })
+}
+
+@Test func lastFrameHoldsTheRevealedSignAtFullOpacity() throws {
     let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     let artwork = try renderer.makeArtwork()
     let last = try renderer.frame(at: renderer.frameCount - 1, artwork: artwork)
 
-    #expect(isTransparent(colour(last, 420, 160)))
-    #expect(isTransparent(colour(last, 27, 160)))
+    #expect(isGreen(colour(last, 420, 160)))
+    #expect(isGreen(colour(last, 27, 160)))
 }
 
 /// An end-to-end check that the intro command reads the road straight from

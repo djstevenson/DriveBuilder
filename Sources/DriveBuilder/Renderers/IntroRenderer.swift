@@ -6,12 +6,13 @@ import Foundation
 /// Builds the road-number intro sign: a green-and-white rounded-rectangle
 /// frame (styled after a UK road sign) that fades in, then shows a
 /// slot-machine spin of random real roads (number and destinations
-/// together) before landing on the real road number and destinations, then
-/// fades out. Below the road number, on the sign itself, two left-aligned
+/// together) before landing on the real road number and destinations,
+/// then holding there (no fade-out, so it can cross-fade into the next
+/// clip). Below the road number, on the sign itself, two left-aligned
 /// destination lines (split from the journey's "X to Y" title) fade in with
-/// the spin, and a fixed credit line sits below those. The whole sign is
-/// centred both horizontally and vertically on the canvas; the area outside
-/// it stays transparent.
+/// the spin, and a credit line fades in below those a little after the
+/// final road is revealed. The whole sign is centred both horizontally and
+/// vertically on the canvas; the area outside it stays transparent.
 struct IntroRenderer {
     static let dialName = "Intro"
 
@@ -51,10 +52,15 @@ struct IntroRenderer {
     static let fadeInFrames = 10
     static let spinFrames = 60
     static let revealFrames = 90
-    static let fadeOutFrames = 10
+
+    /// How far into the reveal the credit line waits before it starts
+    /// fading in, so it appears once the final road has had a moment to
+    /// register, and how long that fade takes.
+    static let creditFadeInDelayFrames = 20
+    static let creditFadeInFrames = 15
 
     var frameCount: Int {
-        Self.fadeInFrames + Self.spinFrames + Self.revealFrames + Self.fadeOutFrames
+        Self.fadeInFrames + Self.spinFrames + Self.revealFrames
     }
 
     /// The canvas the layout below was designed at. `width`/`height` can be
@@ -204,12 +210,13 @@ struct IntroRenderer {
         return (String(title[..<range.lowerBound]), String(title[range.upperBound...]))
     }
 
-    /// Precomputed once and reused across frames: the sign with just the
-    /// fixed credit line and no road number or destinations (used while
-    /// fading in, and as the base for every spin frame, since the number and
-    /// destinations there change every frame), and the sign with the real
-    /// road number and destinations both added on top (used unchanged for
-    /// every reveal frame, and faded as a single image while fading out).
+    /// Precomputed once and reused across frames: the bare badge with no
+    /// credit line, road number, or destinations (used while fading in, and
+    /// as the base for every spin frame, since the number and destinations
+    /// there change every frame), and the sign with the real road number and
+    /// destinations added on top but the credit line still absent (used
+    /// unchanged for the reveal, until the credit line fades in on top of it
+    /// part-way through and stays for the rest of the clip).
     struct Artwork {
         let blankBadge: CGImage
         let revealed: CGImage
@@ -223,7 +230,6 @@ struct IntroRenderer {
 
         let blankBadgeContext = try LayerCompositor.bitmapContext(width: width, height: height)
         drawBadge(into: blankBadgeContext)
-        drawCreditLine(into: blankBadgeContext)
         guard let blankBadge = blankBadgeContext.makeImage() else {
             throw SVGRasterizerError.contextUnavailable
         }
@@ -243,15 +249,18 @@ struct IntroRenderer {
 
     // MARK: - Drawing
 
-    /// Draws frame `index` into `context`: the sign fading in, the spin, the
-    /// reveal, then the whole sign fading out.
+    /// Draws frame `index` into `context`: the sign fading in, the spin,
+    /// then the reveal - held for the rest of the clip, with the credit
+    /// line fading in on top of it partway through.
     ///
     /// The spin's digits (and, when `artwork.spinSequence` isn't empty, its
     /// destinations) are drawn fresh for every frame, directly into
     /// `context` on top of the opaque sign, since full-opacity draws can be
-    /// layered safely; the faded phases instead draw a single
-    /// pre-flattened image, since fading the sign and text separately at
-    /// the same fractional alpha would double-blend where they overlap.
+    /// layered safely; the fade-in instead draws a single pre-flattened
+    /// image, since fading the sign and text separately at the same
+    /// fractional alpha would double-blend where they overlap. The credit
+    /// line fades in the same direct way, since it never overlaps the
+    /// number or destinations it's drawn on top of.
     func draw(frameIndex: Int, into context: CGContext, artwork: Artwork) {
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
@@ -277,14 +286,18 @@ struct IntroRenderer {
                 drawNumber(entry.roadText, into: context)
                 drawDestinations(entry.title, into: context)
             }
-        } else if frameIndex < Self.fadeInFrames + Self.spinFrames + Self.revealFrames {
-            context.draw(artwork.revealed, in: canvas)
         } else {
-            let fadeOutFrame = frameIndex - Self.fadeInFrames - Self.spinFrames - Self.revealFrames
-            let fraction = 1 - Double(fadeOutFrame) / Double(Self.fadeOutFrames - 1)
-            context.setAlpha(max(0, fraction))
             context.draw(artwork.revealed, in: canvas)
-            context.setAlpha(1)
+            let revealFrame = frameIndex - Self.fadeInFrames - Self.spinFrames
+            let creditFrame = revealFrame - Self.creditFadeInDelayFrames
+            if creditFrame >= Self.creditFadeInFrames {
+                drawCreditLine(into: context)
+            } else if creditFrame >= 0 {
+                let fraction = Double(creditFrame) / Double(Self.creditFadeInFrames - 1)
+                context.setAlpha(fraction)
+                drawCreditLine(into: context)
+                context.setAlpha(1)
+            }
         }
     }
 
