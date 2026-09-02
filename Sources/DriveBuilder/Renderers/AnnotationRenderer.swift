@@ -39,12 +39,7 @@ struct AnnotationRenderer {
     static let backgroundColour = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
     static let textColour = CGColor(srgbRed: 1, green: 1, blue: 0, alpha: 1)
 
-    /// The Perl rendered with Cairo's bold Helvetica; fall back to the system
-    /// bold face if it's ever unavailable rather than failing the render.
-    static var font: NSFont {
-        NSFont(name: "Helvetica-Bold", size: fontSize)
-            ?? NSFont.boldSystemFont(ofSize: fontSize)
-    }
+    static var font: NSFont { NSFont.transport(size: fontSize) }
 
     /// The text rendered once; every frame composites it at a different x.
     struct Artwork {
@@ -94,14 +89,12 @@ struct AnnotationRenderer {
 
         let context = try LayerCompositor.bitmapContext(width: textWidth, height: height)
 
-        // Centre the font's ascent+descent box vertically in the banner.
-        // The context has a bottom-left origin, so the baseline sits its
-        // descent-plus-margin above the bottom edge.
-        let ascent = CTFontGetAscent(Self.font)
-        let descent = CTFontGetDescent(Self.font)
-        let baselineY = (Double(height) - (ascent + descent)) / 2 + descent
-
+        // Centre the glyphs' actual ink vertically in the banner, rather
+        // than the font's ascent/descent metrics - for some fonts (e.g.
+        // Transport) those don't match where the glyphs are actually drawn.
         let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
+        let baselineY = (Double(height) - ink.height) / 2 - ink.minY
+
         context.textPosition = CGPoint(
             x: Self.textPadding - min(ink.minX, 0), y: baselineY)
         CTLineDraw(line, context)

@@ -3,13 +3,15 @@ import CoreGraphics
 import CoreText
 import Foundation
 
-/// Builds the road-number intro badge: a green-and-white rounded-rectangle
+/// Builds the road-number intro sign: a green-and-white rounded-rectangle
 /// frame (styled after a UK road sign) that fades in, then shows a
-/// slot-machine spin of random real roads (number and title together)
-/// before landing on the real road number and title, then fades out. Below
-/// the badge, a fixed credit line fades in with it, but the title itself
-/// stays blank until the spin starts. The area outside the frame stays
-/// transparent.
+/// slot-machine spin of random real roads (number and destinations
+/// together) before landing on the real road number and destinations, then
+/// fades out. Below the road number, on the sign itself, two left-aligned
+/// destination lines (split from the journey's "X to Y" title) fade in with
+/// the spin, and a fixed credit line sits below those. The whole sign is
+/// centred both horizontally and vertically on the canvas; the area outside
+/// it stays transparent.
 struct IntroRenderer {
     static let dialName = "Intro"
 
@@ -18,7 +20,9 @@ struct IntroRenderer {
     let roadType: String
     let roadNumber: Int
 
-    /// The journey's title, as recorded in the database, shown below the badge.
+    /// The journey's title, as recorded in the database, e.g. "Caversham to
+    /// Littlemore" - split on " to " into two left-aligned destination lines
+    /// shown below the road number.
     let title: String
 
     /// One road to show during the slot-machine spin: its number (e.g.
@@ -29,17 +33,19 @@ struct IntroRenderer {
         let title: String
     }
 
-    /// Other real roads to cycle through during the spin, so the title
-    /// animates in sync with the spinning number rather than sitting fixed
-    /// on the real journey's title throughout. Empty falls back to the
-    /// original random-digits-only spin with the real title held fixed.
+    /// Other real roads to cycle through during the spin, so the
+    /// destinations animate in sync with the spinning number rather than
+    /// sitting fixed on the real journey's destinations throughout. Empty
+    /// falls back to the original random-digits-only spin with the real
+    /// destinations held fixed.
     var spinEntries: [SpinEntry] = []
 
-    /// Shown below the title, smaller and in a lighter colour.
-    static let creditText = "A drive by Mekyrdo"
+    /// Shown below the destination lines, smaller, in the same white as the
+    /// rest of the sign's text.
+    static let creditText = "By Mekydro"
 
     var width = 840
-    var height = 420
+    var height = 526
     var framesPerSecond: Int32 = 30
 
     static let fadeInFrames = 10
@@ -53,18 +59,19 @@ struct IntroRenderer {
 
     /// The canvas the layout below was designed at. `width`/`height` can be
     /// set to any size (e.g. to render nearly full-screen); everything is
-    /// scaled from this reference so the badge keeps its proportions. Taller
-    /// than the badge alone needs (840x320), so there's room below it for
-    /// the title and credit line.
+    /// scaled from this reference so the sign keeps its proportions. Taller
+    /// than the sign's own footprint by `designVerticalMargin` on each side,
+    /// so the sign sits centred with breathing room around it.
     static let designWidth = 840.0
-    static let designHeight = 420.0
+    static let designHeight =
+        designBadgeHeight + 2 * designOuterStrokeHalfWidth + 2 * designVerticalMargin
 
     /// A 4K (UHD, 3840px-wide) screen's width; used to size the intro for
     /// near-full-screen display.
     static let uhd4KWidth = 3840.0
 
     /// Width and height for rendering at 80% of a 4K screen's width, with
-    /// height scaled to preserve the badge's design aspect ratio.
+    /// height scaled to preserve the sign's design aspect ratio.
     static var wideScreenSize: (width: Int, height: Int) {
         let width = Int((uhd4KWidth * 0.8).rounded())
         return (width: width, height: height(forWidth: width))
@@ -79,55 +86,86 @@ struct IntroRenderer {
     /// design-space measurement below is multiplied by this before drawing.
     private var scale: Double { Double(width) / Self.designWidth }
 
-    /// The badge rect from the SVG template, its 40px side margins matching
-    /// exactly, and its original 30px top margin (from the SVG template's
-    /// vertical centring, when the canvas was only as tall as the badge)
-    /// preserved here at the top of the taller canvas above - the extra
-    /// height all becomes room below the badge, for the title and credit
-    /// line.
-    static let designBadgeTopMargin = 30.0
-    static let designBadgeRect = CGRect(
-        x: 40, y: designHeight - designBadgeTopMargin - 260, width: 760, height: 260)
+    /// Space kept clear around the visible sign (its outer stroke's edge),
+    /// equal on every side, so it lands centred on the canvas.
+    static let designVerticalMargin = 30.0
+    static let designBadgeSideMargin = 40.0
     static let designBadgeCornerRadius = 32.0
 
     private var badgeRect: CGRect {
-        Self.designBadgeRect.applying(CGAffineTransform(scaleX: scale, y: scale))
+        let designRect = CGRect(
+            x: Self.designBadgeSideMargin,
+            y: (Self.designHeight - Self.designBadgeHeight) / 2,
+            width: Self.designWidth - 2 * Self.designBadgeSideMargin,
+            height: Self.designBadgeHeight)
+        return designRect.applying(CGAffineTransform(scaleX: scale, y: scale))
     }
     private var badgeCornerRadius: Double { Self.designBadgeCornerRadius * scale }
 
-    /// The badge's outer green stroke extends `outerStrokeHalfWidth` beyond
-    /// `badgeRect` itself, so this - not `badgeRect.minY` - is where the
-    /// badge is actually visible down to.
-    private var visibleBadgeBottom: Double { badgeRect.minY - outerStrokeHalfWidth }
+    /// Padding at the top and bottom of the sign's interior, around the
+    /// road number and the destination/credit lines.
+    static let designContentTopPadding = 20.0
+    static let designContentBottomPadding = 20.0
 
-    /// The strip below the visible badge, freed by shifting it up, split
-    /// evenly between the title and the credit line.
-    private var titleBandMinY: Double { visibleBadgeBottom / 2 }
-    private var titleBandMaxY: Double { visibleBadgeBottom }
-    private var creditBandMinY: Double { 0 }
-    private var creditBandMaxY: Double { visibleBadgeBottom / 2 }
+    /// How far the destination and credit lines are indented from the
+    /// sign's left edge.
+    static let designContentLeftInset = 56.0
 
-    static let designTitleFontSize = 32.0
+    /// Row heights and gaps that make up the sign's interior, stacked from
+    /// the road number down to the credit line. Chosen generously enough
+    /// that each font's ascent+descent (measured at the design font sizes)
+    /// fits comfortably within its row.
+    static let designNumberRowHeight = 260.0
+    static let designGapAfterNumber = 16.0
+    static let designDestinationLineHeight = 42.0
+    static let designGapBeforeCredit = 8.0
+    static let designCreditLineHeight = 28.0
+
+    static let designBadgeHeight =
+        designContentTopPadding + designNumberRowHeight + designGapAfterNumber
+        + designDestinationLineHeight * 2 + designGapBeforeCredit + designCreditLineHeight
+        + designContentBottomPadding
+
+    private var contentTopPadding: Double { Self.designContentTopPadding * scale }
+    private var contentLeftInset: Double { Self.designContentLeftInset * scale }
+    private var numberRowHeight: Double { Self.designNumberRowHeight * scale }
+    private var gapAfterNumber: Double { Self.designGapAfterNumber * scale }
+    private var destinationLineHeight: Double { Self.designDestinationLineHeight * scale }
+    private var gapBeforeCredit: Double { Self.designGapBeforeCredit * scale }
+    private var creditLineHeight: Double { Self.designCreditLineHeight * scale }
+
+    /// The road number's row, at the top of the sign's interior.
+    private var numberBand: (minY: Double, maxY: Double) {
+        let maxY = badgeRect.maxY - contentTopPadding
+        return (maxY - numberRowHeight, maxY)
+    }
+
+    /// The first destination line's row, directly below the road number.
+    private var destinationLine1Band: (minY: Double, maxY: Double) {
+        let maxY = numberBand.minY - gapAfterNumber
+        return (maxY - destinationLineHeight, maxY)
+    }
+
+    /// The second destination line's row, directly below the first.
+    private var destinationLine2Band: (minY: Double, maxY: Double) {
+        let maxY = destinationLine1Band.minY
+        return (maxY - destinationLineHeight, maxY)
+    }
+
+    /// The credit line's row, at the bottom of the sign's interior.
+    private var creditBand: (minY: Double, maxY: Double) {
+        let maxY = destinationLine2Band.minY - gapBeforeCredit
+        return (maxY - creditLineHeight, maxY)
+    }
+
+    static let designDestinationFontSize = 32.0
     static let designCreditFontSize = 20.0
-    private var titleFontSize: Double { Self.designTitleFontSize * scale }
+    private var destinationFontSize: Double { Self.designDestinationFontSize * scale }
     private var creditFontSize: Double { Self.designCreditFontSize * scale }
 
-    static let titleColour = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
-    static let creditColour = CGColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+    private var destinationFont: NSFont { NSFont.transport(size: destinationFontSize) }
 
-    /// Bold oblique Helvetica for the title, falling back to a synthesised
-    /// bold-italic if that exact face isn't installed.
-    private var titleFont: NSFont {
-        NSFont(name: "Helvetica-BoldOblique", size: titleFontSize)
-            ?? NSFontManager.shared.font(
-                withFamily: "Helvetica", traits: [.boldFontMask, .italicFontMask], weight: 9,
-                size: titleFontSize)
-            ?? NSFont.boldSystemFont(ofSize: titleFontSize)
-    }
-
-    private var creditFont: NSFont {
-        NSFont(name: "Helvetica", size: creditFontSize) ?? NSFont.systemFont(ofSize: creditFontSize)
-    }
+    private var creditFont: NSFont { NSFont.transport(size: creditFontSize) }
 
     /// Half-widths of the template's two strokes (green 30, white 20), which
     /// is how far each extends outward from the badge rect's edge.
@@ -143,7 +181,7 @@ struct IntroRenderer {
 
     static let designFontSize = 200.0
     private var fontSize: Double { Self.designFontSize * scale }
-    private var font: NSFont { NSFont.boldSystemFont(ofSize: fontSize) }
+    private var font: NSFont { NSFont.transport(size: fontSize) }
 
     /// `roadType` followed by `roadNumber`, e.g. "A" and `3088` -> "A3088".
     var roadText: String { "\(roadType)\(roadNumber)" }
@@ -158,12 +196,20 @@ struct IntroRenderer {
         return roadType + digits
     }
 
-    /// Precomputed once and reused across frames: the badge with just the
-    /// fixed credit line and no title (used while fading in, and as the
-    /// base for every spin frame, since the title there changes every
-    /// frame), and the badge with the real title and road number both
-    /// added on top (used unchanged for every reveal frame, and faded as a
-    /// single image while fading out).
+    /// Splits a "X to Y" title into its two halves, e.g. "Caversham to
+    /// Littlemore" -> ("Caversham", "Littlemore"). Titles that don't contain
+    /// " to " (unexpected, but not fatal) come back as (title, "").
+    static func splitTitle(_ title: String) -> (first: String, second: String) {
+        guard let range = title.range(of: " to ") else { return (title, "") }
+        return (String(title[..<range.lowerBound]), String(title[range.upperBound...]))
+    }
+
+    /// Precomputed once and reused across frames: the sign with just the
+    /// fixed credit line and no road number or destinations (used while
+    /// fading in, and as the base for every spin frame, since the number and
+    /// destinations there change every frame), and the sign with the real
+    /// road number and destinations both added on top (used unchanged for
+    /// every reveal frame, and faded as a single image while fading out).
     struct Artwork {
         let blankBadge: CGImage
         let revealed: CGImage
@@ -184,8 +230,8 @@ struct IntroRenderer {
 
         let revealedContext = try LayerCompositor.bitmapContext(width: width, height: height)
         revealedContext.draw(blankBadge, in: canvas)
-        drawTitle(title, into: revealedContext)
-        drawText(roadText, into: revealedContext)
+        drawDestinations(title, into: revealedContext)
+        drawNumber(roadText, into: revealedContext)
         guard let revealed = revealedContext.makeImage() else {
             throw SVGRasterizerError.contextUnavailable
         }
@@ -197,15 +243,15 @@ struct IntroRenderer {
 
     // MARK: - Drawing
 
-    /// Draws frame `index` into `context`: the badge fading in, the spin,
-    /// the reveal, then the whole badge and text fading out together.
+    /// Draws frame `index` into `context`: the sign fading in, the spin, the
+    /// reveal, then the whole sign fading out.
     ///
     /// The spin's digits (and, when `artwork.spinSequence` isn't empty, its
-    /// title) are drawn fresh for every frame, directly into `context` on
-    /// top of the opaque badge, since full-opacity draws can be layered
-    /// safely; the faded phases instead draw a single pre-flattened image,
-    /// since fading badge and text separately at the same fractional alpha
-    /// would double-blend where they overlap.
+    /// destinations) are drawn fresh for every frame, directly into
+    /// `context` on top of the opaque sign, since full-opacity draws can be
+    /// layered safely; the faded phases instead draw a single
+    /// pre-flattened image, since fading the sign and text separately at
+    /// the same fractional alpha would double-blend where they overlap.
     func draw(frameIndex: Int, into context: CGContext, artwork: Artwork) {
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
@@ -219,17 +265,17 @@ struct IntroRenderer {
             let spinIndex = frameIndex - Self.fadeInFrames
             if artwork.spinSequence.isEmpty {
                 // No real roads to cycle through - fall back to the
-                // original random-digits spin, with no title (as when
-                // fading in) until the real one appears at the reveal.
+                // original random-digits spin, with no destinations (as
+                // when fading in) until the real ones appear at the reveal.
                 context.draw(artwork.blankBadge, in: canvas)
-                drawText(
+                drawNumber(
                     Self.randomRoadText(roadType: roadType, digitCount: String(roadNumber).count),
                     into: context)
             } else {
                 let entry = artwork.spinSequence[spinIndex % artwork.spinSequence.count]
                 context.draw(artwork.blankBadge, in: canvas)
-                drawText(entry.roadText, into: context)
-                drawTitle(entry.title, into: context)
+                drawNumber(entry.roadText, into: context)
+                drawDestinations(entry.title, into: context)
             }
         } else if frameIndex < Self.fadeInFrames + Self.spinFrames + Self.revealFrames {
             context.draw(artwork.revealed, in: canvas)
@@ -265,52 +311,85 @@ struct IntroRenderer {
         context.fillPath()
     }
 
-    /// Draws `string` in bold yellow, horizontally centred on the canvas and
-    /// vertically centred on the badge (which may not be centred on the
-    /// canvas itself, to leave room for the title below it).
-    private func drawText(_ string: String, into context: CGContext) {
+    /// Draws `string` in bold yellow, horizontally centred on the sign and
+    /// vertically centred in `numberBand`, at the top of the sign's
+    /// interior.
+    private func drawNumber(_ string: String, into context: CGContext) {
         drawCentredText(
             string, font: font, colour: Self.yellowColour,
-            bandMinY: badgeRect.minY, bandMaxY: badgeRect.maxY, into: context)
+            bandMinY: numberBand.minY, bandMaxY: numberBand.maxY, into: context)
     }
 
-    /// Draws `text` in the upper half of the strip freed by shifting the
-    /// badge up - the real title while fading in/reveal/fading out, or a
-    /// spin entry's title while spinning.
-    private func drawTitle(_ text: String, into context: CGContext) {
-        drawCentredText(
-            text, font: titleFont, colour: Self.titleColour,
-            bandMinY: titleBandMinY, bandMaxY: titleBandMaxY, into: context)
+    /// Splits `title` on " to " and draws the two halves as left-aligned
+    /// white lines below the road number - the real destinations while
+    /// fading in/reveal/fading out, or a spin entry's while spinning.
+    private func drawDestinations(_ title: String, into context: CGContext) {
+        let (first, second) = Self.splitTitle(title)
+        drawLeftAlignedText(
+            first, font: destinationFont, colour: Self.whiteColour,
+            bandMinY: destinationLine1Band.minY, bandMaxY: destinationLine1Band.maxY,
+            into: context)
+        drawLeftAlignedText(
+            second, font: destinationFont, colour: Self.whiteColour,
+            bandMinY: destinationLine2Band.minY, bandMaxY: destinationLine2Band.maxY,
+            into: context)
     }
 
-    /// Draws the fixed credit line in the lower half of that strip.
+    /// Draws the fixed credit line, left-aligned in white below the
+    /// destination lines.
     private func drawCreditLine(into context: CGContext) {
-        drawCentredText(
-            Self.creditText, font: creditFont, colour: Self.creditColour,
-            bandMinY: creditBandMinY, bandMaxY: creditBandMaxY, into: context)
+        drawLeftAlignedText(
+            Self.creditText, font: creditFont, colour: Self.whiteColour,
+            bandMinY: creditBand.minY, bandMaxY: creditBand.maxY, into: context)
     }
 
-    /// Draws `string` in `font`/`colour`, horizontally centred on the
-    /// canvas and vertically centred between `bandMinY` and `bandMaxY`.
+    /// Draws `string` in `font`/`colour`, horizontally centred on the sign
+    /// and vertically centred between `bandMinY` and `bandMaxY`.
     private func drawCentredText(
         _ string: String, font: NSFont, colour: CGColor, bandMinY: Double, bandMaxY: Double,
         into context: CGContext
     ) {
-        let line = CTLineCreateWithAttributedString(
+        let line = makeLine(string, font: font, colour: colour)
+        let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
+        drawLine(
+            line, ink: ink, x: Double(width) / 2 - (ink.minX + ink.width / 2),
+            bandMinY: bandMinY, bandMaxY: bandMaxY, into: context)
+    }
+
+    /// Draws `string` in `font`/`colour`, left-aligned at `contentLeftInset`
+    /// from the sign's left edge and vertically centred between `bandMinY`
+    /// and `bandMaxY`.
+    private func drawLeftAlignedText(
+        _ string: String, font: NSFont, colour: CGColor, bandMinY: Double, bandMaxY: Double,
+        into context: CGContext
+    ) {
+        let line = makeLine(string, font: font, colour: colour)
+        let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
+        drawLine(
+            line, ink: ink, x: badgeRect.minX + contentLeftInset,
+            bandMinY: bandMinY, bandMaxY: bandMaxY, into: context)
+    }
+
+    private func makeLine(_ string: String, font: NSFont, colour: CGColor) -> CTLine {
+        CTLineCreateWithAttributedString(
             NSAttributedString(
                 string: string,
                 attributes: [
                     .font: font,
                     .foregroundColor: NSColor(cgColor: colour) ?? .white,
                 ]))
+    }
 
-        let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
-        let ascent = CTFontGetAscent(font)
-        let descent = CTFontGetDescent(font)
-
+    /// Positions `line` so its actual glyph ink - rather than the font's
+    /// ascent/descent metrics, which for some fonts (e.g. Transport) don't
+    /// match where the glyphs are actually drawn - sits vertically centred
+    /// between `bandMinY` and `bandMaxY`.
+    private func drawLine(
+        _ line: CTLine, ink: CGRect, x: Double, bandMinY: Double, bandMaxY: Double,
+        into context: CGContext
+    ) {
         context.textPosition = CGPoint(
-            x: Double(width) / 2 - (ink.minX + ink.width / 2),
-            y: bandMinY + (bandMaxY - bandMinY - (ascent + descent)) / 2 + descent)
+            x: x, y: bandMinY + (bandMaxY - bandMinY - ink.height) / 2 - ink.minY)
         CTLineDraw(line, context)
     }
 

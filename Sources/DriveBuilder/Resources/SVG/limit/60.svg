@@ -1,7 +1,9 @@
 <svg viewBox="0 0 120 120" width="420" height="420" role="img">
     <circle cx="60" cy="60" r="52" fill="white" stroke="#cc0605" stroke-width="12"/>
 
-    <text x="60" y="79" font-family="sans-serif" text-anchor="middle" font-size="56" font-weight="bold" fill="black">
+    <!-- x/y solved so the numeral's ink centre lands on (60, 60): the
+         renderer puts Transport's ink off-centre from the anchor. -->
+    <text x="56.35" y="86.75" font-family="Transport" text-anchor="middle" font-size="56" font-weight="bold" fill="black">
         60
     </text>
 </svg>

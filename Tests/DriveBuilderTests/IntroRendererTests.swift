@@ -69,24 +69,27 @@ private func hasInk(
 @Test func wideScreenSizeIs80PercentOf4KWidePreservingAspectRatio() {
     let size = IntroRenderer.wideScreenSize
     #expect(size.width == 3072)
-    #expect(size.height == 1536)
-    // Matches the 840:420 design ratio to within a rounded pixel.
-    #expect(abs(Double(size.width) / Double(size.height) - 840.0 / 420.0) < 0.001)
+    #expect(size.height == IntroRenderer.height(forWidth: 3072))
+    // Matches the sign's 840:526 design ratio to within a rounded pixel.
+    #expect(
+        abs(
+            Double(size.width) / Double(size.height)
+                - IntroRenderer.designWidth / IntroRenderer.designHeight) < 0.001)
 }
 
 @Test func badgeScalesUpWithTheCanvasSize() throws {
-    // At 4x the design size, the badge's opaque interior should show at 4x
+    // At 4x the design size, the sign's opaque interior should show at 4x
     // the design coordinates too.
     var renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     renderer.width = 3360
-    renderer.height = 1680
+    renderer.height = IntroRenderer.height(forWidth: 3360)
     let artwork = try renderer.makeArtwork()
     let frame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
 
-    // y=1040 is 4x the design badge's vertical centre (260).
-    #expect(isTransparent(colour(frame, 40, 1040)))
-    #expect(isGreen(colour(frame, 108, 1040)))
-    #expect(isGreen(colour(frame, 1680, 1040)))
+    // y=1052 is 4x the design sign's vertical centre (263).
+    #expect(isTransparent(colour(frame, 40, 1052)))
+    #expect(isGreen(colour(frame, 108, 1052)))
+    #expect(isGreen(colour(frame, 1680, 1052)))
 }
 
 @Test func roadTextCombinesTypeAndNumber() {
@@ -148,29 +151,29 @@ private func hasInk(
     #expect(isTransparent(colour(frame, 830, 160)))
 }
 
-@Test func openBadgeShowsTheCreditLineWithTheTitleStillBlank() throws {
+@Test func openBadgeShowsTheCreditLineWithTheDestinationsStillBlank() throws {
     let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     let artwork = try renderer.makeArtwork()
-    // Last fade-in frame: fully opaque. The strip below the badge's visible
-    // (stroked) edge - CG-space y < 115 for the default canvas - is bitmap
-    // rows 305...419, top-left origin; the title takes the upper half of
-    // that strip, the credit line the lower half. The title only appears
-    // once the spin starts, so it's still blank here.
+    // Last fade-in frame: fully opaque. On the default canvas the two
+    // destination-line rows are bitmap rows 341...425, top-left origin, and
+    // the credit line's row is 433...461, both inside the sign itself. The
+    // destinations only appear once the spin starts, so they're still blank
+    // here; the credit line fades in with the sign.
     let frame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
 
-    #expect(!hasInk(frame, bitmapYRange: 305...362) { isWhite($0) })
-    #expect(hasInk(frame, bitmapYRange: 363...419) { isMidGrey($0) })
+    #expect(!hasInk(frame, bitmapYRange: 341...425) { isWhite($0) })
+    #expect(hasInk(frame, bitmapYRange: 433...461) { isWhite($0) })
 }
 
-@Test func creditLineFadesInWithTheBadgeWhileTitleStaysBlank() throws {
+@Test func creditLineFadesInWithTheBadgeWhileDestinationsStayBlank() throws {
     let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     let artwork = try renderer.makeArtwork()
     // Frame 5 of 10 fade-in frames: fraction 5/9, matching
     // midFadeInFrameIsPartiallyTransparent's check on the badge itself.
     let frame = try renderer.frame(at: 5, artwork: artwork)
 
-    #expect(!hasInk(frame, bitmapYRange: 305...362) { isWhite($0) })
-    #expect(hasInk(frame, bitmapYRange: 363...419) { isMidGrey($0, alpha: 5.0 / 9.0) })
+    #expect(!hasInk(frame, bitmapYRange: 341...425) { isWhite($0) })
+    #expect(hasInk(frame, bitmapYRange: 433...461) { isWhite($0, alpha: 5.0 / 9.0) })
 }
 
 @Test func spinFrameShowsRandomDigitsOverTheOpenBadge() throws {
@@ -183,21 +186,61 @@ private func hasInk(
 }
 
 /// With spin entries supplied, the spin phase should show a spin entry's
-/// title even though the title stays blank while fading in. Using a
-/// non-empty spin title makes "some title is showing during the spin" easy
-/// to detect against the blank fade-in.
+/// destinations even though they stay blank while fading in. Using a
+/// non-empty spin title makes "some destination text is showing during the
+/// spin" easy to detect against the blank fade-in.
 @Test func spinTitleAnimatesWithTheSpinningRoadWhenEntriesAreSupplied() throws {
     var renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     renderer.spinEntries = [IntroRenderer.SpinEntry(roadText: "A4074", title: "Somewhere to Else")]
     let artwork = try renderer.makeArtwork()
 
     let fadeInFrame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
-    #expect(!hasInk(fadeInFrame, bitmapYRange: 305...362) { isWhite($0) })
+    #expect(!hasInk(fadeInFrame, bitmapYRange: 341...425) { isWhite($0) })
 
     let spinFrame = try renderer.frame(at: IntroRenderer.fadeInFrames + 10, artwork: artwork)
     #expect(isGreen(colour(spinFrame, 27, 160)))
     #expect(hasYellowNearCentre(spinFrame))
-    #expect(hasInk(spinFrame, bitmapYRange: 305...362) { isWhite($0) })
+    #expect(hasInk(spinFrame, bitmapYRange: 341...425) { isWhite($0) })
+}
+
+@Test func splitTitleDividesOnTheToKeyword() {
+    let (first, second) = IntroRenderer.splitTitle("Caversham to Littlemore")
+    #expect(first == "Caversham")
+    #expect(second == "Littlemore")
+}
+
+@Test func splitTitleFallsBackToTheWholeTitleWhenThereIsNoToKeyword() {
+    let (first, second) = IntroRenderer.splitTitle("Just One Place")
+    #expect(first == "Just One Place")
+    #expect(second == "")
+}
+
+@Test func revealFrameShowsDestinationsAsLeftAlignedTextInsideTheSign() throws {
+    let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Caversham to Littlemore")
+    let artwork = try renderer.makeArtwork()
+    let frame = try renderer.frame(
+        at: IntroRenderer.fadeInFrames + IntroRenderer.spinFrames + 5, artwork: artwork)
+
+    // Both destination lines sit inside the sign, left-aligned rather than
+    // centred, so ink shows up near the left content inset (bitmap x=96 on
+    // the default canvas) rather than around the canvas centre (x=420).
+    #expect(hasInk(frame, bitmapYRange: 341...383) { isWhite($0) })
+    #expect(hasInk(frame, bitmapYRange: 383...425) { isWhite($0) })
+}
+
+@Test func signIsCentredVerticallyOnTheCanvas() throws {
+    let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
+    let artwork = try renderer.makeArtwork()
+    // Last fade-in frame: fully opaque sign.
+    let frame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
+
+    // The visible sign's outer edge sits 30px in from the canvas edge on
+    // both the top and the bottom, since it's centred rather than pinned
+    // near the top.
+    #expect(isTransparent(colour(frame, 420, 20)))
+    #expect(isGreen(colour(frame, 420, 32)))
+    #expect(isTransparent(colour(frame, 420, 506)))
+    #expect(isGreen(colour(frame, 420, 494)))
 }
 
 @Test func revealFrameShowsTheRealRoadNumber() throws {

@@ -17,16 +17,19 @@
         <line x1="60" y1="12" x2="60" y2="19" stroke-width="1.5" transform="rotate(330 60 60)"/>
     </g>
 
-    <!-- hours (major only) -->
-    <g fill="#111" font-family="sans-serif" font-size="10" font-weight="bold" text-anchor="middle" dominant-baseline="middle">
+    <!-- Hours (major only). The renderer ignores dominant-baseline and puts
+         Transport's ink off-centre from the anchor, so each x/y below is
+         solved so the numeral's *ink* centre lands on the dial circle of
+         radius 34 - keeping all four an equal distance from their ticks. -->
+    <g fill="#111" font-family="Transport" font-size="10" font-weight="bold" text-anchor="middle" dominant-baseline="middle">
         <line x1="60" y1="12" x2="60" y2="19" stroke-width="1.5" transform="rotate(  0 60 60)"/>
-        <text x="60.0" y="26.0">12</text>
+        <text x="58.90" y="30.90">12</text>
         <line x1="60" y1="12" x2="60" y2="19" stroke-width="1.5" transform="rotate( 90 60 60)"/>
-        <text x="94.0" y="60.0">3</text>
+        <text x="92.80" y="64.83">3</text>
         <line x1="60" y1="12" x2="60" y2="19" stroke-width="1.5" transform="rotate(180 60 60)"/>
-        <text x="60.0" y="94.0">6</text>
+        <text x="58.68" y="98.83">6</text>
         <line x1="60" y1="12" x2="60" y2="19" stroke-width="1.5" transform="rotate(270 60 60)"/>
-        <text x="26.0" y="60.0">9</text>
+        <text x="24.55" y="64.88">9</text>
     </g>
 
     <!-- hub -->
