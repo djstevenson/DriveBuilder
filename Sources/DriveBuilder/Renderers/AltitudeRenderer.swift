@@ -58,27 +58,32 @@ struct AltitudeRenderer: DialRenderer {
             self.labels = labels
         }
 
-        /// Matches the source SVG text: bold sans-serif, font-size 14 and
-        /// baseline y=105 in the 120-unit viewBox, fill #333, centred on x=60.
+        /// Matches the source SVG text: font-size 14 and baseline y=105 in
+        /// the 120-unit viewBox, fill #333, centred on x=60.
         static func label(_ text: String, pixelSize: Int) throws -> CGImage {
             let context = try LayerCompositor.bitmapContext(width: pixelSize, height: pixelSize)
             let scale = CGFloat(pixelSize) / 120
 
-            let font = NSFont.systemFont(ofSize: 14 * scale, weight: .bold)
+            let font = NSFont.transport(size: 14 * scale)
             let attributes: [NSAttributedString.Key: Any] = [
                 .init(kCTFontAttributeName as String): font,
                 .init(kCTForegroundColorFromContextAttributeName as String): true,
             ]
             let line = CTLineCreateWithAttributedString(
                 NSAttributedString(string: text, attributes: attributes))
-            let width = CTLineGetTypographicBounds(line, nil, nil, nil)
+            // Positioned by the glyphs' actual ink rather than the advance
+            // width and font metrics: Transport's side bearings aren't
+            // symmetric and its glyphs don't sit where the metrics imply, so
+            // metric-based placement leaves the label visibly off.
+            let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
 
             context.setFillColor(CGColor(srgbRed: 0.2, green: 0.2, blue: 0.2, alpha: 1))
             // The context origin is bottom-left, so the SVG baseline y=105
-            // measures 15 viewBox units up from the bottom.
+            // measures 15 viewBox units up from the bottom; the ink is set to
+            // rest on it, and centred horizontally on the dial.
             context.textPosition = CGPoint(
-                x: CGFloat(pixelSize) / 2 - CGFloat(width) / 2,
-                y: 15 * scale)
+                x: CGFloat(pixelSize) / 2 - (ink.minX + ink.width / 2),
+                y: 15 * scale - ink.minY)
             CTLineDraw(line, context)
 
             guard let image = context.makeImage() else {

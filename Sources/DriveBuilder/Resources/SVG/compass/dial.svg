@@ -19,11 +19,14 @@
         <circle cx="58" cy="58" r="2"
             fill="white"/>
 
-        <g fill="#111" font-family="sans-serif" font-size="10" font-weight="bold" text-anchor="middle" dominant-baseline="middle">
-            <text x="60"  y="26">N</text>
-            <text x="60"  y="96">S</text>
-            <text x="26"  y="61">W</text>
-            <text x="96"  y="61">E</text>
+        <!-- x/y are solved so each letter's ink centre sits on the circle of
+             radius 34, since the renderer ignores dominant-baseline and
+             Transport's ink isn't centred on the anchor. -->
+        <g fill="#111" font-family="Transport" font-size="10" font-weight="bold" text-anchor="middle" dominant-baseline="middle">
+            <text x="58.55"  y="30.85">N</text>
+            <text x="58.50"  y="98.85">S</text>
+            <text x="25.05"  y="64.83">W</text>
+            <text x="92.30"  y="64.83">E</text>
         </g>
     </g>
 
