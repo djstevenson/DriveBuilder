@@ -75,22 +75,6 @@ extension DriveBuilder {
                             frameLimit: video.frameLimit)
                 },
                 {
-                    try await WallClockRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "wall", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await RelativeClockRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "relative", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
                     try await ProgressMapRenderer(
                         records: records,
                         pixelSize: video.pixelSize,

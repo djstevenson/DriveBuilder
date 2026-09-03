@@ -1,9 +1,0 @@
-<svg viewBox="0 0 120 120" width="420" height="420" role="img">
-    <g transform="rotate(0 60 60)">
-        <polygon points="60,30 62,60 60,58 58,60"
-                fill="#930a0a"
-                stroke="#800"
-                stroke-width="0.5"/>
-    </g>
-
-</svg>
