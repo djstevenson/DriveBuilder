@@ -74,7 +74,7 @@ private func lowerQuadrantRedCounts(_ frame: NSBitmapImageRep) -> (left: Int, ri
     #expect(fastCounts.right > fastCounts.left * 5)
 }
 
-@Test func compositedFrameKeepsRequestedSizeAndTransparency() throws {
+@Test func compositedFrameKeepsRequestedSizeAndFillsCornersWithTheBackdrop() throws {
     let renderer = SpeedoRenderer(records: [], pixelSize: 200)
     let artwork = try SpeedoRenderer.Artwork(pixelSize: 200, speedLimits: [50])
     let frame = try renderer.frame(for: record(mph: 30, limit: 50), artwork: artwork)
@@ -82,5 +82,6 @@ private func lowerQuadrantRedCounts(_ frame: NSBitmapImageRep) -> (left: Int, ri
     #expect(frame.pixelsWide == 200)
     #expect(frame.pixelsHigh == 200)
     let corner = try #require(frame.colorAt(x: 2, y: 2))
-    #expect(corner.alphaComponent < 0.01)
+    #expect(abs(corner.alphaComponent - 0.6) < 0.01)
+    #expect(corner.redComponent < 0.01)
 }

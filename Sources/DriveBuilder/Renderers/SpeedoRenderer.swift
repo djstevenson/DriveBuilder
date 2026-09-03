@@ -17,6 +17,9 @@ struct SpeedoRenderer: DialRenderer {
     /// Edge length of the rendered frame, in pixels.
     var pixelSize = 420
 
+    /// Colour and opacity of the square backdrop drawn behind the dial.
+    static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
+
     /// Needle angle for a speed in mph. 40 mph points straight up, and the
     /// 0-80 mph span is spread over 260 degrees.
     static func angle(forMPH speed: Double) -> Double {
@@ -34,6 +37,9 @@ struct SpeedoRenderer: DialRenderer {
 
     /// Artwork rasterized once and reused for every frame.
     struct Artwork {
+        /// Semi-transparent square drawn behind the dial.
+        let background: CGImage
+
         let dial: CGImage
         let needle: CGImage
 
@@ -44,6 +50,9 @@ struct SpeedoRenderer: DialRenderer {
         let limitMarkers: [Int: CGImage]
 
         init(pixelSize: Int, speedLimits: Set<Int>) throws {
+            background = try LayerCompositor.solidImage(
+                color: SpeedoRenderer.backgroundColor, width: pixelSize, height: pixelSize)
+
             func layer(_ name: String) throws -> CGImage {
                 let bitmap = try SVGRasterizer.bitmap(
                     from: BundledArtwork.svg(name, dial: "speedo"),
@@ -77,7 +86,7 @@ struct SpeedoRenderer: DialRenderer {
 
     /// Draws one frame into `context`: static dial, cached limit marker, rotated needle.
     func draw(_ record: TelemetryRecord, into context: CGContext, artwork: Artwork) {
-        var layers: [LayerCompositor.Layer] = [.init(artwork.dial)]
+        var layers: [LayerCompositor.Layer] = [.init(artwork.background), .init(artwork.dial)]
         if let marker = artwork.limitMarkers[Self.speedLimit(for: record)] {
             layers.append(.init(marker))
         }

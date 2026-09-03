@@ -27,6 +27,9 @@ struct GForceRenderer: DialRenderer {
     /// Edge length of the rendered frame, in pixels.
     var pixelSize = 420
 
+    /// Colour and opacity of the square backdrop drawn behind the dial.
+    static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
+
     /// The sensed force for a record in g, clamped to the dial's range.
     ///
     /// Both axes show the force pinning the driver to one side of their seat,
@@ -62,9 +65,15 @@ struct GForceRenderer: DialRenderer {
 
     /// Artwork rasterized once and reused for every frame.
     struct Artwork {
+        /// Semi-transparent square drawn behind the dial.
+        let background: CGImage
+
         let dial: CGImage
 
         init(pixelSize: Int) throws {
+            background = try LayerCompositor.solidImage(
+                color: GForceRenderer.backgroundColor, width: pixelSize, height: pixelSize)
+
             let bitmap = try SVGRasterizer.bitmap(
                 from: BundledArtwork.svg("dial", dial: "gforce"),
                 width: pixelSize,
@@ -84,7 +93,8 @@ struct GForceRenderer: DialRenderer {
     /// geometry, which is cheaper than compositing a pre-rendered layer.
     func draw(_ record: TelemetryRecord, into context: CGContext, artwork: Artwork) {
         LayerCompositor.draw(
-            [.init(artwork.dial)], into: context, width: pixelSize, height: pixelSize)
+            [.init(artwork.background), .init(artwork.dial)],
+            into: context, width: pixelSize, height: pixelSize)
 
         let position = Self.markerPosition(for: record, pixelSize: pixelSize)
         let radius = Double(pixelSize) * Self.markerRadiusUnits / 120

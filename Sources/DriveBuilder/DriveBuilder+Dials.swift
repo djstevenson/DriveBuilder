@@ -43,14 +43,6 @@ extension DriveBuilder {
                             frameLimit: video.frameLimit)
                 },
                 {
-                    try await LimitRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "limit", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
                     try await CompassRenderer(records: records, pixelSize: video.pixelSize)
                         .writeMovie(
                             to: video.outputURL(

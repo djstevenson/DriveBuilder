@@ -19,6 +19,9 @@ struct AltitudeRenderer: DialRenderer {
     /// Edge length of the rendered frame, in pixels.
     var pixelSize = 420
 
+    /// Colour and opacity of the square backdrop drawn behind the dial.
+    static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
+
     /// The altitude to display for a record, in whole feet.
     ///
     /// `Int(x + 0.5)` truncates toward zero, matching the Perl `int(...)`
@@ -34,6 +37,9 @@ struct AltitudeRenderer: DialRenderer {
 
     /// Artwork rasterized once and reused for every frame.
     struct Artwork {
+        /// Semi-transparent square drawn behind the dial.
+        let background: CGImage
+
         let dial: CGImage
 
         /// The "N ft" label pre-rendered for each whole-feet altitude that
@@ -42,6 +48,9 @@ struct AltitudeRenderer: DialRenderer {
         let labels: [Int: CGImage]
 
         init(pixelSize: Int, altitudes: Set<Int>) throws {
+            background = try LayerCompositor.solidImage(
+                color: AltitudeRenderer.backgroundColor, width: pixelSize, height: pixelSize)
+
             let bitmap = try SVGRasterizer.bitmap(
                 from: BundledArtwork.svg("dial", dial: "altitude"),
                 width: pixelSize,
@@ -99,7 +108,7 @@ struct AltitudeRenderer: DialRenderer {
 
     /// Draws one frame into `context`: static mountain, cached altitude label.
     func draw(_ record: TelemetryRecord, into context: CGContext, artwork: Artwork) {
-        var layers: [LayerCompositor.Layer] = [.init(artwork.dial)]
+        var layers: [LayerCompositor.Layer] = [.init(artwork.background), .init(artwork.dial)]
         if let label = artwork.labels[Self.altitudeFeet(for: record)] {
             layers.append(.init(label))
         }

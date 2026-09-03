@@ -72,6 +72,18 @@ enum LayerCompositor {
         return canvas
     }
 
+    /// A width x height image filled solidly with `color`, for use as a
+    /// backdrop layer.
+    static func solidImage(color: CGColor, width: Int, height: Int) throws -> CGImage {
+        let context = try bitmapContext(width: width, height: height)
+        context.setFillColor(color)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let image = context.makeImage() else {
+            throw SVGRasterizerError.contextUnavailable
+        }
+        return image
+    }
+
     /// A premultiplied BGRA context, matching the pixel format the movie writer wants.
     static func bitmapContext(width: Int, height: Int) throws -> CGContext {
         guard width > 0, height > 0 else {

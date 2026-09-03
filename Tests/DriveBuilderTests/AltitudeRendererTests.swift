@@ -63,7 +63,7 @@ private func record(altitudeMetres: Double) -> TelemetryRecord {
     #expect(inkPixels > 200)
 }
 
-@Test func altitudeFrameKeepsSizeAndTransparentCorners() throws {
+@Test func altitudeFrameKeepsSizeAndFillsCornersWithTheBackdrop() throws {
     let renderer = AltitudeRenderer(records: [], pixelSize: 200)
     let artwork = try AltitudeRenderer.Artwork(pixelSize: 200, altitudes: [50])
     let frame = try renderer.frame(for: record(altitudeMetres: 15.24), artwork: artwork)
@@ -71,5 +71,6 @@ private func record(altitudeMetres: Double) -> TelemetryRecord {
     #expect(frame.pixelsWide == 200)
     #expect(frame.pixelsHigh == 200)
     let corner = try #require(frame.colorAt(x: 2, y: 2))
-    #expect(corner.alphaComponent < 0.01)
+    #expect(abs(corner.alphaComponent - 0.6) < 0.01)
+    #expect(corner.redComponent < 0.01)
 }
