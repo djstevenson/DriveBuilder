@@ -30,10 +30,13 @@ extension DriveBuilder {
         @OptionGroup var map: MapOptions
 
         mutating func run() async throws {
+            var tileRenderer = map.tileRenderer
+            tileRenderer.scaleFactor =
+                Double(video.mapPixelSize) / ProgressMapZoomedRenderer.designPixelSize
             let renderer = ProgressMapZoomedRenderer(
                 records: try telemetry.load(),
                 pixelSize: video.mapPixelSize,
-                tileRenderer: map.tileRenderer)
+                tileRenderer: tileRenderer)
             try await renderer.writeMovie(
                 to: video.outputURL(
                     named: "progress_map_zoomed", journeyDirectory: try telemetry.journeyDirectory()),

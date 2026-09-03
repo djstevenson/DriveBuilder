@@ -32,6 +32,9 @@ extension DriveBuilder {
             nationalTileRenderer.stylesheet = "map-national.xml"
             nationalTileRenderer.scaleFactor =
                 Double(routeConfig.width) / RouteMapRenderer.mapXMLDesignWidth
+            var progressTileRenderer = tileRenderer
+            progressTileRenderer.scaleFactor =
+                Double(video.mapPixelSize) / ProgressMapRenderer.designPixelSize
 
             let dials: [@Sendable () async throws -> Void] = [
                 {
@@ -66,22 +69,22 @@ extension DriveBuilder {
                             framesPerSecond: video.framesPerSecond,
                             frameLimit: video.frameLimit)
                 },
-                {
+                { [progressTileRenderer] in
                     try await ProgressMapRenderer(
                         records: records,
                         pixelSize: video.mapPixelSize,
-                        tileRenderer: tileRenderer)
+                        tileRenderer: progressTileRenderer)
                         .writeMovie(
                             to: video.outputURL(
                                 named: "progress_map", journeyDirectory: journeyDirectory),
                             framesPerSecond: video.framesPerSecond,
                             frameLimit: video.frameLimit)
                 },
-                {
+                { [progressTileRenderer] in
                     try await ProgressMapZoomedRenderer(
                         records: records,
                         pixelSize: video.mapPixelSize,
-                        tileRenderer: tileRenderer)
+                        tileRenderer: progressTileRenderer)
                         .writeMovie(
                             to: video.outputURL(
                                 named: "progress_map_zoomed", journeyDirectory: journeyDirectory),

@@ -17,14 +17,22 @@ struct ProgressMapRenderer: DialRenderer {
     static let bboxPadding = 0.10
 
     /// The current-position marker is half the route map's size, with a
-    /// black arrow inside it showing the heading.
+    /// black arrow inside it showing the heading. Sized for the design
+    /// frame; scaled by `scale` when drawn.
     static let markerRadius = RouteMapRenderer.headMarkerRadius / 2
     static let markerBorderWidth = RouteMapRenderer.headMarkerBorderWidth / 2
+
+    /// The frame size the map's proportions were designed at; rendering at
+    /// another size scales the whole picture rather than changing the view.
+    static let designPixelSize = 420.0
 
     let records: [TelemetryRecord]
 
     /// Edge length of the rendered frame, in pixels.
     var pixelSize = 420
+
+    /// How much the marker, track, and arrow grow relative to the design size.
+    var scale: Double { Double(pixelSize) / Self.designPixelSize }
 
     let tileRenderer: any MapTileRenderer
 
@@ -97,8 +105,10 @@ struct ProgressMapRenderer: DialRenderer {
         let travelled = artwork.trackPoints[0..<travelledCount(at: record)]
         RouteMapRenderer.drawTrack(
             travelled,
-            markerRadius: Self.markerRadius,
-            markerBorderWidth: Self.markerBorderWidth,
+            markerRadius: Self.markerRadius * scale,
+            markerBorderWidth: Self.markerBorderWidth * scale,
+            lineWidth: RouteMapRenderer.trackLineWidth * scale,
+            casingWidth: RouteMapRenderer.trackCasingWidth * scale,
             into: context)
         if let head = travelled.last {
             drawHeadingArrow(at: head, headingDegrees: record.heading, into: context)
@@ -119,7 +129,7 @@ struct ProgressMapRenderer: DialRenderer {
 
         // Tip, starboard corner, tail notch, port corner - proportioned to
         // sit inside the marker's border.
-        let r = Self.markerRadius
+        let r = Self.markerRadius * scale
         let arrow = CGMutablePath()
         arrow.move(to: CGPoint(x: 0, y: -0.65 * r))
         arrow.addLine(to: CGPoint(x: 0.5 * r, y: 0.55 * r))

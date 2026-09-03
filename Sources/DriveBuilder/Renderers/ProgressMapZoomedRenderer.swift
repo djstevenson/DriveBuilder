@@ -13,9 +13,13 @@ import Foundation
 struct ProgressMapZoomedRenderer {
     static let dialName = "ProgressMapZoomed"
 
-    /// Metres shown per pixel of the rendered map: much more detail than an
+    /// The frame size the map's proportions were designed at; rendering at
+    /// another size scales the whole picture rather than changing the view.
+    static let designPixelSize = 420.0
+
+    /// Metres shown per pixel at the design size: much more detail than an
     /// overview map, since only a small window around the car is shown.
-    static let metresPerPixel = 2.0
+    static let designMetresPerPixel = 2.0
 
     /// Output frames per telemetry record, and the matching frame rate for
     /// telemetry sampled at 10 Hz.
@@ -36,11 +40,18 @@ struct ProgressMapZoomedRenderer {
 
     let tileRenderer: any MapTileRenderer
 
+    /// Metres per pixel at the actual frame size: the window always covers
+    /// the same ground as at the design size, so a bigger frame shows the
+    /// same picture at a larger scale.
+    var metresPerPixel: Double {
+        Self.designMetresPerPixel * Self.designPixelSize / Double(pixelSize)
+    }
+
     /// How close the car can get to a tile's edge before the next frame
     /// switches to a tile centred on the car: half the output window, so
     /// the window always stays inside the tile.
     var tileMarginMetres: Double {
-        Double(pixelSize) / 2 * Self.metresPerPixel
+        Double(pixelSize) / 2 * metresPerPixel
     }
 
     // MARK: - Interpolation
@@ -115,7 +126,7 @@ struct ProgressMapZoomedRenderer {
     /// A tile bounding box centred on a grid position.
     func tileBBox(centredOn grid: OSGB.GridPoint) -> MapBBox {
         let half = tileSizeMetres / 2
-        let sizePixels = Int((tileSizeMetres / Self.metresPerPixel).rounded(.up))
+        let sizePixels = Int((tileSizeMetres / metresPerPixel).rounded(.up))
         return MapBBox(
             minEasting: grid.easting - half,
             minNorthing: grid.northing - half,
@@ -209,8 +220,9 @@ struct ProgressMapZoomedRenderer {
             "\(Self.dialName): \(records.count) telemetry records, "
                 + "rendering \(frames.count) frames at \(Self.framesPerSecond) fps.")
         print(
-            "  \(tileBoxes.count) map tiles at \(Self.metresPerPixel) m/px, "
-                + "\(concurrency)-way compositing")
+            String(
+                format: "  %d map tiles at %.2f m/px, %d-way compositing",
+                tileBoxes.count, metresPerPixel, concurrency))
 
         let car = try carImage()
         var tiles: [CGImage] = []

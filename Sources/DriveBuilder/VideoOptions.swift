@@ -5,14 +5,15 @@ import Foundation
 struct VideoOptions: ParsableArguments {
     @Option(
         name: .customLong("size"),
-        help: "Edge length of the square frame, in pixels. Defaults to 280 for the telemetry dials and 420 for the progress maps.")
+        help: "Edge length of the square frame, in pixels. Defaults to 280 for the telemetry dials and 570 for the progress maps.")
     var pixelSize: Int?
 
     /// Frame size for the telemetry dials (speedo, compass, altitude, g-force).
     var dialPixelSize: Int { pixelSize ?? 280 }
 
-    /// Frame size for the progress maps.
-    var mapPixelSize: Int { pixelSize ?? 420 }
+    /// Frame size for the progress maps: the footprint of a 2x2 dial grid,
+    /// two 280px dials plus a 10px gap.
+    var mapPixelSize: Int { pixelSize ?? 570 }
 
     @Option(name: .customLong("fps"), help: "Frame rate. Telemetry is sampled at 10 Hz.")
     var framesPerSecond: Int32 = 10
