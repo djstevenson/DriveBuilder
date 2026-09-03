@@ -25,7 +25,7 @@ struct GForceRenderer: DialRenderer {
     let records: [TelemetryRecord]
 
     /// Edge length of the rendered frame, in pixels.
-    var pixelSize = 420
+    var pixelSize = 280
 
     /// Colour and opacity of the square backdrop drawn behind the dial.
     static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)

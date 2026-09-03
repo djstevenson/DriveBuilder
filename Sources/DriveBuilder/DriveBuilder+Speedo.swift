@@ -10,7 +10,7 @@ extension DriveBuilder {
         @OptionGroup var video: VideoOptions
 
         mutating func run() async throws {
-            let renderer = SpeedoRenderer(records: try telemetry.load(), pixelSize: video.pixelSize)
+            let renderer = SpeedoRenderer(records: try telemetry.load(), pixelSize: video.dialPixelSize)
             try await renderer.writeMovie(
                 to: video.outputURL(
                     named: "speedo", journeyDirectory: try telemetry.journeyDirectory()),

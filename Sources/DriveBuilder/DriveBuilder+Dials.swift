@@ -35,7 +35,7 @@ extension DriveBuilder {
 
             let dials: [@Sendable () async throws -> Void] = [
                 {
-                    try await SpeedoRenderer(records: records, pixelSize: video.pixelSize)
+                    try await SpeedoRenderer(records: records, pixelSize: video.dialPixelSize)
                         .writeMovie(
                             to: video.outputURL(
                                 named: "speedo", journeyDirectory: journeyDirectory),
@@ -43,7 +43,7 @@ extension DriveBuilder {
                             frameLimit: video.frameLimit)
                 },
                 {
-                    try await CompassRenderer(records: records, pixelSize: video.pixelSize)
+                    try await CompassRenderer(records: records, pixelSize: video.dialPixelSize)
                         .writeMovie(
                             to: video.outputURL(
                                 named: "compass", journeyDirectory: journeyDirectory),
@@ -51,7 +51,7 @@ extension DriveBuilder {
                             frameLimit: video.frameLimit)
                 },
                 {
-                    try await AltitudeRenderer(records: records, pixelSize: video.pixelSize)
+                    try await AltitudeRenderer(records: records, pixelSize: video.dialPixelSize)
                         .writeMovie(
                             to: video.outputURL(
                                 named: "altitude", journeyDirectory: journeyDirectory),
@@ -59,7 +59,7 @@ extension DriveBuilder {
                             frameLimit: video.frameLimit)
                 },
                 {
-                    try await GForceRenderer(records: records, pixelSize: video.pixelSize)
+                    try await GForceRenderer(records: records, pixelSize: video.dialPixelSize)
                         .writeMovie(
                             to: video.outputURL(
                                 named: "gforce", journeyDirectory: journeyDirectory),
@@ -69,7 +69,7 @@ extension DriveBuilder {
                 {
                     try await ProgressMapRenderer(
                         records: records,
-                        pixelSize: video.pixelSize,
+                        pixelSize: video.mapPixelSize,
                         tileRenderer: tileRenderer)
                         .writeMovie(
                             to: video.outputURL(
@@ -80,7 +80,7 @@ extension DriveBuilder {
                 {
                     try await ProgressMapZoomedRenderer(
                         records: records,
-                        pixelSize: video.pixelSize,
+                        pixelSize: video.mapPixelSize,
                         tileRenderer: tileRenderer)
                         .writeMovie(
                             to: video.outputURL(

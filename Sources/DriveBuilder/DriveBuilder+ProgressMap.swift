@@ -16,7 +16,7 @@ extension DriveBuilder {
         mutating func run() async throws {
             let renderer = ProgressMapRenderer(
                 records: try telemetry.load(),
-                pixelSize: video.pixelSize,
+                pixelSize: video.mapPixelSize,
                 tileRenderer: map.tileRenderer)
             try await renderer.writeMovie(
                 to: video.outputURL(

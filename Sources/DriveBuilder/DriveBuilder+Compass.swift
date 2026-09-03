@@ -12,7 +12,7 @@ extension DriveBuilder {
 
         mutating func run() async throws {
             let renderer = CompassRenderer(
-                records: try telemetry.load(), pixelSize: video.pixelSize)
+                records: try telemetry.load(), pixelSize: video.dialPixelSize)
             try await renderer.writeMovie(
                 to: video.outputURL(
                     named: "compass", journeyDirectory: try telemetry.journeyDirectory()),
