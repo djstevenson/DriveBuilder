@@ -15,7 +15,7 @@ struct SpeedoRenderer: DialRenderer {
     let records: [TelemetryRecord]
 
     /// Edge length of the rendered frame, in pixels.
-    var pixelSize = 280
+    var pixelSize = 345
 
     /// Colour and opacity of the square backdrop drawn behind the dial.
     static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
