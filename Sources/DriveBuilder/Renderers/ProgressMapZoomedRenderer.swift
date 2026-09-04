@@ -35,8 +35,11 @@ struct ProgressMapZoomedRenderer {
     /// arbitrarily long, so rather than render it all at full detail (which
     /// is wasteful and can exceed bitmap size limits), modest tiles are
     /// rendered around the car and replaced as the car nears their edge.
-    /// Must be comfortably bigger than the output window.
-    var tileSizeMetres = 30_000.0
+    /// Must be comfortably bigger than the output window (840 m of ground).
+    /// Sized to keep the decoded tile modest — 10 km is ~8,400 px and
+    /// ~280 MB at the 708 px production size, where 30 km was 2.6 GB — while
+    /// still amortizing maprender.py's fixed startup over ~9 km of travel.
+    var tileSizeMetres = 10_000.0
 
     let tileRenderer: any MapTileRenderer
 

@@ -3,7 +3,11 @@ import Foundation
 
 extension DriveBuilder {
     struct Dials: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Rebuild all telemetry dials.")
+        static let configuration = CommandConfiguration(
+            abstract: "Build the combined telemetry video and the route map.",
+            discussion: "Composites every dial into a single telemetry.mov, frame by frame, "
+                + "rather than writing each dial's movie separately; use the individual "
+                + "dial commands to inspect one dial on its own.")
 
         @OptionGroup var telemetry: TelemetryOptions
 
@@ -13,12 +17,19 @@ extension DriveBuilder {
 
         @OptionGroup var route: RouteMapOptions
 
-        /// Loads the journey once and hands the same records to every renderer.
-        ///
-        /// The dials all render concurrently: each movie is an independent
-        /// encoder session, so wall time approaches the slowest dial rather
-        /// than the sum. Capping the number of concurrent dials was tried and
-        /// measured slower than letting them all run.
+        func validate() throws {
+            // The composite's layout derives the inter-dial gap from the two
+            // default edge lengths; a single override can't describe both.
+            if video.pixelSize != nil {
+                throw ValidationError(
+                    "--size does not apply to the combined telemetry video; "
+                        + "use the individual dial commands to render at another size.")
+            }
+        }
+
+        /// Loads the journey once, then renders the combined telemetry video
+        /// and the route map concurrently: each movie is an independent
+        /// encoder session, so wall time approaches the slower of the two.
         mutating func run() async throws {
             let records = try telemetry.load()
             let video = video
@@ -36,58 +47,17 @@ extension DriveBuilder {
             progressTileRenderer.scaleFactor =
                 Double(video.mapPixelSize) / ProgressMapRenderer.designPixelSize
 
-            let dials: [@Sendable () async throws -> Void] = [
-                {
-                    try await SpeedoRenderer(records: records, pixelSize: video.dialPixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "speedo", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await CompassRenderer(records: records, pixelSize: video.dialPixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "compass", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await AltitudeRenderer(records: records, pixelSize: video.dialPixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "altitude", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await GForceRenderer(records: records, pixelSize: video.dialPixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "gforce", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
+            let renders: [@Sendable () async throws -> Void] = [
                 { [progressTileRenderer] in
-                    try await ProgressMapRenderer(
+                    try await TelemetryVideoRenderer(
                         records: records,
-                        pixelSize: video.mapPixelSize,
+                        dialPixelSize: video.dialPixelSize,
+                        mapPixelSize: video.mapPixelSize,
                         tileRenderer: progressTileRenderer)
                         .writeMovie(
                             to: video.outputURL(
-                                named: "progress_map", journeyDirectory: journeyDirectory),
+                                named: "telemetry", journeyDirectory: journeyDirectory),
                             framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                { [progressTileRenderer] in
-                    try await ProgressMapZoomedRenderer(
-                        records: records,
-                        pixelSize: video.mapPixelSize,
-                        tileRenderer: progressTileRenderer)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "progress_map_zoomed", journeyDirectory: journeyDirectory),
                             frameLimit: video.frameLimit)
                 },
                 { [routeTileRenderer, nationalTileRenderer] in
@@ -104,8 +74,8 @@ extension DriveBuilder {
             ]
 
             try await withThrowingTaskGroup(of: Void.self) { group in
-                for dial in dials {
-                    group.addTask { try await dial() }
+                for render in renders {
+                    group.addTask { try await render() }
                 }
                 try await group.waitForAll()
             }
