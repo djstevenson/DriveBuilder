@@ -57,41 +57,6 @@ struct ProgressMapZoomedRenderer {
         Double(pixelSize) / 2 * metresPerPixel
     }
 
-    // MARK: - Interpolation
-
-    /// Interpolates headings across the 0/360 wrap by the shortest arc.
-    static func interpolateHeading(from previous: Double, to current: Double, fraction: Double)
-        -> Double
-    {
-        var delta = current - previous
-        while delta > 180 { delta -= 360 }
-        while delta < -180 { delta += 360 }
-        return previous + delta * fraction
-    }
-
-    /// A record `fraction` of the way from `previous` to `current`.
-    static func interpolate(
-        _ previous: TelemetryRecord, _ current: TelemetryRecord, fraction: Double
-    ) -> TelemetryRecord {
-        func lerp(_ a: Double, _ b: Double) -> Double { a + (b - a) * fraction }
-        return TelemetryRecord(
-            id: previous.id,
-            journeyID: previous.journeyID,
-            timestamp: previous.timestamp.addingTimeInterval(
-                current.timestamp.timeIntervalSince(previous.timestamp) * fraction),
-            latitude: lerp(previous.latitude, current.latitude),
-            longitude: lerp(previous.longitude, current.longitude),
-            altitude: lerp(previous.altitude, current.altitude),
-            speed: lerp(previous.speed, current.speed),
-            heading: interpolateHeading(
-                from: previous.heading, to: current.heading, fraction: fraction),
-            accelForward: nil,
-            accelLateral: nil,
-            speedLimit: previous.speedLimit,
-            file: previous.file ?? current.file,
-            source: "Interpolated")
-    }
-
     // MARK: - Frames and tiles
 
     /// One output frame: the car's grid position and heading.
@@ -109,21 +74,8 @@ struct ProgressMapZoomedRenderer {
     /// The full output frame sequence: each record preceded by the subframes
     /// interpolated from its predecessor.
     var frames: [Frame] {
-        var frames: [Frame] = []
-        frames.reserveCapacity(max(records.count * Self.subframesPerRecord - 2, 0))
-        var previous: TelemetryRecord?
-        for record in records {
-            if let previous {
-                for step in 1..<Self.subframesPerRecord {
-                    let fraction = Double(step) / Double(Self.subframesPerRecord)
-                    frames.append(
-                        Self.frame(for: Self.interpolate(previous, record, fraction: fraction)))
-                }
-            }
-            frames.append(Self.frame(for: record))
-            previous = record
-        }
-        return frames
+        TelemetryRecord.subframeSequence(records, subframesPerRecord: Self.subframesPerRecord)
+            .map(Self.frame(for:))
     }
 
     /// A tile bounding box centred on a grid position.

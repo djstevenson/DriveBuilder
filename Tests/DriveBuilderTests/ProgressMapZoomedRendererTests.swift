@@ -42,30 +42,7 @@ private func record(
     }
 }
 
-// MARK: - Interpolation
-
-@Test func headingInterpolationTakesTheShortestArc() {
-    // Like the Perl, results are not normalised to 0..<360: crossing north
-    // from 350° to 10° passes through 360°, the same rotation as 0°.
-    #expect(ProgressMapZoomedRenderer.interpolateHeading(from: 350, to: 10, fraction: 0.5) == 360)
-    #expect(ProgressMapZoomedRenderer.interpolateHeading(from: 10, to: 350, fraction: 0.5) == 0)
-    #expect(ProgressMapZoomedRenderer.interpolateHeading(from: 90, to: 120, fraction: 0.5) == 105)
-}
-
-@Test func recordsInterpolateLinearly() {
-    let start = Date(timeIntervalSince1970: 1_775_000_000)
-    let a = record(latitude: 51.0, longitude: -1.5, heading: 30, timestamp: start)
-    let b = record(
-        latitude: 51.001, longitude: -1.499, heading: 40,
-        timestamp: start.addingTimeInterval(0.1))
-
-    let mid = ProgressMapZoomedRenderer.interpolate(a, b, fraction: 0.5)
-    #expect(abs(mid.latitude - 51.0005) < 1e-9)
-    #expect(abs(mid.longitude - -1.4995) < 1e-9)
-    #expect(abs(mid.heading - 35) < 1e-9)
-    #expect(abs(mid.timestamp.timeIntervalSince(start) - 0.05) < 1e-6)
-    #expect(mid.source == "Interpolated")
-}
+// MARK: - Frames
 
 @Test func threeFramesPerRecordAfterTheFirst() {
     let start = Date(timeIntervalSince1970: 1_775_000_000)

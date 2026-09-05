@@ -8,7 +8,8 @@ extension DriveBuilder {
             discussion: "Composites every dial into a single telemetry.mov, frame by frame, "
                 + "rather than writing each dial's movie separately; use the individual "
                 + "dial commands to inspect one dial on its own. Run RouteMap separately "
-                + "for the route summary clip.")
+                + "for the route summary clip. Renders at a fixed 30 fps, interpolating "
+                + "telemetry sampled at 10 Hz; the --fps option does not apply.")
 
         @OptionGroup var telemetry: TelemetryOptions
 
@@ -40,7 +41,6 @@ extension DriveBuilder {
                 tileRenderer: progressTileRenderer)
                 .writeMovie(
                     to: video.outputURL(named: "telemetry", journeyDirectory: journeyDirectory),
-                    framesPerSecond: video.framesPerSecond,
                     frameLimit: video.frameLimit)
         }
     }

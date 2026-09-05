@@ -73,10 +73,17 @@ private func testRenderer() -> TelemetryVideoRenderer {
     #expect(renderer.height == 450)
 }
 
+@Test func expandedRecordsInterpolateToThirtyFps() {
+    let renderer = testRenderer()
+    // 3 records expand to 7: each original preceded by 2 interpolated thirds.
+    #expect(renderer.expandedRecords.count == 7)
+}
+
 @Test func artworkIsLimitedToTheRequestedFrames() throws {
     let renderer = testRenderer()
-    let artwork = try renderer.makeArtwork(frameCount: 1)
-    #expect(artwork.zoomedFrames.count == 1)
+    let frames = Array(renderer.expandedRecords.prefix(1))
+    let artwork = try renderer.makeArtwork(frames: frames)
+    #expect(artwork.records.count == 1)
     #expect(artwork.zoomedFrameTile.count == 1)
 }
 
@@ -102,7 +109,7 @@ private func isOpaqueWhite(_ colour: NSColor?) -> Bool {
 
 @Test func cellsLandWhereTheFFmpegOverlaysPutThem() throws {
     let renderer = testRenderer()
-    let artwork = try renderer.makeArtwork(frameCount: renderer.records.count)
+    let artwork = try renderer.makeArtwork(frames: renderer.expandedRecords)
     let frame = try compositedFrame(renderer, frameIndex: 0, artwork: artwork)
 
     // Dial cells: each corner shows its dial's 0.6-alpha black backdrop.
@@ -121,7 +128,7 @@ private func isOpaqueWhite(_ colour: NSColor?) -> Bool {
 
 @Test func gapsBetweenCellsStayTransparent() throws {
     let renderer = testRenderer()
-    let artwork = try renderer.makeArtwork(frameCount: renderer.records.count)
+    let artwork = try renderer.makeArtwork(frames: renderer.expandedRecords)
     let frame = try compositedFrame(renderer, frameIndex: 0, artwork: artwork)
 
     // Column gap between the dials, x 60-77.

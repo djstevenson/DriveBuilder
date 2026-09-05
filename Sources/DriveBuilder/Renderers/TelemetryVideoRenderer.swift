@@ -11,13 +11,19 @@ import Foundation
 /// and the overview progress map at the bottom, all over a transparent
 /// background. At the default sizes that is a 708x2160 canvas.
 ///
-/// Everything renders at the telemetry rate: one output frame per record.
-/// The zoomed map's own movie interpolates to 30 fps, but here it draws the
-/// un-interpolated record positions so all six dials share a frame clock.
+/// Everything renders at the zoomed map's 30 fps rate, sharing one clock:
+/// telemetry sampled at 10 Hz is expanded to 30 fps by interpolating two
+/// subframes between each pair of records (see `TelemetryRecord.subframeSequence`),
+/// and every dial draws from that same interpolated sequence rather than
+/// holding each telemetry sample for three frames.
 struct TelemetryVideoRenderer {
     static let dialName = "Telemetry"
 
     let records: [TelemetryRecord]
+
+    /// `records` expanded to 30 fps; every dial draws from this sequence so
+    /// they all move smoothly rather than just the zoomed map.
+    let expandedRecords: [TelemetryRecord]
 
     /// Edge length of each dial in the 2x2 grid, in pixels.
     let dialPixelSize: Int
@@ -26,11 +32,16 @@ struct TelemetryVideoRenderer {
     /// width, since the maps span the full width.
     let mapPixelSize: Int
 
-    var speedo: SpeedoRenderer
-    var gforce: GForceRenderer
-    var compass: CompassRenderer
-    var altitude: AltitudeRenderer
-    var progressMap: ProgressMapRenderer
+    let speedo: SpeedoRenderer
+    let gforce: GForceRenderer
+    let compass: CompassRenderer
+    let altitude: AltitudeRenderer
+    let progressMap: ProgressMapRenderer
+
+    /// Only its tile geometry and car artwork are used here — the composite
+    /// computes its own 30 fps frame sequence up front rather than calling
+    /// this renderer's own (equivalent) interpolation, so it's constructed
+    /// with the un-expanded records.
     var progressMapZoomed: ProgressMapZoomedRenderer
 
     init(
@@ -40,14 +51,16 @@ struct TelemetryVideoRenderer {
         tileRenderer: any MapTileRenderer
     ) {
         self.records = records
+        expandedRecords = TelemetryRecord.subframeSequence(
+            records, subframesPerRecord: ProgressMapZoomedRenderer.subframesPerRecord)
         self.dialPixelSize = dialPixelSize
         self.mapPixelSize = mapPixelSize
-        speedo = SpeedoRenderer(records: records, pixelSize: dialPixelSize)
-        gforce = GForceRenderer(records: records, pixelSize: dialPixelSize)
-        compass = CompassRenderer(records: records, pixelSize: dialPixelSize)
-        altitude = AltitudeRenderer(records: records, pixelSize: dialPixelSize)
+        speedo = SpeedoRenderer(records: expandedRecords, pixelSize: dialPixelSize)
+        gforce = GForceRenderer(records: expandedRecords, pixelSize: dialPixelSize)
+        compass = CompassRenderer(records: expandedRecords, pixelSize: dialPixelSize)
+        altitude = AltitudeRenderer(records: expandedRecords, pixelSize: dialPixelSize)
         progressMap = ProgressMapRenderer(
-            records: records, pixelSize: mapPixelSize, tileRenderer: tileRenderer)
+            records: expandedRecords, pixelSize: mapPixelSize, tileRenderer: tileRenderer)
         progressMapZoomed = ProgressMapZoomedRenderer(
             records: records, pixelSize: mapPixelSize, tileRenderer: tileRenderer)
     }
@@ -81,28 +94,29 @@ struct TelemetryVideoRenderer {
     // MARK: - Artwork
 
     /// Everything rasterized once and reused for every frame: each dial's
-    /// own artwork, plus the zoomed map's frame positions, tile schedule,
-    /// and rendered tiles.
+    /// own artwork, the interpolated records being rendered, and the zoomed
+    /// map's tile schedule and rendered tiles.
     struct Artwork {
         let speedo: SpeedoRenderer.Artwork
         let gforce: GForceRenderer.Artwork
         let compass: CompassRenderer.Artwork
         let altitude: AltitudeRenderer.Artwork
         let progressMap: ProgressMapRenderer.Artwork
-        let zoomedFrames: [ProgressMapZoomedRenderer.Frame]
+
+        /// The interpolated 30 fps records actually being rendered — a
+        /// prefix of `expandedRecords` once a frame limit is applied.
+        let records: [TelemetryRecord]
         let zoomedTileBoxes: [MapBBox]
         let zoomedFrameTile: [Int]
         let zoomedTiles: [CGImage]
         let car: CGImage
     }
 
-    /// Builds the artwork for the first `frameCount` records. Map tiles are
-    /// rendered up front by the external renderer — only the ones the
-    /// limited frame range needs.
-    func makeArtwork(frameCount: Int) throws -> Artwork {
-        // One zoomed-map frame per record, skipping the 30 fps interpolation.
-        let zoomedFrames = records.prefix(frameCount)
-            .map(ProgressMapZoomedRenderer.frame(for:))
+    /// Builds the artwork for exactly `frames`, which must be a (possibly
+    /// limited) prefix of `expandedRecords`. Map tiles are rendered up front
+    /// by the external renderer — only the ones this frame range needs.
+    func makeArtwork(frames: [TelemetryRecord]) throws -> Artwork {
+        let zoomedFrames = frames.map(ProgressMapZoomedRenderer.frame(for:))
         let (tileBoxes, frameTile) = progressMapZoomed.tileSchedule(for: zoomedFrames)
 
         var tiles: [CGImage] = []
@@ -118,7 +132,7 @@ struct TelemetryVideoRenderer {
             compass: try compass.makeArtwork(),
             altitude: try altitude.makeArtwork(),
             progressMap: try progressMap.makeArtwork(),
-            zoomedFrames: zoomedFrames,
+            records: frames,
             zoomedTileBoxes: tileBoxes,
             zoomedFrameTile: frameTile,
             zoomedTiles: tiles,
@@ -136,7 +150,7 @@ struct TelemetryVideoRenderer {
         // frame shows through the gaps between cells.
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
 
-        let record = records[frameIndex]
+        let record = artwork.records[frameIndex]
         inCell(at: speedoOrigin, size: dialPixelSize, in: context) {
             speedo.draw(record, into: $0, artwork: artwork.speedo)
         }
@@ -152,7 +166,7 @@ struct TelemetryVideoRenderer {
         inCell(at: zoomedMapOrigin, size: mapPixelSize, in: context) {
             let tileIndex = artwork.zoomedFrameTile[frameIndex]
             progressMapZoomed.draw(
-                artwork.zoomedFrames[frameIndex],
+                ProgressMapZoomedRenderer.frame(for: record),
                 tile: artwork.zoomedTiles[tileIndex],
                 bbox: artwork.zoomedTileBoxes[tileIndex],
                 car: artwork.car,
@@ -184,38 +198,41 @@ struct TelemetryVideoRenderer {
 
     // MARK: - Movie
 
-    /// Renders one composited frame per telemetry record into a ProRes 4444
-    /// movie with a transparent background.
+    /// Renders the movie at 30 fps: three frames per telemetry record.
     ///
-    /// Telemetry is sampled every 100 ms, so one record is one frame at 10 fps.
+    /// `frameLimit` counts output frames, matching how the zoomed map's own
+    /// standalone command interprets it.
     func writeMovie(
         to url: URL,
-        framesPerSecond: Int32 = 10,
         frameLimit: Int? = nil,
         concurrency: Int = ProcessInfo.processInfo.activeProcessorCount
     ) async throws {
-        let frameCount = min(records.count, frameLimit ?? records.count)
+        var frames = expandedRecords
+        if let frameLimit, frameLimit < frames.count {
+            frames = Array(frames.prefix(frameLimit))
+        }
 
         print(
-            "\(Self.dialName): \(records.count) telemetry records, "
-                + "rendering \(frameCount) composited \(width)x\(height) frames.")
+            "\(Self.dialName): \(records.count) telemetry records, rendering \(frames.count) "
+                + "composited \(width)x\(height) frames at \(ProgressMapZoomedRenderer.framesPerSecond) fps.")
 
-        let artwork = try makeArtwork(frameCount: frameCount)
+        let artwork = try makeArtwork(frames: frames)
         print(
             String(
                 format: "  %d zoomed-map tiles at %.2f m/px, %d-way compositing",
                 artwork.zoomedTiles.count, progressMapZoomed.metresPerPixel, concurrency))
 
         var writer = AlphaMovieWriter(
-            url: url, width: width, height: height, framesPerSecond: framesPerSecond)
+            url: url, width: width, height: height,
+            framesPerSecond: ProgressMapZoomedRenderer.framesPerSecond)
         writer.concurrency = concurrency
 
         let started = ContinuousClock.now
         try await writer.write(
-            frameCount: frameCount,
+            frameCount: frames.count,
             progress: { done in
-                guard done % 1000 == 0 || done == frameCount else { return }
-                FileHandle.standardError.write(Data("  \(done)/\(frameCount) frames\n".utf8))
+                guard done % 1000 == 0 || done == frames.count else { return }
+                FileHandle.standardError.write(Data("  \(done)/\(frames.count) frames\n".utf8))
             },
             drawFrame: { index, context in
                 draw(frameIndex: index, into: context, artwork: artwork)
@@ -227,8 +244,8 @@ struct TelemetryVideoRenderer {
         print(
             String(
                 format: "  wrote %.1fs of %dx%d ProRes 4444 in %.1fs (%.3f ms/frame) to %@",
-                Double(frameCount) / Double(framesPerSecond), width, height,
-                seconds, seconds * 1000 / Double(max(frameCount, 1)),
+                Double(frames.count) / Double(ProgressMapZoomedRenderer.framesPerSecond),
+                width, height, seconds, seconds * 1000 / Double(max(frames.count, 1)),
                 url.path(percentEncoded: false)))
     }
 }
