@@ -3,8 +3,9 @@ import CoreGraphics
 import CoreText
 import Foundation
 
-/// Builds the altitude indicator for a journey: a mountain silhouette with the
-/// current altitude below it in feet.
+/// Builds the altitude indicator for a journey: latitude, longitude, and
+/// altitude as text, each on its own opaque box so the numbers stay legible
+/// whatever the dashcam footage behind the dial is doing.
 ///
 /// Takes the telemetry it needs as a plain array so it can be exercised with
 /// synthetic records, without a database.
@@ -19,8 +20,20 @@ struct AltitudeRenderer: DialRenderer {
     /// Edge length of the rendered frame, in pixels.
     var pixelSize = 345
 
-    /// Colour and opacity of the square backdrop drawn behind the dial.
-    static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
+    /// Fully opaque, unlike the other dials' translucent backdrop: the box
+    /// is what keeps the text readable, so it can't let footage show through.
+    static let boxColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+    static let textColor = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+
+    /// Doubled from an initial 13pt: at that size the text read as illegible
+    /// once encoded down to 1080p or 720p.
+    static let fontSize = 26.0
+    static let cornerRadius = 4.0
+    static let textPadding = 10.0
+    static let rowHeight = 25.0
+    static let rowGap = 4.0
+    static let topMargin = 6.0
+    static let boxLeft = 14.0
 
     /// The altitude to display for a record, in whole feet.
     ///
@@ -30,96 +43,127 @@ struct AltitudeRenderer: DialRenderer {
         Int(feetPerMetre * record.altitude + 0.5)
     }
 
-    /// Every altitude the journey needs a text layer for.
-    var altitudes: Set<Int> {
-        Set(records.map(Self.altitudeFeet(for:)))
+    static func latitudeText(_ record: TelemetryRecord) -> String {
+        String(format: "LAT %.4f", record.latitude)
     }
 
-    /// Artwork rasterized once and reused for every frame.
+    static func longitudeText(_ record: TelemetryRecord) -> String {
+        String(format: "LON %.4f", record.longitude)
+    }
+
+    static func altitudeText(_ record: TelemetryRecord) -> String {
+        "ALT \(altitudeFeet(for: record)) ft"
+    }
+
+    /// The three rows drawn for a record, top to bottom.
+    static func rowTexts(for record: TelemetryRecord) -> [String] {
+        [latitudeText(record), longitudeText(record), altitudeText(record)]
+    }
+
+    /// A row's bottom edge, in the nominal 120-unit viewBox the other dials'
+    /// artwork uses, counted down from the top so a fourth row (an odometer)
+    /// can be added below later without disturbing these three.
+    static func rowBottom(_ index: Int) -> Double {
+        120 - topMargin - Double(index + 1) * rowHeight - Double(index) * rowGap
+    }
+
+    /// Artwork rasterized once and reused for every frame: just the font and
+    /// each row's box width. The width is fixed to whatever that journey's
+    /// most extreme value on that line needs, so the box never resizes from
+    /// frame to frame.
     struct Artwork {
-        /// Semi-transparent square drawn behind the dial.
-        let background: CGImage
+        let font: NSFont
 
-        let dial: CGImage
+        /// Box width per row, in the same 120-unit viewBox as `rowBottom`.
+        let boxWidths: [Double]
 
-        /// The "N ft" label pre-rendered for each whole-feet altitude that
-        /// occurs, so the concurrent frame path is a blit with no text engine.
-        /// A journey has a few hundred distinct values.
-        let labels: [Int: CGImage]
+        init(records: [TelemetryRecord]) {
+            // Kept as a local rather than assigned to `self.font` up front:
+            // the nested `inkWidth` below captures it, and a nested function
+            // can't capture `self` before every stored property is set.
+            let font = NSFont.transport(size: AltitudeRenderer.fontSize)
 
-        init(pixelSize: Int, altitudes: Set<Int>) throws {
-            background = try LayerCompositor.solidImage(
-                color: AltitudeRenderer.backgroundColor, width: pixelSize, height: pixelSize)
-
-            let bitmap = try SVGRasterizer.bitmap(
-                from: BundledArtwork.svg("dial", dial: "altitude"),
-                width: pixelSize,
-                height: pixelSize)
-            guard let image = bitmap.cgImage else {
-                throw SVGRasterizerError.undecodableArtwork
+            func inkWidth(_ text: String) -> Double {
+                let line = CTLineCreateWithAttributedString(
+                    NSAttributedString(string: text, attributes: [.font: font]))
+                return Double(CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds]).width)
             }
-            dial = image
 
-            var labels: [Int: CGImage] = [:]
-            for altitude in altitudes {
-                labels[altitude] = try Artwork.label("\(altitude) ft", pixelSize: pixelSize)
-            }
-            self.labels = labels
-        }
+            let latitudes = records.map(\.latitude)
+            let longitudes = records.map(\.longitude)
+            let altitudes = records.map(AltitudeRenderer.altitudeFeet(for:))
 
-        /// Matches the source SVG text: font-size 14 and baseline y=105 in
-        /// the 120-unit viewBox, fill #333, centred on x=60.
-        static func label(_ text: String, pixelSize: Int) throws -> CGImage {
-            let context = try LayerCompositor.bitmapContext(width: pixelSize, height: pixelSize)
-            let scale = CGFloat(pixelSize) / 120
+            let latWidth = max(
+                inkWidth(String(format: "LAT %.4f", latitudes.min() ?? 0)),
+                inkWidth(String(format: "LAT %.4f", latitudes.max() ?? 0)))
+            let lonWidth = max(
+                inkWidth(String(format: "LON %.4f", longitudes.min() ?? 0)),
+                inkWidth(String(format: "LON %.4f", longitudes.max() ?? 0)))
+            let altWidth = max(
+                inkWidth("ALT \(altitudes.min() ?? 0) ft"),
+                inkWidth("ALT \(altitudes.max() ?? 0) ft"))
 
-            let font = NSFont.transport(size: 14 * scale)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .init(kCTFontAttributeName as String): font,
-                .init(kCTForegroundColorFromContextAttributeName as String): true,
-            ]
-            let line = CTLineCreateWithAttributedString(
-                NSAttributedString(string: text, attributes: attributes))
-            // Positioned by the glyphs' actual ink rather than the advance
-            // width and font metrics: Transport's side bearings aren't
-            // symmetric and its glyphs don't sit where the metrics imply, so
-            // metric-based placement leaves the label visibly off.
-            let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
-
-            context.setFillColor(CGColor(srgbRed: 0.2, green: 0.2, blue: 0.2, alpha: 1))
-            // The context origin is bottom-left, so the SVG baseline y=105
-            // measures 15 viewBox units up from the bottom; the ink is set to
-            // rest on it, and centred horizontally on the dial.
-            context.textPosition = CGPoint(
-                x: CGFloat(pixelSize) / 2 - (ink.minX + ink.width / 2),
-                y: 15 * scale - ink.minY)
-            CTLineDraw(line, context)
-
-            guard let image = context.makeImage() else {
-                throw SVGRasterizerError.contextUnavailable
-            }
-            return image
+            self.font = font
+            boxWidths = [latWidth, lonWidth, altWidth].map { $0 + 2 * AltitudeRenderer.textPadding }
         }
     }
 
     func makeArtwork() throws -> Artwork {
-        try Artwork(pixelSize: pixelSize, altitudes: altitudes)
+        Artwork(records: records)
     }
 
-    /// Draws one frame into `context`: static mountain, cached altitude label.
+    /// Draws one frame into `context`: three opaque rounded boxes, one per
+    /// line of text.
     func draw(_ record: TelemetryRecord, into context: CGContext, artwork: Artwork) {
-        var layers: [LayerCompositor.Layer] = [.init(artwork.background), .init(artwork.dial)]
-        if let label = artwork.labels[Self.altitudeFeet(for: record)] {
-            layers.append(.init(label))
+        let scale = CGFloat(pixelSize) / 120
+        context.clear(CGRect(x: 0, y: 0, width: pixelSize, height: pixelSize))
+
+        for (index, text) in Self.rowTexts(for: record).enumerated() {
+            drawRow(
+                text, boxWidth: artwork.boxWidths[index], bottom: Self.rowBottom(index),
+                scale: scale, font: artwork.font, into: context)
         }
-        LayerCompositor.draw(layers, into: context, width: pixelSize, height: pixelSize)
+    }
+
+    /// Matches the source SVG text conventions elsewhere: positioned by the
+    /// glyphs' actual ink rather than the advance width and font metrics,
+    /// since Transport's side bearings aren't symmetric and its glyphs don't
+    /// sit where the metrics imply.
+    private func drawRow(
+        _ text: String, boxWidth: Double, bottom: Double, scale: CGFloat, font: NSFont,
+        into context: CGContext
+    ) {
+        let boxRect = CGRect(
+            x: Self.boxLeft * scale, y: bottom * scale,
+            width: boxWidth * scale, height: Self.rowHeight * scale)
+
+        context.setFillColor(Self.boxColor)
+        context.addPath(
+            CGPath(
+                roundedRect: boxRect, cornerWidth: Self.cornerRadius * scale,
+                cornerHeight: Self.cornerRadius * scale, transform: nil))
+        context.fillPath()
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .init(kCTFontAttributeName as String): font,
+            .init(kCTForegroundColorFromContextAttributeName as String): true,
+        ]
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: text, attributes: attributes))
+        let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
+
+        context.setFillColor(Self.textColor)
+        context.textPosition = CGPoint(
+            x: boxRect.minX + Self.textPadding * scale - ink.minX,
+            y: boxRect.minY + (boxRect.height - ink.height) / 2 - ink.minY)
+        CTLineDraw(line, context)
     }
 
     func summaryLines(artwork: Artwork, frameCount: Int, concurrency: Int) -> [String] {
         let altitudes = records.prefix(frameCount).map(Self.altitudeFeet(for:))
         return [
             "  altitude \(altitudes.min() ?? 0)-\(altitudes.max() ?? 0) ft",
-            "  \(artwork.labels.count) cached labels, \(concurrency)-way compositing",
+            "  \(concurrency)-way compositing",
         ]
     }
 }
