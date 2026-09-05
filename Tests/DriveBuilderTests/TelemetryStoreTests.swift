@@ -13,9 +13,9 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
 @Test func loadsRecordsAndDirectoryForAnExistingJourney() throws {
     let store = TelemetryStore(path: fixtureDirectory.appending(path: "telemetry.sqlite3").path)
     #expect(try store.records(journeyID: 1).count == 38397)
-    #expect(
-        try store.journeyDirectory(journeyID: 1)
-            == "/Users/davids/Movies/transport/Test footage/A338 Northbound")
+    // The fixture's source is a placeholder string, never resolved to a real
+    // directory, so it doesn't matter that it isn't a real machine path.
+    #expect(try store.journeyDirectory(journeyID: 1) == "Fixtures/A338 Northbound")
 }
 
 @Test func throwsJourneyNotFoundForAnUnknownJourneyID() throws {
@@ -30,9 +30,7 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
 
 @Test func findsJourneysBySourceAndByRoad() throws {
     let store = TelemetryStore(path: fixtureDirectory.appending(path: "telemetry.sqlite3").path)
-    #expect(
-        try store.journeyID(
-            source: "/Users/davids/Movies/transport/Test footage/A338 Northbound") == 1)
+    #expect(try store.journeyID(source: "Fixtures/A338 Northbound") == 1)
     #expect(try store.journeyID(source: "/nowhere") == nil)
     #expect(try store.journeyID(roadType: "A", roadNumber: 338) == 1)
     #expect(try store.journeyID(roadType: "M", roadNumber: 27) == nil)
