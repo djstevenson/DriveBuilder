@@ -6,7 +6,8 @@ import Testing
 @testable import DriveBuilder
 
 private func record(
-    latitude: Double = 0, longitude: Double = 0, altitudeMetres: Double = 0
+    latitude: Double = 0, longitude: Double = 0, altitudeMetres: Double = 0,
+    odometerMetres: Double = 0
 ) -> TelemetryRecord {
     TelemetryRecord(
         id: 1,
@@ -22,7 +23,7 @@ private func record(
         speedLimit: nil,
         file: nil,
         source: "test",
-        odometer: 0)
+        odometer: odometerMetres)
 }
 
 @Test func metresConvertToWholeFeetLikeThePerlRounding() {
@@ -35,13 +36,20 @@ private func record(
 
 @Test func rowTextsFormatLatitudeLongitudeToFourDecimalPlacesWithAHemisphereLetterInsteadOfASign() {
     let texts = AltitudeRenderer.rowTexts(
-        for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100))
-    #expect(texts == ["51.5000N", "1.2500W", "↑328 ft"])
+        for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100, odometerMetres: 0))
+    #expect(texts == ["51.5000N", "1.2500W", "328 ft", "0.0 mi"])
 
     let southAndEast = AltitudeRenderer.rowTexts(
         for: record(latitude: -33.8, longitude: 151.2, altitudeMetres: 0))
     #expect(southAndEast[0] == "33.8000S")
     #expect(southAndEast[1] == "151.2000E")
+}
+
+@Test func odometerTextConvertsMetresToMilesToOneDecimalPlace() {
+    // 1 mile = 1609.344 m exactly, so this is exactly 10.0 mi rather than
+    // something that depends on rounding.
+    let texts = AltitudeRenderer.rowTexts(for: record(odometerMetres: 16_093.44))
+    #expect(texts[3] == "10.0 mi")
 }
 
 /// Box geometry is fixed regardless of content - the same margin either
