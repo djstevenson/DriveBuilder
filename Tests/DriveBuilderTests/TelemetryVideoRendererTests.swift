@@ -115,7 +115,9 @@ private func isOpaqueWhite(_ colour: NSColor?) -> Bool {
 
     // Dial cells: each corner shows its dial's 0.6-alpha black backdrop.
     // Speedo (0, 0), g-force (78, 0), compass (0, 78), altitude (78, 78).
-    for (x, y) in [(3, 3), (81, 3), (3, 81), (81, 81)] {
+    // Offset by 1px rather than 3px: altitude's top text box starts close
+    // enough to its cell's corner at this tiny scale that 3px would clip it.
+    for (x, y) in [(1, 1), (79, 1), (1, 79), (79, 79)] {
         let backdrop = try #require(frame.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
         #expect(abs(backdrop.alphaComponent - 0.6) < 0.05)
         #expect(backdrop.redComponent < 0.1)

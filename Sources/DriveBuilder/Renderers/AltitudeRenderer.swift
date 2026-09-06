@@ -3,9 +3,9 @@ import CoreGraphics
 import CoreText
 import Foundation
 
-/// Builds the altitude indicator for a journey: latitude, longitude, and
-/// altitude as text, each on its own opaque box so the numbers stay legible
-/// whatever the dashcam footage behind the dial is doing.
+/// Builds the altitude indicator for a journey: latitude, longitude,
+/// altitude, and odometer as text, each on its own opaque box so the numbers
+/// stay legible whatever the dashcam footage behind the dial is doing.
 ///
 /// Takes the telemetry it needs as a plain array so it can be exercised with
 /// synthetic records, without a database.
@@ -14,6 +14,10 @@ struct AltitudeRenderer: DialRenderer {
 
     /// Telemetry `altitude` is metres; the indicator reads in feet.
     static let feetPerMetre = 3.280839895
+
+    /// Telemetry `odometer` is metres; the indicator reads in miles, since
+    /// that's what UK road distances are signed in.
+    static let metresPerMile = 1609.344
 
     let records: [TelemetryRecord]
 
@@ -56,8 +60,48 @@ struct AltitudeRenderer: DialRenderer {
     static let textPadding = 5.0
 
     static let rowHeight = 25.0
-    static let rowGap = 4.0
-    static let topMargin = 6.0
+    static let rowGap = 3.0
+    static let topMargin = 5.0
+
+    /// The row that gets a mountain icon instead of a text label: altitude,
+    /// third from the top.
+    static let altitudeRowIndex = 2
+
+    /// A simplified two-peak mountain silhouette, normalised to a unit
+    /// square (0,0)-(1,1) with its base on the x-axis - a smaller redraw of
+    /// the profile in the mountain SVG this dial used to show at full size.
+    private static let mountainProfile: [CGPoint] = [
+        CGPoint(x: 0, y: 0),
+        CGPoint(x: 0.2778, y: 0.6667),
+        CGPoint(x: 0.5, y: 0.3333),
+        CGPoint(x: 0.7222, y: 1.0),
+        CGPoint(x: 1, y: 0),
+    ]
+
+    /// Icon height as a fraction of the font's point size, so it scales
+    /// with the text instead of needing its own fitted size.
+    private static let mountainIconHeightRatio = 0.75
+    /// Width:height of the original mountain artwork (90:60 in its 120-unit
+    /// viewBox).
+    private static let mountainIconAspect = 1.5
+    /// Gap between the icon and the text, also relative to font size so the
+    /// whole leading section scales linearly with it (see `Artwork.init`).
+    private static let mountainIconGapRatio = 0.3
+    /// Combined width of the icon and its trailing gap, as a multiple of
+    /// font point size.
+    private static let mountainLeadingRatio =
+        mountainIconHeightRatio * mountainIconAspect + mountainIconGapRatio
+
+    /// The mountain silhouette scaled and positioned to fill `rect`.
+    private static func mountainPath(in rect: CGRect) -> CGPath {
+        let path = CGMutablePath()
+        let points = mountainProfile.map {
+            CGPoint(x: rect.minX + $0.x * rect.width, y: rect.minY + $0.y * rect.height)
+        }
+        path.addLines(between: points)
+        path.closeSubpath()
+        return path
+    }
 
     /// The altitude to display for a record, in whole feet.
     ///
@@ -82,12 +126,17 @@ struct AltitudeRenderer: DialRenderer {
         String(format: "%.4f", abs(longitude)) + (longitude < 0 ? "W" : "E")
     }
 
-    /// No "ALT" label either, for the same reason - an up arrow marks the
-    /// row instead. Transport has no arrow glyph, so this falls back to a
-    /// system font for that one character; Core Text substitutes it
-    /// automatically mid-line.
+    /// No "ALT" label either, for the same reason - a small mountain icon
+    /// marks the row instead (see `mountainPath(in:)`).
     static func altitudeText(feet: Int) -> String {
-        "↑\(feet) ft"
+        "\(feet) ft"
+    }
+
+    /// Car odometers read to a tenth of a mile, so this matches that
+    /// resolution rather than implying more precision than the GPS-derived
+    /// distance actually has.
+    static func odometerText(miles: Double) -> String {
+        String(format: "%.1f mi", miles)
     }
 
     static func latitudeText(_ record: TelemetryRecord) -> String {
@@ -102,14 +151,20 @@ struct AltitudeRenderer: DialRenderer {
         altitudeText(feet: altitudeFeet(for: record))
     }
 
-    /// The three rows drawn for a record, top to bottom.
+    static func odometerText(_ record: TelemetryRecord) -> String {
+        odometerText(miles: record.odometer / metresPerMile)
+    }
+
+    /// The four rows drawn for a record, top to bottom.
     static func rowTexts(for record: TelemetryRecord) -> [String] {
-        [latitudeText(record), longitudeText(record), altitudeText(record)]
+        [
+            latitudeText(record), longitudeText(record), altitudeText(record),
+            odometerText(record),
+        ]
     }
 
     /// A row's bottom edge, in the nominal 120-unit viewBox the other dials'
-    /// artwork uses, counted down from the top so a fourth row (an odometer)
-    /// can be added below later without disturbing these three.
+    /// artwork uses, counted down from the top.
     static func rowBottom(_ index: Int) -> Double {
         120 - topMargin - Double(index + 1) * rowHeight - Double(index) * rowGap
     }
@@ -137,16 +192,30 @@ struct AltitudeRenderer: DialRenderer {
             let (latMin, latMax) = extremes(records.map(\.latitude))
             let (lonMin, lonMax) = extremes(records.map(\.longitude))
             let feet = records.map(AltitudeRenderer.altitudeFeet(for:))
+            let (milesMin, milesMax) = extremes(
+                records.map { $0.odometer / AltitudeRenderer.metresPerMile })
 
             let candidates = [
                 AltitudeRenderer.latitudeText(latMin), AltitudeRenderer.latitudeText(latMax),
                 AltitudeRenderer.longitudeText(lonMin), AltitudeRenderer.longitudeText(lonMax),
+                AltitudeRenderer.odometerText(miles: milesMin),
+                AltitudeRenderer.odometerText(miles: milesMax),
+            ]
+            // The altitude row spends some of its width on the mountain
+            // icon instead of text, so its candidates need that allowance
+            // added - both scale with font size, so the ratio stays exact.
+            let altitudeCandidates = [
                 AltitudeRenderer.altitudeText(feet: feet.min() ?? 0),
                 AltitudeRenderer.altitudeText(feet: feet.max() ?? 0),
             ]
 
             let ceilingFont = NSFont.transport(size: AltitudeRenderer.fontSize)
-            let widest = candidates.map { inkWidth($0, font: ceilingFont) }.max() ?? 0
+            let mountainLeadingWidth =
+                AltitudeRenderer.fontSize * AltitudeRenderer.mountainLeadingRatio
+            let widest =
+                (candidates.map { inkWidth($0, font: ceilingFont) }
+                    + altitudeCandidates.map { inkWidth($0, font: ceilingFont) + mountainLeadingWidth })
+                .max() ?? 0
             let availableWidth =
                 AltitudeRenderer.boxWidth - 2 * AltitudeRenderer.textPadding
 
@@ -184,7 +253,7 @@ struct AltitudeRenderer: DialRenderer {
         for (index, text) in Self.rowTexts(for: record).enumerated() {
             drawRow(
                 text, bottom: Self.rowBottom(index), scale: scale, font: drawFont,
-                into: context)
+                showsMountainIcon: index == Self.altitudeRowIndex, into: context)
         }
     }
 
@@ -193,7 +262,8 @@ struct AltitudeRenderer: DialRenderer {
     /// since Transport's side bearings aren't symmetric and its glyphs don't
     /// sit where the metrics imply.
     private func drawRow(
-        _ text: String, bottom: Double, scale: CGFloat, font: NSFont, into context: CGContext
+        _ text: String, bottom: Double, scale: CGFloat, font: NSFont, showsMountainIcon: Bool,
+        into context: CGContext
     ) {
         let boxRect = CGRect(
             x: Self.boxLeft * scale, y: bottom * scale,
@@ -206,6 +276,19 @@ struct AltitudeRenderer: DialRenderer {
                 cornerHeight: Self.cornerRadius * scale, transform: nil))
         context.fillPath()
 
+        var textLeft = boxRect.minX + Self.textPadding * scale
+        if showsMountainIcon {
+            let iconHeight = font.pointSize * Self.mountainIconHeightRatio
+            let iconWidth = iconHeight * Self.mountainIconAspect
+            let iconRect = CGRect(
+                x: textLeft, y: boxRect.minY + (boxRect.height - iconHeight) / 2,
+                width: iconWidth, height: iconHeight)
+            context.setFillColor(Self.textColor)
+            context.addPath(Self.mountainPath(in: iconRect))
+            context.fillPath()
+            textLeft += iconWidth + font.pointSize * Self.mountainIconGapRatio
+        }
+
         let attributes: [NSAttributedString.Key: Any] = [
             .init(kCTFontAttributeName as String): font,
             .init(kCTForegroundColorFromContextAttributeName as String): true,
@@ -216,7 +299,7 @@ struct AltitudeRenderer: DialRenderer {
 
         context.setFillColor(Self.textColor)
         context.textPosition = CGPoint(
-            x: boxRect.minX + Self.textPadding * scale - ink.minX,
+            x: textLeft - ink.minX,
             y: boxRect.minY + (boxRect.height - ink.height) / 2 - ink.minY)
         CTLineDraw(line, context)
     }
