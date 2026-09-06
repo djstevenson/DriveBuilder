@@ -15,4 +15,7 @@ struct TelemetryRecord: Sendable, Identifiable {
     let speedLimit: Int?
     let file: String?
     let source: String
+    /// Cumulative great-circle distance travelled since the journey's first
+    /// sample, in metres.
+    let odometer: Double
 }

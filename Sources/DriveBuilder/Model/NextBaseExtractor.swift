@@ -22,6 +22,10 @@ struct TelemetrySample: Sendable {
     var speedLimit: Int?
     var file: String?
     var source: String
+    /// Cumulative great-circle distance travelled since the journey's first
+    /// sample, in metres. Zero until `TelemetrySample.addingOdometer(to:)`
+    /// fills it in, once the whole journey's samples are known.
+    var odometer: Double = 0
 }
 
 extension TelemetrySample {

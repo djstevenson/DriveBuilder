@@ -13,9 +13,13 @@ import Foundation
 struct ProgressMapZoomedRenderer {
     static let dialName = "ProgressMapZoomed"
 
-    /// Metres shown per pixel of the rendered map: much more detail than an
+    /// The frame size the map's proportions were designed at; rendering at
+    /// another size scales the whole picture rather than changing the view.
+    static let designPixelSize = 420.0
+
+    /// Metres shown per pixel at the design size: much more detail than an
     /// overview map, since only a small window around the car is shown.
-    static let metresPerPixel = 2.0
+    static let designMetresPerPixel = 2.0
 
     /// Output frames per telemetry record, and the matching frame rate for
     /// telemetry sampled at 10 Hz.
@@ -31,51 +35,26 @@ struct ProgressMapZoomedRenderer {
     /// arbitrarily long, so rather than render it all at full detail (which
     /// is wasteful and can exceed bitmap size limits), modest tiles are
     /// rendered around the car and replaced as the car nears their edge.
-    /// Must be comfortably bigger than the output window.
-    var tileSizeMetres = 30_000.0
+    /// Must be comfortably bigger than the output window (840 m of ground).
+    /// Sized to keep the decoded tile modest — 10 km is ~8,400 px and
+    /// ~280 MB at the 708 px production size, where 30 km was 2.6 GB — while
+    /// still amortizing maprender.py's fixed startup over ~9 km of travel.
+    var tileSizeMetres = 10_000.0
 
     let tileRenderer: any MapTileRenderer
+
+    /// Metres per pixel at the actual frame size: the window always covers
+    /// the same ground as at the design size, so a bigger frame shows the
+    /// same picture at a larger scale.
+    var metresPerPixel: Double {
+        Self.designMetresPerPixel * Self.designPixelSize / Double(pixelSize)
+    }
 
     /// How close the car can get to a tile's edge before the next frame
     /// switches to a tile centred on the car: half the output window, so
     /// the window always stays inside the tile.
     var tileMarginMetres: Double {
-        Double(pixelSize) / 2 * Self.metresPerPixel
-    }
-
-    // MARK: - Interpolation
-
-    /// Interpolates headings across the 0/360 wrap by the shortest arc.
-    static func interpolateHeading(from previous: Double, to current: Double, fraction: Double)
-        -> Double
-    {
-        var delta = current - previous
-        while delta > 180 { delta -= 360 }
-        while delta < -180 { delta += 360 }
-        return previous + delta * fraction
-    }
-
-    /// A record `fraction` of the way from `previous` to `current`.
-    static func interpolate(
-        _ previous: TelemetryRecord, _ current: TelemetryRecord, fraction: Double
-    ) -> TelemetryRecord {
-        func lerp(_ a: Double, _ b: Double) -> Double { a + (b - a) * fraction }
-        return TelemetryRecord(
-            id: previous.id,
-            journeyID: previous.journeyID,
-            timestamp: previous.timestamp.addingTimeInterval(
-                current.timestamp.timeIntervalSince(previous.timestamp) * fraction),
-            latitude: lerp(previous.latitude, current.latitude),
-            longitude: lerp(previous.longitude, current.longitude),
-            altitude: lerp(previous.altitude, current.altitude),
-            speed: lerp(previous.speed, current.speed),
-            heading: interpolateHeading(
-                from: previous.heading, to: current.heading, fraction: fraction),
-            accelForward: nil,
-            accelLateral: nil,
-            speedLimit: previous.speedLimit,
-            file: previous.file ?? current.file,
-            source: "Interpolated")
+        Double(pixelSize) / 2 * metresPerPixel
     }
 
     // MARK: - Frames and tiles
@@ -95,27 +74,14 @@ struct ProgressMapZoomedRenderer {
     /// The full output frame sequence: each record preceded by the subframes
     /// interpolated from its predecessor.
     var frames: [Frame] {
-        var frames: [Frame] = []
-        frames.reserveCapacity(max(records.count * Self.subframesPerRecord - 2, 0))
-        var previous: TelemetryRecord?
-        for record in records {
-            if let previous {
-                for step in 1..<Self.subframesPerRecord {
-                    let fraction = Double(step) / Double(Self.subframesPerRecord)
-                    frames.append(
-                        Self.frame(for: Self.interpolate(previous, record, fraction: fraction)))
-                }
-            }
-            frames.append(Self.frame(for: record))
-            previous = record
-        }
-        return frames
+        TelemetryRecord.subframeSequence(records, subframesPerRecord: Self.subframesPerRecord)
+            .map(Self.frame(for:))
     }
 
     /// A tile bounding box centred on a grid position.
     func tileBBox(centredOn grid: OSGB.GridPoint) -> MapBBox {
         let half = tileSizeMetres / 2
-        let sizePixels = Int((tileSizeMetres / Self.metresPerPixel).rounded(.up))
+        let sizePixels = Int((tileSizeMetres / metresPerPixel).rounded(.up))
         return MapBBox(
             minEasting: grid.easting - half,
             minNorthing: grid.northing - half,
@@ -209,8 +175,9 @@ struct ProgressMapZoomedRenderer {
             "\(Self.dialName): \(records.count) telemetry records, "
                 + "rendering \(frames.count) frames at \(Self.framesPerSecond) fps.")
         print(
-            "  \(tileBoxes.count) map tiles at \(Self.metresPerPixel) m/px, "
-                + "\(concurrency)-way compositing")
+            String(
+                format: "  %d map tiles at %.2f m/px, %d-way compositing",
+                tileBoxes.count, metresPerPixel, concurrency))
 
         let car = try carImage()
         var tiles: [CGImage] = []

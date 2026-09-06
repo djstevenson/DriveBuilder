@@ -116,3 +116,47 @@ private func sample(
         limits.enumerated().map { sample(tick: Int64($0.offset), speedLimit: $0.element) })
     #expect(smoothed.map(\.speedLimit) == limits)
 }
+
+// MARK: - Odometer
+
+@Test func haversineMeasuresOneDegreeOfLatitudeAsAboutOneHundredAndElevenKilometres() {
+    // Longitude is unchanged, so the haversine formula's central angle is
+    // exactly the one-degree gap in radians, and the distance is exactly
+    // that fraction of the Earth's circumference - no approximation.
+    let metres = TelemetrySample.haversineMetres(
+        latitude1: 0, longitude1: 0, latitude2: 1, longitude2: 0)
+    let expected = 6_371_000.0 * (1 * Double.pi / 180)
+    #expect(abs(metres - expected) < 1e-6)
+}
+
+@Test func haversineOfIdenticalPointsIsZero() {
+    let metres = TelemetrySample.haversineMetres(
+        latitude1: 51.5, longitude1: -1.25, latitude2: 51.5, longitude2: -1.25)
+    #expect(abs(metres) < 1e-9)
+}
+
+@Test func addingOdometerStartsAtZeroAndAccumulatesEachHop() {
+    let samples = [
+        sample(tick: 0, latitude: 0, longitude: 0),
+        sample(tick: 1, latitude: 1, longitude: 0),
+        sample(tick: 2, latitude: 1, longitude: 1),
+    ]
+    let withOdometer = TelemetrySample.addingOdometer(to: samples)
+
+    let firstHop = TelemetrySample.haversineMetres(
+        latitude1: 0, longitude1: 0, latitude2: 1, longitude2: 0)
+    let secondHop = TelemetrySample.haversineMetres(
+        latitude1: 1, longitude1: 0, latitude2: 1, longitude2: 1)
+
+    #expect(withOdometer[0].odometer == 0)
+    #expect(abs(withOdometer[1].odometer - firstHop) < 1e-6)
+    #expect(abs(withOdometer[2].odometer - (firstHop + secondHop)) < 1e-6)
+}
+
+@Test func addingOdometerHandlesEmptyAndSingleSampleInput() {
+    #expect(TelemetrySample.addingOdometer(to: []).isEmpty)
+
+    let single = TelemetrySample.addingOdometer(to: [sample(tick: 0)])
+    #expect(single.count == 1)
+    #expect(single[0].odometer == 0)
+}

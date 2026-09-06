@@ -3,7 +3,13 @@ import Foundation
 
 extension DriveBuilder {
     struct Dials: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Rebuild all telemetry dials.")
+        static let configuration = CommandConfiguration(
+            abstract: "Build the combined telemetry video for a journey.",
+            discussion: "Composites every dial into a single telemetry.mov, frame by frame, "
+                + "rather than writing each dial's movie separately; use the individual "
+                + "dial commands to inspect one dial on its own. Run RouteMap separately "
+                + "for the route summary clip. Renders at a fixed 30 fps, interpolating "
+                + "telemetry sampled at 10 Hz; the --fps option does not apply.")
 
         @OptionGroup var telemetry: TelemetryOptions
 
@@ -11,125 +17,31 @@ extension DriveBuilder {
 
         @OptionGroup var map: MapOptions
 
-        @OptionGroup var route: RouteMapOptions
+        func validate() throws {
+            // The composite's layout derives the inter-dial gap from the two
+            // default edge lengths; a single override can't describe both.
+            if video.pixelSize != nil {
+                throw ValidationError(
+                    "--size does not apply to the combined telemetry video; "
+                        + "use the individual dial commands to render at another size.")
+            }
+        }
 
-        /// Loads the journey once and hands the same records to every renderer.
-        ///
-        /// The dials all render concurrently: each movie is an independent
-        /// encoder session, so wall time approaches the slowest dial rather
-        /// than the sum. Capping the number of concurrent dials was tried and
-        /// measured slower than letting them all run.
         mutating func run() async throws {
             let records = try telemetry.load()
-            let video = video
             let journeyDirectory = try telemetry.journeyDirectory()
-            let tileRenderer = map.tileRenderer
-            let routeConfig = try route.loadConfig(journeyDirectory: journeyDirectory)
-            var routeTileRenderer = tileRenderer
-            routeTileRenderer.scaleFactor =
-                Double(routeConfig.width) / RouteMapRenderer.mapXMLDesignWidth
-            var nationalTileRenderer = tileRenderer
-            nationalTileRenderer.stylesheet = "map-national.xml"
-            nationalTileRenderer.scaleFactor =
-                Double(routeConfig.width) / RouteMapRenderer.mapXMLDesignWidth
+            var progressTileRenderer = map.tileRenderer
+            progressTileRenderer.scaleFactor =
+                Double(video.mapPixelSize) / ProgressMapRenderer.designPixelSize
 
-            let dials: [@Sendable () async throws -> Void] = [
-                {
-                    try await SpeedoRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "speedo", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await LimitRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "limit", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await CompassRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "compass", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await AltitudeRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "altitude", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await GForceRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "gforce", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await WallClockRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "wall", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await RelativeClockRenderer(records: records, pixelSize: video.pixelSize)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "relative", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await ProgressMapRenderer(
-                        records: records,
-                        pixelSize: video.pixelSize,
-                        tileRenderer: tileRenderer)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "progress_map", journeyDirectory: journeyDirectory),
-                            framesPerSecond: video.framesPerSecond,
-                            frameLimit: video.frameLimit)
-                },
-                {
-                    try await ProgressMapZoomedRenderer(
-                        records: records,
-                        pixelSize: video.pixelSize,
-                        tileRenderer: tileRenderer)
-                        .writeMovie(
-                            to: video.outputURL(
-                                named: "progress_map_zoomed", journeyDirectory: journeyDirectory),
-                            frameLimit: video.frameLimit)
-                },
-                { [routeTileRenderer, nationalTileRenderer] in
-                    try await RouteMapRenderer(
-                        records: records,
-                        tileRenderer: routeTileRenderer,
-                        config: routeConfig)
-                        .writeMovie(
-                            nationalTileRenderer: nationalTileRenderer,
-                            to: video.outputURL(
-                                named: "route_map", journeyDirectory: journeyDirectory),
-                            frameLimit: video.frameLimit)
-                },
-            ]
-
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                for dial in dials {
-                    group.addTask { try await dial() }
-                }
-                try await group.waitForAll()
-            }
+            try await TelemetryVideoRenderer(
+                records: records,
+                dialPixelSize: video.dialPixelSize,
+                mapPixelSize: video.mapPixelSize,
+                tileRenderer: progressTileRenderer)
+                .writeMovie(
+                    to: video.outputURL(named: "telemetry", journeyDirectory: journeyDirectory),
+                    frameLimit: video.frameLimit)
         }
     }
 }

@@ -13,9 +13,9 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
 @Test func loadsRecordsAndDirectoryForAnExistingJourney() throws {
     let store = TelemetryStore(path: fixtureDirectory.appending(path: "telemetry.sqlite3").path)
     #expect(try store.records(journeyID: 1).count == 38397)
-    #expect(
-        try store.journeyDirectory(journeyID: 1)
-            == "/Users/davids/Movies/transport/Test footage/A338 Northbound")
+    // The fixture's source is a placeholder string, never resolved to a real
+    // directory, so it doesn't matter that it isn't a real machine path.
+    #expect(try store.journeyDirectory(journeyID: 1) == "Fixtures/A338 Northbound")
 }
 
 @Test func throwsJourneyNotFoundForAnUnknownJourneyID() throws {
@@ -30,9 +30,7 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
 
 @Test func findsJourneysBySourceAndByRoad() throws {
     let store = TelemetryStore(path: fixtureDirectory.appending(path: "telemetry.sqlite3").path)
-    #expect(
-        try store.journeyID(
-            source: "/Users/davids/Movies/transport/Test footage/A338 Northbound") == 1)
+    #expect(try store.journeyID(source: "Fixtures/A338 Northbound") == 1)
     #expect(try store.journeyID(source: "/nowhere") == nil)
     #expect(try store.journeyID(roadType: "A", roadNumber: 338) == 1)
     #expect(try store.journeyID(roadType: "M", roadNumber: 27) == nil)
@@ -56,11 +54,11 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
         TelemetrySample(
             tick: baseTick, latitude: 50.76, longitude: -1.81, altitude: 23.5, speed: 0.98,
             heading: 160.29, accelForward: 0.01, accelLateral: -0.02, speedLimit: 30,
-            file: "260726_153931_001_FH.MP4", source: "GPS"),
+            file: "260726_153931_001_FH.MP4", source: "GPS", odometer: 0),
         TelemetrySample(
             tick: baseTick + 1, latitude: 50.77, longitude: -1.82, altitude: 23.6, speed: 1.2,
             heading: 161, accelForward: nil, accelLateral: nil, speedLimit: nil,
-            file: nil, source: "Interpolated"),
+            file: nil, source: "Interpolated", odometer: 12.3),
     ]
 
     let store = TelemetryStore(path: databaseURL.path)
@@ -78,10 +76,12 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(records[0].latitude == 50.76)
     #expect(records[0].speedLimit == 30)
     #expect(records[0].file == "260726_153931_001_FH.MP4")
+    #expect(records[0].odometer == 0)
     #expect(records[1].accelForward == nil)
     #expect(records[1].speedLimit == nil)
     #expect(records[1].file == nil)
     #expect(records[1].source == "Interpolated")
+    #expect(records[1].odometer == 12.3)
 }
 
 @Test func cachesAndReadsBackARoadsEndpoints() throws {

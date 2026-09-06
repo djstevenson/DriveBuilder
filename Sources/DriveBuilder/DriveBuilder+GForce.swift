@@ -13,7 +13,7 @@ extension DriveBuilder {
 
         mutating func run() async throws {
             let renderer = GForceRenderer(
-                records: try telemetry.load(), pixelSize: video.pixelSize)
+                records: try telemetry.load(), pixelSize: video.dialPixelSize)
             try await renderer.writeMovie(
                 to: video.outputURL(
                     named: "gforce", journeyDirectory: try telemetry.journeyDirectory()),

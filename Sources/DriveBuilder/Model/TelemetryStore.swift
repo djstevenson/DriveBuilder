@@ -51,7 +51,7 @@ struct TelemetryStore {
 
         let sql = """
             SELECT id, journey_id, timestamp, latitude, longitude, altitude, speed, heading,
-                   accel_forward, accel_lateral, speed_limit, file, source
+                   accel_forward, accel_lateral, speed_limit, file, source, odometer
             FROM telemetry
             WHERE journey_id = ?
             ORDER BY timestamp
@@ -276,8 +276,8 @@ struct TelemetryStore {
             INSERT INTO telemetry (
                 journey_id, timestamp, latitude, longitude, altitude,
                 speed, heading, accel_forward, accel_lateral,
-                speed_limit, file, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                speed_limit, file, source, odometer
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 
         var statement: OpaquePointer?
@@ -310,6 +310,7 @@ struct TelemetryStore {
                 sqlite3_bind_text(statement, 11, file, -1, Self.transient)
             }
             sqlite3_bind_text(statement, 12, sample.source, -1, Self.transient)
+            sqlite3_bind_double(statement, 13, sample.odometer)
 
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
@@ -493,7 +494,8 @@ struct TelemetryStore {
             accelLateral: double(statement, column: 9),
             speedLimit: integer(statement, column: 10),
             file: string(statement, column: 11),
-            source: string(statement, column: 12) ?? "")
+            source: string(statement, column: 12) ?? "",
+            odometer: sqlite3_column_double(statement, 13))
     }
 
     private static func isNull(_ statement: OpaquePointer?, column: Int32) -> Bool {

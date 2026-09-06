@@ -18,7 +18,8 @@ private func record(latitude: Double, longitude: Double, timestamp: Date) -> Tel
         accelLateral: nil,
         speedLimit: nil,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 private func testRecords(count: Int = 5) -> [TelemetryRecord] {

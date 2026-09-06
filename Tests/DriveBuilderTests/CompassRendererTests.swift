@@ -18,7 +18,8 @@ private func record(heading: Double) -> TelemetryRecord {
         accelLateral: nil,
         speedLimit: nil,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 /// Counts red needle pixels in each half of the frame. The dial artwork has no
@@ -59,7 +60,7 @@ private func redCounts(_ frame: NSBitmapImageRep) -> (top: Int, bottom: Int, lef
     #expect(counts.right > counts.left * 5)
 }
 
-@Test func compositedFrameKeepsSizeAndTransparentCorners() throws {
+@Test func compositedFrameKeepsSizeAndFillsCornersWithTheBackdrop() throws {
     let renderer = CompassRenderer(records: [], pixelSize: 200)
     let artwork = try CompassRenderer.Artwork(pixelSize: 200)
     let frame = try renderer.frame(for: record(heading: 45), artwork: artwork)
@@ -67,5 +68,6 @@ private func redCounts(_ frame: NSBitmapImageRep) -> (top: Int, bottom: Int, lef
     #expect(frame.pixelsWide == 200)
     #expect(frame.pixelsHigh == 200)
     let corner = try #require(frame.colorAt(x: 2, y: 2))
-    #expect(corner.alphaComponent < 0.01)
+    #expect(abs(corner.alphaComponent - 0.6) < 0.01)
+    #expect(corner.redComponent < 0.01)
 }

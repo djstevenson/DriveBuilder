@@ -18,7 +18,8 @@ private func record(forward: Double?, lateral: Double?) -> TelemetryRecord {
         accelLateral: lateral,
         speedLimit: nil,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 @Test func forceIsClampedToTheDialRange() {
@@ -86,7 +87,7 @@ private func redCentroid(_ frame: NSBitmapImageRep) -> CGPoint? {
     #expect(abs(centroid.y - expected.y) < 2)
 }
 
-@Test func gforceFrameKeepsSizeAndTransparentCorners() throws {
+@Test func gforceFrameKeepsSizeAndFillsCornersWithTheBackdrop() throws {
     let renderer = GForceRenderer(records: [], pixelSize: 200)
     let artwork = try GForceRenderer.Artwork(pixelSize: 200)
     let frame = try renderer.frame(for: record(forward: 0, lateral: 0), artwork: artwork)
@@ -94,5 +95,6 @@ private func redCentroid(_ frame: NSBitmapImageRep) -> CGPoint? {
     #expect(frame.pixelsWide == 200)
     #expect(frame.pixelsHigh == 200)
     let corner = try #require(frame.colorAt(x: 2, y: 2))
-    #expect(corner.alphaComponent < 0.01)
+    #expect(abs(corner.alphaComponent - 0.6) < 0.01)
+    #expect(corner.redComponent < 0.01)
 }

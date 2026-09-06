@@ -20,7 +20,8 @@ private func record(
         accelLateral: nil,
         speedLimit: nil,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 /// A plain white map, so the only coloured pixels in a frame are the track's.
