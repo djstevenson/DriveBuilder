@@ -40,20 +40,8 @@ struct SpeedLimitLookup {
     func limits(for points: [(latitude: Double, longitude: Double)]) throws -> [Int?] {
         guard !points.isEmpty else { return [] }
 
-        var sql = ""
-        for point in points {
-            let position =
-                "ST_Transform(ST_SetSRID(ST_MakePoint(\(point.longitude), \(point.latitude)), 4326), 27700)"
-            sql += """
-                SELECT (SELECT r.maxspeed FROM osm_roads r
-                    WHERE ST_DWithin(r.geom_bng, \(position), \(Self.limitDistance))
-                        AND r.maxspeed IS NOT NULL
-                    ORDER BY r.geom_bng <-> \(position)
-                    LIMIT 1);
-
-                """
-        }
-
+        let sql = points.map { Self.sql(forLatitude: $0.latitude, longitude: $0.longitude) }
+            .joined()
         let output = try runPsql(sql)
 
         // -At prints one line per row; a NULL row is a blank line, so keep
@@ -66,6 +54,40 @@ struct SpeedLimitLookup {
         }
 
         return lines.map { Self.parseMaxspeed(String($0)) }
+    }
+
+    /// One point's worth of the batch script: a scalar subquery resolving
+    /// its nearest road's speed limit, or a literal `NULL` if either
+    /// coordinate isn't a finite number - always exactly one statement, so
+    /// the 1-line-per-point invariant `limits(for:)` relies on still holds.
+    static func sql(forLatitude latitude: Double, longitude: Double) -> String {
+        guard let lat = sqlLiteral(latitude), let lon = sqlLiteral(longitude) else {
+            return "SELECT NULL;\n\n"
+        }
+        let position = "ST_Transform(ST_SetSRID(ST_MakePoint(\(lon), \(lat)), 4326), 27700)"
+        return """
+            SELECT (SELECT r.maxspeed FROM osm_roads r
+                WHERE ST_DWithin(r.geom_bng, \(position), \(limitDistance))
+                    AND r.maxspeed IS NOT NULL
+                ORDER BY r.geom_bng <-> \(position)
+                LIMIT 1);
+
+            """
+    }
+
+    /// Formats a coordinate as a plain fixed-point SQL numeric literal, or
+    /// nil if it isn't finite.
+    ///
+    /// This SQL is assembled by string interpolation rather than bound
+    /// parameters (`psql -f` doesn't support them for a batch script like
+    /// this), so it matters that a `Double` can only ever render as a
+    /// well-formed number here - never scientific notation, and never the
+    /// bare `nan`/`inf`/`-inf` Swift's default description would produce
+    /// for a non-finite value, which would otherwise land in the query
+    /// text as invalid SQL syntax rather than a number.
+    static func sqlLiteral(_ value: Double) -> String? {
+        guard value.isFinite else { return nil }
+        return String(format: "%.10f", value)
     }
 
     private func runPsql(_ sql: String) throws -> String {
