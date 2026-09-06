@@ -38,6 +38,12 @@ struct AltitudeRenderer: DialRenderer {
     static let minFontSize = 10.0
     static let cornerRadius = 4.0
 
+    /// Applied after fitting the widest value to the box width, so the text
+    /// sits at 60% of that width instead of filling it edge to edge - this
+    /// leaves margin above and below too, since the glyphs are smaller
+    /// relative to the fixed row height.
+    static let textScale = 0.6
+
     /// Gap between each box and the edge of the frame. Fixed regardless of
     /// the text, so the gap matches on both sides instead of the box
     /// growing to fit its content and leaving a lopsided margin.
@@ -151,7 +157,8 @@ struct AltitudeRenderer: DialRenderer {
                 widest > availableWidth && widest > 0
                 ? AltitudeRenderer.fontSize * availableWidth / widest
                 : AltitudeRenderer.fontSize
-            font = NSFont.transport(size: max(AltitudeRenderer.minFontSize, fittedSize))
+            font = NSFont.transport(
+                size: max(AltitudeRenderer.minFontSize, fittedSize * AltitudeRenderer.textScale))
         }
     }
 
