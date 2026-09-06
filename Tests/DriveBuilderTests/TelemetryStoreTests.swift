@@ -54,11 +54,11 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
         TelemetrySample(
             tick: baseTick, latitude: 50.76, longitude: -1.81, altitude: 23.5, speed: 0.98,
             heading: 160.29, accelForward: 0.01, accelLateral: -0.02, speedLimit: 30,
-            file: "260726_153931_001_FH.MP4", source: "GPS"),
+            file: "260726_153931_001_FH.MP4", source: "GPS", odometer: 0),
         TelemetrySample(
             tick: baseTick + 1, latitude: 50.77, longitude: -1.82, altitude: 23.6, speed: 1.2,
             heading: 161, accelForward: nil, accelLateral: nil, speedLimit: nil,
-            file: nil, source: "Interpolated"),
+            file: nil, source: "Interpolated", odometer: 12.3),
     ]
 
     let store = TelemetryStore(path: databaseURL.path)
@@ -76,10 +76,12 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(records[0].latitude == 50.76)
     #expect(records[0].speedLimit == 30)
     #expect(records[0].file == "260726_153931_001_FH.MP4")
+    #expect(records[0].odometer == 0)
     #expect(records[1].accelForward == nil)
     #expect(records[1].speedLimit == nil)
     #expect(records[1].file == nil)
     #expect(records[1].source == "Interpolated")
+    #expect(records[1].odometer == 12.3)
 }
 
 @Test func cachesAndReadsBackARoadsEndpoints() throws {

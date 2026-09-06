@@ -42,7 +42,8 @@ extension TelemetryRecord {
             accelLateral: lerp(previous.accelLateral, current.accelLateral),
             speedLimit: previous.speedLimit,
             file: previous.file ?? current.file,
-            source: "Interpolated")
+            source: "Interpolated",
+            odometer: lerp(previous.odometer, current.odometer))
     }
 
     /// Expands `records` to a higher frame rate by inserting

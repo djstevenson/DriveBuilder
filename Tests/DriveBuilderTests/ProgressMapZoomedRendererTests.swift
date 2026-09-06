@@ -20,7 +20,8 @@ private func record(
         accelLateral: nil,
         speedLimit: 30,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 // MARK: - OSGB

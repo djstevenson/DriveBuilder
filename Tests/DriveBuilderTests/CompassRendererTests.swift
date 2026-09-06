@@ -18,7 +18,8 @@ private func record(heading: Double) -> TelemetryRecord {
         accelLateral: nil,
         speedLimit: nil,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 /// Counts red needle pixels in each half of the frame. The dial artwork has no

@@ -6,7 +6,7 @@ import Testing
 private func record(
     latitude: Double = 0, longitude: Double = 0, altitude: Double = 0, speed: Double = 0,
     heading: Double = 0, accelForward: Double? = nil, accelLateral: Double? = nil,
-    timestamp: Date = .distantPast
+    timestamp: Date = .distantPast, odometer: Double = 0
 ) -> TelemetryRecord {
     TelemetryRecord(
         id: 1,
@@ -21,7 +21,8 @@ private func record(
         accelLateral: accelLateral,
         speedLimit: 30,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: odometer)
 }
 
 // MARK: - Interpolation
@@ -66,15 +67,21 @@ private func record(
     #expect(mid.accelLateral == -0.5)
 }
 
+@Test func interpolatedRecordLerpsOdometer() {
+    let a = record(odometer: 100)
+    let b = record(odometer: 200)
+    #expect(TelemetryRecord.interpolated(from: a, to: b, fraction: 0.5).odometer == 150)
+}
+
 @Test func interpolatedRecordCarriesTheSpeedLimitForward() {
     let a = TelemetryRecord(
         id: 1, journeyID: 1, timestamp: .distantPast, latitude: 0, longitude: 0, altitude: 0,
         speed: 0, heading: 0, accelForward: nil, accelLateral: nil, speedLimit: 40, file: nil,
-        source: "test")
+        source: "test", odometer: 0)
     let b = TelemetryRecord(
         id: 2, journeyID: 1, timestamp: .distantPast, latitude: 0, longitude: 0, altitude: 0,
         speed: 0, heading: 0, accelForward: nil, accelLateral: nil, speedLimit: 60, file: nil,
-        source: "test")
+        source: "test", odometer: 0)
     #expect(TelemetryRecord.interpolated(from: a, to: b, fraction: 0.5).speedLimit == 40)
 }
 

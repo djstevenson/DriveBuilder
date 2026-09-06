@@ -72,10 +72,13 @@ extension DriveBuilder {
             }
             let samples = try extractor.samples()
 
+            Self.log("Calculate odometer")
+            let samplesWithOdometer = TelemetrySample.addingOdometer(to: samples)
+
             Self.log("Store telemetry in SQLite")
             let journeyID = try store.insertJourney(
                 source: source, roadType: roadType, roadNumber: roadNumber, title: title,
-                samples: samples)
+                samples: samplesWithOdometer)
 
             Self.log("Done")
             print("Journey \(journeyID): \(samples.count) records for \(roadType)\(roadNumber)")

@@ -20,7 +20,8 @@ private func record(
         accelLateral: -0.1,
         speedLimit: 40,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 private func testRecords() -> [TelemetryRecord] {

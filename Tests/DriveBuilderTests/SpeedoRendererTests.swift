@@ -18,7 +18,8 @@ private func record(mph: Double, limit: Int?) -> TelemetryRecord {
         accelLateral: nil,
         speedLimit: limit,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 @Test func needleAngleMatchesDialCalibration() {

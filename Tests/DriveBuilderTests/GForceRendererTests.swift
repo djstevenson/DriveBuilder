@@ -18,7 +18,8 @@ private func record(forward: Double?, lateral: Double?) -> TelemetryRecord {
         accelLateral: lateral,
         speedLimit: nil,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 @Test func forceIsClampedToTheDialRange() {

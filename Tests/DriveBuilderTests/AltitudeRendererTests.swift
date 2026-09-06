@@ -21,7 +21,8 @@ private func record(
         accelLateral: nil,
         speedLimit: nil,
         file: nil,
-        source: "test")
+        source: "test",
+        odometer: 0)
 }
 
 @Test func metresConvertToWholeFeetLikeThePerlRounding() {
