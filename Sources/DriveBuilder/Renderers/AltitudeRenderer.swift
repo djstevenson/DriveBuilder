@@ -160,9 +160,15 @@ struct AltitudeRenderer: DialRenderer {
         let scale = CGFloat(pixelSize) / 120
         context.clear(CGRect(x: 0, y: 0, width: pixelSize, height: pixelSize))
 
+        // `artwork.font`'s point size was fitted in the abstract 120-unit
+        // viewBox, same as every other measurement here, so it has to be
+        // scaled up to the actual frame size like the box geometry is -
+        // otherwise it draws at its literal (tiny) point size regardless of
+        // `pixelSize`.
+        let drawFont = NSFont.transport(size: artwork.font.pointSize * scale)
         for (index, text) in Self.rowTexts(for: record).enumerated() {
             drawRow(
-                text, bottom: Self.rowBottom(index), scale: scale, font: artwork.font,
+                text, bottom: Self.rowBottom(index), scale: scale, font: drawFont,
                 into: context)
         }
     }
