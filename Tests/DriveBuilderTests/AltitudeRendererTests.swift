@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import Foundation
 import Testing
 
@@ -31,29 +32,51 @@ private func record(
     #expect(AltitudeRenderer.altitudeFeet(for: record(altitudeMetres: -25.2)) == -82)
 }
 
-@Test func rowTextsFormatLatitudeLongitudeAndAltitudeToFourDecimalPlaces() {
+@Test func rowTextsFormatLatitudeLongitudeToFourDecimalPlacesWithAHemisphereLetterInsteadOfASign() {
     let texts = AltitudeRenderer.rowTexts(
         for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100))
-    #expect(texts == ["LAT 51.5000", "LON -1.2500", "ALT 328 ft"])
+    #expect(texts == ["51.5000N", "1.2500W", "↑328 ft"])
+
+    let southAndEast = AltitudeRenderer.rowTexts(
+        for: record(latitude: -33.8, longitude: 151.2, altitudeMetres: 0))
+    #expect(southAndEast[0] == "33.8000S")
+    #expect(southAndEast[1] == "151.2000E")
 }
 
-@Test func boxWidthGrowsToFitTheWidestValueInTheJourney() {
-    func latitudeBoxWidth(_ latitudes: [Double]) -> Double {
-        AltitudeRenderer.Artwork(records: latitudes.map { record(latitude: $0) }).boxWidths[0]
-    }
-    let narrow = latitudeBoxWidth([51.0])
-    let wide = latitudeBoxWidth([-90.0, 90.0])
-    #expect(wide > narrow)
+/// Box geometry is fixed regardless of content - the same margin either
+/// side of the frame every time - so it's the font that has to adapt.
+@Test func boxGeometryIsFixedRegardlessOfContent() {
+    #expect(AltitudeRenderer.boxLeft == AltitudeRenderer.boxMargin)
+    #expect(AltitudeRenderer.boxWidth == 120 - 2 * AltitudeRenderer.boxMargin)
 }
 
-@Test func boxWidthStaysFixedAcrossFramesOfTheSameJourney() {
-    // A record near the extremes shouldn't get a differently sized box than
-    // one near the middle of the journey's range - the whole point of
-    // sizing from the journey's extremes is that the box never resizes.
-    let records = [record(latitude: 0), record(latitude: -90), record(latitude: 90)]
-    let artwork = AltitudeRenderer.Artwork(records: records)
-    #expect(artwork.boxWidths.count == 3)
-    #expect(artwork.boxWidths.allSatisfy { $0 > 0 })
+@Test func fontNeverExceedsTheCeiling() {
+    // "LAT ##.####" is 10-11 characters even for the shortest realistic
+    // values, which already doesn't fit the fixed-width box at 26pt - so in
+    // practice this format almost always shrinks. What matters is that it
+    // never shrinks past `minFontSize` or grows past the ceiling.
+    let artwork = AltitudeRenderer.Artwork(
+        records: [record(latitude: 0, longitude: 0, altitudeMetres: 0)])
+    #expect(artwork.font.pointSize <= AltitudeRenderer.fontSize)
+    #expect(artwork.font.pointSize >= AltitudeRenderer.minFontSize)
+}
+
+/// A journey with a long formatted value (a large negative longitude)
+/// wouldn't fit the fixed-width box at the ceiling size, so the font
+/// shrinks - by exactly enough that the widest candidate still fits, since
+/// ink width scales linearly with point size.
+@Test func fontShrinksJustEnoughForTheJourneysWidestValueToFit() {
+    let widestRecord = record(latitude: 51.5, longitude: -179.9999, altitudeMetres: 100)
+    let artwork = AltitudeRenderer.Artwork(records: [widestRecord])
+    #expect(artwork.font.pointSize < AltitudeRenderer.fontSize)
+
+    let line = CTLineCreateWithAttributedString(
+        NSAttributedString(
+            string: AltitudeRenderer.longitudeText(widestRecord),
+            attributes: [.font: artwork.font]))
+    let width = Double(CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds]).width)
+    let availableWidth = AltitudeRenderer.boxWidth - 2 * AltitudeRenderer.textPadding
+    #expect(width <= availableWidth + 0.5)
 }
 
 @Test func frameKeepsTheRequestedPixelSize() throws {

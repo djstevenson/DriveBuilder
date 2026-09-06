@@ -25,15 +25,28 @@ struct AltitudeRenderer: DialRenderer {
     static let boxColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
     static let textColor = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
 
-    /// Doubled from an initial 13pt: at that size the text read as illegible
-    /// once encoded down to 1080p or 720p.
+    /// Upper limit on the font size: a full 4-decimal "LON -179.9999" doesn't
+    /// fit a fixed-width box at this size, so `Artwork` shrinks it just
+    /// enough for the journey's actual extremes to fit rather than using it
+    /// outright.
     static let fontSize = 26.0
+    static let minFontSize = 10.0
     static let cornerRadius = 4.0
-    static let textPadding = 10.0
+
+    /// Gap between each box and the edge of the frame. Fixed regardless of
+    /// the text, so the gap matches on both sides instead of the box
+    /// growing to fit its content and leaving a lopsided margin.
+    static let boxMargin = 7.0
+    /// Roughly 20px at the default 345px frame size.
+    static let boxLeft = boxMargin
+    static let boxWidth = 120 - 2 * boxMargin
+
+    /// Padding between the text and the edges of its (fixed-width) box.
+    static let textPadding = 5.0
+
     static let rowHeight = 25.0
     static let rowGap = 4.0
     static let topMargin = 6.0
-    static let boxLeft = 14.0
 
     /// The altitude to display for a record, in whole feet.
     ///
@@ -43,16 +56,39 @@ struct AltitudeRenderer: DialRenderer {
         Int(feetPerMetre * record.altitude + 0.5)
     }
 
+    /// No "LAT" label and no sign: the row's position already says what it
+    /// is, and a trailing hemisphere letter says which way the sign would
+    /// have, both more cheaply than the words and the "-" would have.
+    ///
+    /// Split out from the `TelemetryRecord`-based functions below so
+    /// `Artwork` can measure the journey's extreme values directly, without
+    /// duplicating the format strings (and risking them drifting apart).
+    static func latitudeText(_ latitude: Double) -> String {
+        String(format: "%.4f", abs(latitude)) + (latitude < 0 ? "S" : "N")
+    }
+
+    static func longitudeText(_ longitude: Double) -> String {
+        String(format: "%.4f", abs(longitude)) + (longitude < 0 ? "W" : "E")
+    }
+
+    /// No "ALT" label either, for the same reason - an up arrow marks the
+    /// row instead. Transport has no arrow glyph, so this falls back to a
+    /// system font for that one character; Core Text substitutes it
+    /// automatically mid-line.
+    static func altitudeText(feet: Int) -> String {
+        "↑\(feet) ft"
+    }
+
     static func latitudeText(_ record: TelemetryRecord) -> String {
-        String(format: "LAT %.4f", record.latitude)
+        latitudeText(record.latitude)
     }
 
     static func longitudeText(_ record: TelemetryRecord) -> String {
-        String(format: "LON %.4f", record.longitude)
+        longitudeText(record.longitude)
     }
 
     static func altitudeText(_ record: TelemetryRecord) -> String {
-        "ALT \(altitudeFeet(for: record)) ft"
+        altitudeText(feet: altitudeFeet(for: record))
     }
 
     /// The three rows drawn for a record, top to bottom.
@@ -67,44 +103,50 @@ struct AltitudeRenderer: DialRenderer {
         120 - topMargin - Double(index + 1) * rowHeight - Double(index) * rowGap
     }
 
-    /// Artwork rasterized once and reused for every frame: just the font and
-    /// each row's box width. The width is fixed to whatever that journey's
-    /// most extreme value on that line needs, so the box never resizes from
-    /// frame to frame.
+    /// Artwork rasterized once and reused for every frame: just the font,
+    /// sized as large as possible up to `fontSize` while still fitting the
+    /// journey's most extreme latitude, longitude, and altitude inside the
+    /// fixed-width box.
     struct Artwork {
         let font: NSFont
 
-        /// Box width per row, in the same 120-unit viewBox as `rowBottom`.
-        let boxWidths: [Double]
-
         init(records: [TelemetryRecord]) {
-            // Kept as a local rather than assigned to `self.font` up front:
-            // the nested `inkWidth` below captures it, and a nested function
-            // can't capture `self` before every stored property is set.
-            let font = NSFont.transport(size: AltitudeRenderer.fontSize)
-
-            func inkWidth(_ text: String) -> Double {
+            func inkWidth(_ text: String, font: NSFont) -> Double {
                 let line = CTLineCreateWithAttributedString(
                     NSAttributedString(string: text, attributes: [.font: font]))
                 return Double(CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds]).width)
             }
 
-            let latitudes = records.map(\.latitude)
-            let longitudes = records.map(\.longitude)
-            let altitudes = records.map(AltitudeRenderer.altitudeFeet(for:))
+            // Built from the journey's own extremes via the real formatting
+            // functions, rather than duplicating their format strings here,
+            // so this can't drift out of sync with what actually gets drawn.
+            func extremes(_ values: [Double]) -> (min: Double, max: Double) {
+                (values.min() ?? 0, values.max() ?? 0)
+            }
+            let (latMin, latMax) = extremes(records.map(\.latitude))
+            let (lonMin, lonMax) = extremes(records.map(\.longitude))
+            let feet = records.map(AltitudeRenderer.altitudeFeet(for:))
 
-            let latWidth = max(
-                inkWidth(String(format: "LAT %.4f", latitudes.min() ?? 0)),
-                inkWidth(String(format: "LAT %.4f", latitudes.max() ?? 0)))
-            let lonWidth = max(
-                inkWidth(String(format: "LON %.4f", longitudes.min() ?? 0)),
-                inkWidth(String(format: "LON %.4f", longitudes.max() ?? 0)))
-            let altWidth = max(
-                inkWidth("ALT \(altitudes.min() ?? 0) ft"),
-                inkWidth("ALT \(altitudes.max() ?? 0) ft"))
+            let candidates = [
+                AltitudeRenderer.latitudeText(latMin), AltitudeRenderer.latitudeText(latMax),
+                AltitudeRenderer.longitudeText(lonMin), AltitudeRenderer.longitudeText(lonMax),
+                AltitudeRenderer.altitudeText(feet: feet.min() ?? 0),
+                AltitudeRenderer.altitudeText(feet: feet.max() ?? 0),
+            ]
 
-            self.font = font
-            boxWidths = [latWidth, lonWidth, altWidth].map { $0 + 2 * AltitudeRenderer.textPadding }
+            let ceilingFont = NSFont.transport(size: AltitudeRenderer.fontSize)
+            let widest = candidates.map { inkWidth($0, font: ceilingFont) }.max() ?? 0
+            let availableWidth =
+                AltitudeRenderer.boxWidth - 2 * AltitudeRenderer.textPadding
+
+            // Ink width scales linearly with point size for an outline font,
+            // so shrinking by the same ratio the widest candidate overflows
+            // by is exact, not just an approximation.
+            let fittedSize =
+                widest > availableWidth && widest > 0
+                ? AltitudeRenderer.fontSize * availableWidth / widest
+                : AltitudeRenderer.fontSize
+            font = NSFont.transport(size: max(AltitudeRenderer.minFontSize, fittedSize))
         }
     }
 
@@ -120,8 +162,8 @@ struct AltitudeRenderer: DialRenderer {
 
         for (index, text) in Self.rowTexts(for: record).enumerated() {
             drawRow(
-                text, boxWidth: artwork.boxWidths[index], bottom: Self.rowBottom(index),
-                scale: scale, font: artwork.font, into: context)
+                text, bottom: Self.rowBottom(index), scale: scale, font: artwork.font,
+                into: context)
         }
     }
 
@@ -130,12 +172,11 @@ struct AltitudeRenderer: DialRenderer {
     /// since Transport's side bearings aren't symmetric and its glyphs don't
     /// sit where the metrics imply.
     private func drawRow(
-        _ text: String, boxWidth: Double, bottom: Double, scale: CGFloat, font: NSFont,
-        into context: CGContext
+        _ text: String, bottom: Double, scale: CGFloat, font: NSFont, into context: CGContext
     ) {
         let boxRect = CGRect(
             x: Self.boxLeft * scale, y: bottom * scale,
-            width: boxWidth * scale, height: Self.rowHeight * scale)
+            width: Self.boxWidth * scale, height: Self.rowHeight * scale)
 
         context.setFillColor(Self.boxColor)
         context.addPath(
@@ -163,7 +204,7 @@ struct AltitudeRenderer: DialRenderer {
         let altitudes = records.prefix(frameCount).map(Self.altitudeFeet(for:))
         return [
             "  altitude \(altitudes.min() ?? 0)-\(altitudes.max() ?? 0) ft",
-            "  \(concurrency)-way compositing",
+            "  \(concurrency)-way compositing, font size \(String(format: "%.1f", artwork.font.pointSize))pt",
         ]
     }
 }

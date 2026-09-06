@@ -121,8 +121,9 @@ private func isOpaqueWhite(_ colour: NSColor?) -> Bool {
     }
 
     // Altitude (78, 78) has no full-square backdrop any more - just small
-    // opaque boxes behind its text - so its corner stays transparent.
-    #expect(alpha(frame, 81, 81) == 0)
+    // opaque boxes behind its text - so its corner stays essentially
+    // transparent (allowing for antialiasing at this tiny 60px dial scale).
+    #expect(alpha(frame, 81, 81) < 0.05)
 
     // Map cells: the white base map fills the zoomed map at y 156 and the
     // overview map at y 312.
