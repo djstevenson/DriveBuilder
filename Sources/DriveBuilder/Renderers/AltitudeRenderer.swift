@@ -4,8 +4,9 @@ import CoreText
 import Foundation
 
 /// Builds the altitude indicator for a journey: latitude, longitude,
-/// altitude, and odometer as text, each on its own opaque box so the numbers
-/// stay legible whatever the dashcam footage behind the dial is doing.
+/// altitude, odometer, and elapsed time as text, each on its own opaque box
+/// so the numbers stay legible whatever the dashcam footage behind the dial
+/// is doing.
 ///
 /// Takes the telemetry it needs as a plain array so it can be exercised with
 /// synthetic records, without a database.
@@ -59,9 +60,9 @@ struct AltitudeRenderer: DialRenderer {
     /// Padding between the text and the edges of its (fixed-width) box.
     static let textPadding = 5.0
 
-    static let rowHeight = 25.0
-    static let rowGap = 3.0
-    static let topMargin = 5.0
+    static let rowHeight = 20.0
+    static let rowGap = 2.0
+    static let topMargin = 6.0
 
     /// The row that gets a mountain icon instead of a text label: altitude,
     /// third from the top.
@@ -155,11 +156,24 @@ struct AltitudeRenderer: DialRenderer {
         odometerText(miles: record.odometer / metresPerMile)
     }
 
-    /// The four rows drawn for a record, top to bottom.
-    static func rowTexts(for record: TelemetryRecord) -> [String] {
+    /// No fractional seconds: at 10 Hz telemetry, tenths would just show a
+    /// count of 0-9 repeating, not anything meaningfully more precise.
+    static func elapsedText(seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded(.down))
+        return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
+    }
+
+    static func elapsedText(_ record: TelemetryRecord, since startTimestamp: Date) -> String {
+        elapsedText(seconds: record.timestamp.timeIntervalSince(startTimestamp))
+    }
+
+    /// The five rows drawn for a record, top to bottom. `startTimestamp` is
+    /// the journey's first record's timestamp, i.e. where the elapsed-time
+    /// row counts from.
+    static func rowTexts(for record: TelemetryRecord, startTimestamp: Date) -> [String] {
         [
             latitudeText(record), longitudeText(record), altitudeText(record),
-            odometerText(record),
+            odometerText(record), elapsedText(record, since: startTimestamp),
         ]
     }
 
@@ -194,12 +208,22 @@ struct AltitudeRenderer: DialRenderer {
             let feet = records.map(AltitudeRenderer.altitudeFeet(for:))
             let (milesMin, milesMax) = extremes(
                 records.map { $0.odometer / AltitudeRenderer.metresPerMile })
+            // Elapsed time only grows over the journey, so the widest label
+            // is always the last record - but measuring both endpoints
+            // costs nothing and doesn't assume the records are sorted.
+            let elapsedSeconds: (min: Double, max: Double) = {
+                guard let start = records.first?.timestamp, let end = records.last?.timestamp
+                else { return (0, 0) }
+                return extremes([0, end.timeIntervalSince(start)])
+            }()
 
             let candidates = [
                 AltitudeRenderer.latitudeText(latMin), AltitudeRenderer.latitudeText(latMax),
                 AltitudeRenderer.longitudeText(lonMin), AltitudeRenderer.longitudeText(lonMax),
                 AltitudeRenderer.odometerText(miles: milesMin),
                 AltitudeRenderer.odometerText(miles: milesMax),
+                AltitudeRenderer.elapsedText(seconds: elapsedSeconds.min),
+                AltitudeRenderer.elapsedText(seconds: elapsedSeconds.max),
             ]
             // The altitude row spends some of its width on the mountain
             // icon instead of text, so its candidates need that allowance
@@ -250,7 +274,9 @@ struct AltitudeRenderer: DialRenderer {
         // otherwise it draws at its literal (tiny) point size regardless of
         // `pixelSize`.
         let drawFont = NSFont.transport(size: artwork.font.pointSize * scale)
-        for (index, text) in Self.rowTexts(for: record).enumerated() {
+        let startTimestamp = records.first?.timestamp ?? record.timestamp
+        for (index, text) in Self.rowTexts(for: record, startTimestamp: startTimestamp).enumerated()
+        {
             drawRow(
                 text, bottom: Self.rowBottom(index), scale: scale, font: drawFont,
                 showsMountainIcon: index == Self.altitudeRowIndex, into: context)

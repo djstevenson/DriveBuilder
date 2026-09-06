@@ -7,12 +7,12 @@ import Testing
 
 private func record(
     latitude: Double = 0, longitude: Double = 0, altitudeMetres: Double = 0,
-    odometerMetres: Double = 0
+    odometerMetres: Double = 0, timestamp: Date = .distantPast
 ) -> TelemetryRecord {
     TelemetryRecord(
         id: 1,
         journeyID: 1,
-        timestamp: .distantPast,
+        timestamp: timestamp,
         latitude: latitude,
         longitude: longitude,
         altitude: altitudeMetres,
@@ -36,11 +36,13 @@ private func record(
 
 @Test func rowTextsFormatLatitudeLongitudeToFourDecimalPlacesWithAHemisphereLetterInsteadOfASign() {
     let texts = AltitudeRenderer.rowTexts(
-        for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100, odometerMetres: 0))
-    #expect(texts == ["51.5000N", "1.2500W", "328 ft", "0.0 mi"])
+        for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100, odometerMetres: 0),
+        startTimestamp: .distantPast)
+    #expect(texts == ["51.5000N", "1.2500W", "328 ft", "0.0 mi", "00:00:00"])
 
     let southAndEast = AltitudeRenderer.rowTexts(
-        for: record(latitude: -33.8, longitude: 151.2, altitudeMetres: 0))
+        for: record(latitude: -33.8, longitude: 151.2, altitudeMetres: 0),
+        startTimestamp: .distantPast)
     #expect(southAndEast[0] == "33.8000S")
     #expect(southAndEast[1] == "151.2000E")
 }
@@ -48,8 +50,25 @@ private func record(
 @Test func odometerTextConvertsMetresToMilesToOneDecimalPlace() {
     // 1 mile = 1609.344 m exactly, so this is exactly 10.0 mi rather than
     // something that depends on rounding.
-    let texts = AltitudeRenderer.rowTexts(for: record(odometerMetres: 16_093.44))
+    let texts = AltitudeRenderer.rowTexts(
+        for: record(odometerMetres: 16_093.44), startTimestamp: .distantPast)
     #expect(texts[3] == "10.0 mi")
+}
+
+@Test func elapsedTextFormatsHoursMinutesAndSecondsWithoutFractions() {
+    #expect(AltitudeRenderer.elapsedText(seconds: 0) == "00:00:00")
+    #expect(AltitudeRenderer.elapsedText(seconds: 59.9) == "00:00:59")
+    #expect(AltitudeRenderer.elapsedText(seconds: 60) == "00:01:00")
+    #expect(AltitudeRenderer.elapsedText(seconds: 3661) == "01:01:01")
+    // 1 hour, 11 minutes, 40 seconds.
+    #expect(AltitudeRenderer.elapsedText(seconds: 4300) == "01:11:40")
+}
+
+@Test func elapsedTextCountsFromTheJourneysStartTimestamp() {
+    let start = Date(timeIntervalSinceReferenceDate: 0)
+    let texts = AltitudeRenderer.rowTexts(
+        for: record(timestamp: start.addingTimeInterval(3725)), startTimestamp: start)
+    #expect(texts[4] == "01:02:05")
 }
 
 /// Box geometry is fixed regardless of content - the same margin either
