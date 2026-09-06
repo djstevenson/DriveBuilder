@@ -20,8 +20,13 @@ struct AltitudeRenderer: DialRenderer {
     /// Edge length of the rendered frame, in pixels.
     var pixelSize = 345
 
-    /// Fully opaque, unlike the other dials' translucent backdrop: the box
-    /// is what keeps the text readable, so it can't let footage show through.
+    /// Colour and opacity of the square backdrop drawn behind the dial,
+    /// matching the speedo, g-force, and compass dials.
+    static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
+
+    /// Fully opaque, unlike the square backdrop above: the box is what
+    /// actually keeps the text readable, so it can't let footage show
+    /// through the way the dimmed backdrop does.
     static let boxColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
     static let textColor = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
 
@@ -158,7 +163,10 @@ struct AltitudeRenderer: DialRenderer {
     /// line of text.
     func draw(_ record: TelemetryRecord, into context: CGContext, artwork: Artwork) {
         let scale = CGFloat(pixelSize) / 120
-        context.clear(CGRect(x: 0, y: 0, width: pixelSize, height: pixelSize))
+        let bounds = CGRect(x: 0, y: 0, width: pixelSize, height: pixelSize)
+        context.clear(bounds)
+        context.setFillColor(Self.backgroundColor)
+        context.fill(bounds)
 
         // `artwork.font`'s point size was fitted in the abstract 120-unit
         // viewBox, same as every other measurement here, so it has to be

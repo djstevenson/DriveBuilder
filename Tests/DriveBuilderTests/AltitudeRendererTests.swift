@@ -112,9 +112,10 @@ private func record(
     #expect(inBox.redComponent < 0.05)
 }
 
-/// The boxes are sized to their text, not the whole frame, so most of the
-/// frame - including the far corners - stays transparent.
-@Test func frameStaysTransparentAwayFromTheBoxes() throws {
+/// Away from the text boxes, the frame shows the same 0.6-alpha black
+/// backdrop as the speedo, g-force, and compass dials, rather than staying
+/// fully transparent.
+@Test func frameShowsTheDimmedBackdropAwayFromTheBoxes() throws {
     let renderer = AltitudeRenderer(records: [], pixelSize: 420)
     let artwork = AltitudeRenderer.Artwork(
         records: [record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100)])
@@ -122,7 +123,8 @@ private func record(
         for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100), artwork: artwork)
 
     for (x, y) in [(2, 2), (415, 2), (2, 415), (415, 415), (415, 357)] {
-        let colour = try #require(frame.colorAt(x: x, y: y))
-        #expect(colour.alphaComponent == 0)
+        let colour = try #require(frame.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+        #expect(abs(colour.alphaComponent - 0.6) < 0.01)
+        #expect(colour.redComponent < 0.01)
     }
 }

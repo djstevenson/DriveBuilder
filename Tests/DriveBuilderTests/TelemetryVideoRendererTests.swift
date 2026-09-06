@@ -113,17 +113,12 @@ private func isOpaqueWhite(_ colour: NSColor?) -> Bool {
     let frame = try compositedFrame(renderer, frameIndex: 0, artwork: artwork)
 
     // Dial cells: each corner shows its dial's 0.6-alpha black backdrop.
-    // Speedo (0, 0), g-force (78, 0), compass (0, 78).
-    for (x, y) in [(3, 3), (81, 3), (3, 81)] {
+    // Speedo (0, 0), g-force (78, 0), compass (0, 78), altitude (78, 78).
+    for (x, y) in [(3, 3), (81, 3), (3, 81), (81, 81)] {
         let backdrop = try #require(frame.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
         #expect(abs(backdrop.alphaComponent - 0.6) < 0.05)
         #expect(backdrop.redComponent < 0.1)
     }
-
-    // Altitude (78, 78) has no full-square backdrop any more - just small
-    // opaque boxes behind its text - so its corner stays essentially
-    // transparent (allowing for antialiasing at this tiny 60px dial scale).
-    #expect(alpha(frame, 81, 81) < 0.05)
 
     // Map cells: the white base map fills the zoomed map at y 156 and the
     // overview map at y 312.
