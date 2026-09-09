@@ -2,20 +2,18 @@ import AVFoundation
 import Foundation
 
 /// Stitches the already-rendered clips into the final programme:
-/// intro → route map → drive-footage placeholder → outro, with a
-/// one-second cross-fade between each. The placeholder is a plain
-/// black screen until the real drive footage is wired in.
+/// intro → route map → telemetry → outro, with a one-second
+/// cross-fade between each. The telemetry column plays at native size
+/// over a black background, right-aligned where it will eventually sit
+/// beside the drive footage.
 struct FinalVideoComposer {
     let introURL: URL
     let routeMapURL: URL
+    let telemetryURL: URL
     let outroURL: URL
 
     /// Length of each cross-fade between clips.
     var crossFadeSeconds: Double = 1.0
-
-    /// Length of the black stand-in for the drive footage, including the
-    /// cross-fades at either end.
-    var placeholderSeconds: Double = 10.0
 
     var framesPerSecond: Int32 = 30
 
@@ -29,6 +27,10 @@ struct FinalVideoComposer {
     struct CompositionError: Error, CustomStringConvertible {
         let message: String
         var description: String { message }
+    }
+
+    private enum HorizontalAlignment {
+        case centred, trailing
     }
 
     private struct Clip {
@@ -59,21 +61,20 @@ struct FinalVideoComposer {
 
         let intro = try await loadClip(at: introURL)
         let routeMap = try await loadClip(at: routeMapURL)
+        let telemetry = try await loadClip(at: telemetryURL)
         let outro = try await loadClip(at: outroURL)
 
         let timescale: CMTimeScale = 600
         let fade = CMTime(seconds: crossFadeSeconds, preferredTimescale: timescale)
-        let placeholder = CMTime(seconds: placeholderSeconds, preferredTimescale: timescale)
 
         // Timeline: each clip starts one fade-length before its predecessor
-        // ends. The placeholder has no track of its own; it's just the
-        // composition's black background, with the route map fading out over
-        // its first second and the outro fading in over its last.
+        // ends.
         let introEnd = intro.duration
         let routeStart = introEnd - fade
         let routeEnd = routeStart + routeMap.duration
-        let blackEnd = routeEnd - fade + placeholder
-        let outroStart = blackEnd - fade
+        let telemetryStart = routeEnd - fade
+        let telemetryEnd = telemetryStart + telemetry.duration
+        let outroStart = telemetryEnd - fade
         let outroEnd = outroStart + outro.duration
 
         let composition = AVMutableComposition()
@@ -87,8 +88,7 @@ struct FinalVideoComposer {
         }
 
         // Adjacent clips sit on different tracks so they can overlap during
-        // the fades; the intro and outro never overlap each other, so they
-        // share track A.
+        // the fades, alternating A, B, A, B along the timeline.
         try trackA.insertTimeRange(
             CMTimeRange(start: .zero, duration: intro.duration),
             of: intro.track, at: .zero)
@@ -96,6 +96,9 @@ struct FinalVideoComposer {
             CMTimeRange(start: .zero, duration: routeMap.duration),
             of: routeMap.track, at: routeStart)
         try trackA.insertTimeRange(
+            CMTimeRange(start: .zero, duration: telemetry.duration),
+            of: telemetry.track, at: telemetryStart)
+        try trackB.insertTimeRange(
             CMTimeRange(start: .zero, duration: outro.duration),
             of: outro.track, at: outroStart)
 
@@ -105,6 +108,7 @@ struct FinalVideoComposer {
 
         func layerInstruction(
             track: AVCompositionTrack, clip: Clip,
+            alignment: HorizontalAlignment = .centred,
             opacityRamp: AVVideoCompositionLayerInstruction.OpacityRamp? = nil
         ) -> AVVideoCompositionLayerInstruction {
             var configuration = AVVideoCompositionLayerInstruction.Configuration(
@@ -112,8 +116,14 @@ struct FinalVideoComposer {
             let scale = min(
                 renderSize.width / clip.naturalSize.width,
                 renderSize.height / clip.naturalSize.height)
+            let scaledWidth = clip.naturalSize.width * scale
+            let x =
+                switch alignment {
+                case .centred: (renderSize.width - scaledWidth) / 2
+                case .trailing: renderSize.width - scaledWidth
+                }
             let transform = CGAffineTransform(
-                translationX: (renderSize.width - clip.naturalSize.width * scale) / 2,
+                translationX: x,
                 y: (renderSize.height - clip.naturalSize.height * scale) / 2
             ).scaledBy(x: scale, y: scale)
             configuration.setTransform(transform, at: .zero)
@@ -154,38 +164,47 @@ struct FinalVideoComposer {
 
         // Route map alone.
         addInstruction(
-            from: introEnd, to: routeEnd - fade,
+            from: introEnd, to: telemetryStart,
             layers: [layerInstruction(track: trackB, clip: routeMap)])
 
-        // Route map fades out to the black placeholder.
+        // Route map fades out over the telemetry column.
         addInstruction(
-            from: routeEnd - fade, to: routeEnd,
+            from: telemetryStart, to: routeEnd,
             layers: [
                 layerInstruction(
                     track: trackB, clip: routeMap,
                     opacityRamp: .init(
-                        timeRange: CMTimeRange(start: routeEnd - fade, end: routeEnd),
-                        start: 1, end: 0))
+                        timeRange: CMTimeRange(start: telemetryStart, end: routeEnd),
+                        start: 1, end: 0)),
+                layerInstruction(track: trackA, clip: telemetry, alignment: .trailing),
             ])
 
-        // Placeholder hold: no layers, so only the black background shows.
-        addInstruction(from: routeEnd, to: outroStart, layers: [])
-
-        // Outro fades in from black.
+        // Telemetry alone, over the black background.
         addInstruction(
-            from: outroStart, to: blackEnd,
+            from: routeEnd, to: outroStart,
+            layers: [layerInstruction(track: trackA, clip: telemetry, alignment: .trailing)])
+
+        // Telemetry fades out while the outro fades in; neither fills the
+        // frame, so both ramp against the black background.
+        addInstruction(
+            from: outroStart, to: telemetryEnd,
             layers: [
                 layerInstruction(
-                    track: trackA, clip: outro,
+                    track: trackA, clip: telemetry, alignment: .trailing,
                     opacityRamp: .init(
-                        timeRange: CMTimeRange(start: outroStart, end: blackEnd),
-                        start: 0, end: 1))
+                        timeRange: CMTimeRange(start: outroStart, end: telemetryEnd),
+                        start: 1, end: 0)),
+                layerInstruction(
+                    track: trackB, clip: outro,
+                    opacityRamp: .init(
+                        timeRange: CMTimeRange(start: outroStart, end: telemetryEnd),
+                        start: 0, end: 1)),
             ])
 
         // Outro alone.
         addInstruction(
-            from: blackEnd, to: outroEnd,
-            layers: [layerInstruction(track: trackA, clip: outro)])
+            from: telemetryEnd, to: outroEnd,
+            layers: [layerInstruction(track: trackB, clip: outro)])
 
         let videoComposition = AVVideoComposition(
             configuration: .init(
@@ -209,6 +228,21 @@ struct FinalVideoComposer {
             throw CompositionError(message: "Could not create the export session.")
         }
         session.videoComposition = videoComposition
+
+        // A full-length export takes many minutes, so report progress
+        // periodically while it runs.
+        let states = session.states(updateInterval: 15)
+        let monitor = Task {
+            for await state in states {
+                if case .exporting(let progress) = state {
+                    print(
+                        String(
+                            format: "final: exporting, %.0f%% complete",
+                            progress.fractionCompleted * 100))
+                }
+            }
+        }
+        defer { monitor.cancel() }
         try await session.export(to: url, as: .mov)
 
         let elapsed = started.duration(to: .now)
