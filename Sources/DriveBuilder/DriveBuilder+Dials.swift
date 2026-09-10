@@ -5,7 +5,7 @@ extension DriveBuilder {
     struct Dials: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Build the combined telemetry video for a journey.",
-            discussion: "Composites every dial into a single telemetry.mov, frame by frame, "
+            discussion: "Composites every dial into a single dials.mov, frame by frame, "
                 + "rather than writing each dial's movie separately; use the individual "
                 + "dial commands to inspect one dial on its own. Run RouteMap separately "
                 + "for the route summary clip. Renders at a fixed 30 fps, interpolating "
@@ -40,7 +40,7 @@ extension DriveBuilder {
                 mapPixelSize: video.mapPixelSize,
                 tileRenderer: progressTileRenderer)
                 .writeMovie(
-                    to: video.outputURL(named: "telemetry", journeyDirectory: journeyDirectory),
+                    to: video.outputURL(named: "dials", journeyDirectory: journeyDirectory),
                     frameLimit: video.frameLimit)
         }
     }

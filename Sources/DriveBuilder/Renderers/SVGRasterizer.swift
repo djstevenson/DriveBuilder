@@ -69,6 +69,11 @@ struct SVGRasterizer {
     private static let graphicsThread: GraphicsThread = {
         let thread = GraphicsThread()
         thread.name = "SVGRasterizer.appkit"
+        // Callers typically run at user-initiated QoS or above; leaving this
+        // thread at the default QoS makes them block on a lower-priority
+        // thread, which the Thread Performance Checker flags as a priority
+        // inversion.
+        thread.qualityOfService = .userInitiated
         thread.start()
         return thread
     }()

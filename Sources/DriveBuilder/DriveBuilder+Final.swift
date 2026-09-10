@@ -7,15 +7,18 @@ extension DriveBuilder {
             commandName: "final",
             abstract: "Assemble the final video from the rendered clips.",
             discussion: "Cross-fades the intro into the route map, the route map into the "
-                + "telemetry column (right-aligned over a black background, where the "
-                + "drive footage will eventually go), and the telemetry into the outro. "
-                + "Requires intro.mov, telemetry/route_map.mov, telemetry/telemetry.mov, "
-                + "and outro.mov to have been rendered already.")
+                + "journey's drive footage (video/front.mov beneath the journey "
+                + "directory) with the dial column (dials.mov) composited on top, right-"
+                + "aligned, and that into the outro. The footage and the dial column run "
+                + "for whichever of the two is shorter. Requires intro.mov, "
+                + "telemetry/route_map.mov, telemetry/dials.mov, and outro.mov to have "
+                + "been rendered already.")
 
         @OptionGroup var telemetry: TelemetryOptions
 
         mutating func run() async throws {
-            let outputDirectory = URL(filePath: try telemetry.journeyDirectory())
+            let journeyDirectory = try telemetry.journeyDirectory()
+            let outputDirectory = URL(filePath: journeyDirectory)
                 .appending(path: "output")
             try FileManager.default.createDirectory(
                 at: outputDirectory, withIntermediateDirectories: true)
@@ -24,7 +27,8 @@ extension DriveBuilder {
             let composer = FinalVideoComposer(
                 introURL: outputDirectory.appending(path: "intro.mov"),
                 routeMapURL: outputDirectory.appending(path: "telemetry/route_map.mov"),
-                telemetryURL: outputDirectory.appending(path: "telemetry/telemetry.mov"),
+                dialsURL: outputDirectory.appending(path: "telemetry/dials.mov"),
+                frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
                 outroURL: outputDirectory.appending(path: "outro.mov"))
             try await composer.writeMovie(to: outputDirectory.appending(path: "final.mov"))
         }
