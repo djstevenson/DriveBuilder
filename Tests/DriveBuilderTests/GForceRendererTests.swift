@@ -73,7 +73,10 @@ private func redCentroid(_ frame: NSBitmapImageRep) -> CGPoint? {
 }
 
 @Test func renderedMarkerLandsWhereMarkerPositionSays() throws {
-    let renderer = GForceRenderer(records: [])
+    // pixelSize must match the artwork's below: draw() sizes its canvas and
+    // does its coordinate flip from the renderer's own pixelSize, not the
+    // artwork's, so a mismatch here silently scales the whole frame.
+    let renderer = GForceRenderer(records: [], pixelSize: 420)
     let artwork = try GForceRenderer.Artwork(pixelSize: 420)
     let braking = record(forward: -0.5, lateral: nil)
 

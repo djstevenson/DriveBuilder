@@ -8,7 +8,7 @@ struct DriveBuilder: AsyncParsableCommand {
             Dials.self, Speedo.self, Compass.self, Altitude.self, GForce.self,
             ProgressMap.self, ProgressMapZoomed.self,
             RouteMap.self, Annotations.self, Intro.self, Outro.self,
-            Telemetry.self, RoadData.self,
+            Telemetry.self, RoadData.self, Final.self,
         ],
         defaultSubcommand: Dials.self)
 }
