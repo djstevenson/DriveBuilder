@@ -2,22 +2,27 @@ import AVFoundation
 import Foundation
 
 /// Stitches the already-rendered clips into the final programme:
-/// intro → route map → (drive footage with dials on top) → outro, with a
-/// one-second cross-fade between each. The dials clip (dials.mov) is a
-/// standalone semi-transparent overlay (see `TelemetryVideoRenderer`); this
-/// is where it finally gets composited over the journey's own drive footage,
-/// rather than that happening when dials.mov itself is rendered — so each
-/// component can be built and checked on its own, and future additions
-/// (e.g. annotations) just become another layer here.
+/// intro → route map → (drive footage with the rear-view inset and dials on
+/// top) → outro, with a one-second cross-fade between each. The dials clip
+/// (dials.mov) is a standalone semi-transparent overlay (see
+/// `TelemetryVideoRenderer`); this is where it finally gets composited over
+/// the journey's own front and rear camera footage, rather than that
+/// happening when dials.mov itself is rendered — so each component can be
+/// built and checked on its own, and future additions (e.g. annotations)
+/// just become another layer here.
 struct FinalVideoComposer {
     let introURL: URL
     let routeMapURL: URL
     let dialsURL: URL
     let frontFootageURL: URL
+    let rearFootageURL: URL
     let outroURL: URL
 
     /// Length of each cross-fade between clips.
     var crossFadeSeconds: Double = 1.0
+
+    /// Gap between the frame's top-left corner and the rear-view inset.
+    var rearFootageInset: Double = 20.0
 
     var framesPerSecond: Int32 = 30
 
@@ -33,8 +38,17 @@ struct FinalVideoComposer {
         var description: String { message }
     }
 
-    private enum ScaleMode { case fit, fill }
-    private enum HorizontalAlignment { case centred, trailing }
+    /// How a clip is sized and positioned within the render frame.
+    private enum Placement {
+        /// Scaled to fit entirely within the frame, centred.
+        case fitCentred
+        /// Scaled to fit entirely within the frame, flush with the right edge.
+        case fitTrailing
+        /// Scaled to fill the frame, centred, cropping any overflow.
+        case fill
+        /// Native size, its top-left corner at the given frame offset.
+        case pinned(x: Double, y: Double)
+    }
 
     private struct Clip {
         // An AVAssetTrack doesn't retain its asset, so the clip must keep
@@ -73,22 +87,30 @@ struct FinalVideoComposer {
         let routeMap = try await loadClip(at: routeMapURL)
         let dials = try await loadClip(at: dialsURL)
         let frontFootage = try await loadClip(at: frontFootageURL)
+        let rearFootage = try await loadClip(at: rearFootageURL)
         let outro = try await loadClip(at: outroURL)
 
         let timescale: CMTimeScale = 600
         let fade = CMTime(seconds: crossFadeSeconds, preferredTimescale: timescale)
 
         // Timeline: each clip starts one fade-length before its predecessor
-        // ends. The dials overlay and the drive footage beneath it run
-        // together for whichever of the two is shorter.
+        // ends. The dials overlay, the rear-view inset, and the drive footage
+        // beneath them run together for whichever of the three is shortest.
         let introEnd = intro.duration
         let routeStart = introEnd - fade
         let routeEnd = routeStart + routeMap.duration
         let dialsStart = routeEnd - fade
-        let dialsSegmentDuration = min(dials.duration, frontFootage.duration)
-        if dials.duration != frontFootage.duration {
-            let shorter = dials.duration < frontFootage.duration ? "dials.mov" : "front.mov"
-            print("final: \(shorter) is the shorter of dials.mov/front.mov; truncating to match.")
+        let driveClips = [
+            ("dials.mov", dials.duration),
+            ("front.mov", frontFootage.duration),
+            ("rear.mov", rearFootage.duration),
+        ]
+        let dialsSegmentDuration = driveClips.map(\.1).min()!
+        if driveClips.contains(where: { $0.1 != dialsSegmentDuration }) {
+            let shortest = driveClips.min { $0.1 < $1.1 }!.0
+            print(
+                "final: \(shortest) is the shortest of dials.mov/front.mov/rear.mov; "
+                    + "truncating the others to match.")
         }
         let dialsEnd = dialsStart + dialsSegmentDuration
         let outroStart = dialsEnd - fade
@@ -101,6 +123,8 @@ struct FinalVideoComposer {
             let trackB = composition.addMutableTrack(
                 withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
             let footageTrack = composition.addMutableTrack(
+                withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+            let rearTrack = composition.addMutableTrack(
                 withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         else {
             throw CompositionError(message: "Could not create composition tracks.")
@@ -108,8 +132,9 @@ struct FinalVideoComposer {
 
         // Adjacent clips sit on different tracks so they can overlap during
         // the fades, alternating A, B, A, B along the timeline. The drive
-        // footage runs underneath the dials clip for the whole dials
-        // segment, so it needs a track of its own rather than sharing A.
+        // footage and the rear-view inset run underneath/alongside the dials
+        // clip for the whole dials segment, so they each need a track of
+        // their own rather than sharing A.
         try trackA.insertTimeRange(
             CMTimeRange(start: .zero, duration: intro.duration),
             of: intro.track, at: .zero)
@@ -122,49 +147,59 @@ struct FinalVideoComposer {
         try footageTrack.insertTimeRange(
             CMTimeRange(start: .zero, duration: dialsSegmentDuration),
             of: frontFootage.track, at: dialsStart)
+        try rearTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: dialsSegmentDuration),
+            of: rearFootage.track, at: dialsStart)
         try trackB.insertTimeRange(
             CMTimeRange(start: .zero, duration: outro.duration),
             of: outro.track, at: outroStart)
 
         // The route map is the full-screen element, so it sets the frame
         // size; the narrower intro and outro are scaled to fit and centred,
-        // the dial column is scaled to fit and right-aligned, and the drive
-        // footage fills the frame (cropping any overflow) as the backdrop.
+        // the dial column is scaled to fit and right-aligned, the drive
+        // footage fills the frame (cropping any overflow) as the backdrop,
+        // and the rear-view inset sits at native size near the top-left.
         let renderSize = routeMap.naturalSize
 
         func layerInstruction(
             track: AVCompositionTrack, clip: Clip,
-            scaleMode: ScaleMode = .fit,
-            alignment: HorizontalAlignment = .centred,
+            placement: Placement = .fitCentred,
             opacityRamp: AVVideoCompositionLayerInstruction.OpacityRamp? = nil
         ) -> AVVideoCompositionLayerInstruction {
             var configuration = AVVideoCompositionLayerInstruction.Configuration(
                 assetTrack: track)
-            let scale =
-                switch scaleMode {
-                case .fit:
-                    min(
+            let placementTransform: CGAffineTransform
+            switch placement {
+            case .pinned(let x, let y):
+                placementTransform = CGAffineTransform(translationX: x, y: y)
+            case .fitCentred, .fitTrailing, .fill:
+                let scale: Double
+                if case .fill = placement {
+                    scale = max(
                         renderSize.width / clip.naturalSize.width,
                         renderSize.height / clip.naturalSize.height)
-                case .fill:
-                    max(
+                } else {
+                    scale = min(
                         renderSize.width / clip.naturalSize.width,
                         renderSize.height / clip.naturalSize.height)
                 }
-            let scaledWidth = clip.naturalSize.width * scale
-            let x =
-                switch alignment {
-                case .centred: (renderSize.width - scaledWidth) / 2
-                case .trailing: renderSize.width - scaledWidth
-                }
-            let placement = CGAffineTransform(
-                translationX: x,
-                y: (renderSize.height - clip.naturalSize.height * scale) / 2
-            ).scaledBy(x: scale, y: scale)
-            // Un-rotate the source's own encoded orientation first, then fit
-            // it into the frame; for our own rendered clips this transform
-            // is always identity, so it's a no-op.
-            configuration.setTransform(clip.preferredTransform.concatenating(placement), at: .zero)
+                let scaledWidth = clip.naturalSize.width * scale
+                let x =
+                    if case .fitTrailing = placement {
+                        renderSize.width - scaledWidth
+                    } else {
+                        (renderSize.width - scaledWidth) / 2
+                    }
+                placementTransform = CGAffineTransform(
+                    translationX: x,
+                    y: (renderSize.height - clip.naturalSize.height * scale) / 2
+                ).scaledBy(x: scale, y: scale)
+            }
+            // Un-rotate the source's own encoded orientation first, then
+            // place it in the frame; for our own rendered clips this
+            // transform is always identity, so it's a no-op.
+            configuration.setTransform(
+                clip.preferredTransform.concatenating(placementTransform), at: .zero)
             if let opacityRamp {
                 configuration.addOpacityRamp(opacityRamp)
             }
@@ -205,7 +240,10 @@ struct FinalVideoComposer {
             from: introEnd, to: dialsStart,
             layers: [layerInstruction(track: trackB, clip: routeMap)])
 
-        // Route map fades out over the drive footage and dial column.
+        let rearPlacement = Placement.pinned(x: rearFootageInset, y: rearFootageInset)
+
+        // Route map fades out over the drive footage, rear-view inset, and
+        // dial column.
         addInstruction(
             from: dialsStart, to: routeEnd,
             layers: [
@@ -214,20 +252,22 @@ struct FinalVideoComposer {
                     opacityRamp: .init(
                         timeRange: CMTimeRange(start: dialsStart, end: routeEnd),
                         start: 1, end: 0)),
-                layerInstruction(track: trackA, clip: dials, alignment: .trailing),
-                layerInstruction(track: footageTrack, clip: frontFootage, scaleMode: .fill),
+                layerInstruction(track: trackA, clip: dials, placement: .fitTrailing),
+                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
+                layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
-        // Drive footage and dial column alone.
+        // Drive footage, rear-view inset, and dial column alone.
         addInstruction(
             from: routeEnd, to: outroStart,
             layers: [
-                layerInstruction(track: trackA, clip: dials, alignment: .trailing),
-                layerInstruction(track: footageTrack, clip: frontFootage, scaleMode: .fill),
+                layerInstruction(track: trackA, clip: dials, placement: .fitTrailing),
+                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
+                layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
-        // Drive footage and dial column fade out together while the outro
-        // fades in.
+        // Drive footage, rear-view inset, and dial column fade out together
+        // while the outro fades in.
         addInstruction(
             from: outroStart, to: dialsEnd,
             layers: [
@@ -237,12 +277,17 @@ struct FinalVideoComposer {
                         timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
                         start: 0, end: 1)),
                 layerInstruction(
-                    track: trackA, clip: dials, alignment: .trailing,
+                    track: trackA, clip: dials, placement: .fitTrailing,
                     opacityRamp: .init(
                         timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
                         start: 1, end: 0)),
                 layerInstruction(
-                    track: footageTrack, clip: frontFootage, scaleMode: .fill,
+                    track: rearTrack, clip: rearFootage, placement: rearPlacement,
+                    opacityRamp: .init(
+                        timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
+                        start: 1, end: 0)),
+                layerInstruction(
+                    track: footageTrack, clip: frontFootage, placement: .fill,
                     opacityRamp: .init(
                         timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
                         start: 1, end: 0)),

@@ -8,9 +8,10 @@ extension DriveBuilder {
             abstract: "Assemble the final video from the rendered clips.",
             discussion: "Cross-fades the intro into the route map, the route map into the "
                 + "journey's drive footage (video/front.mov beneath the journey "
-                + "directory) with the dial column (dials.mov) composited on top, right-"
+                + "directory) with the rear-view camera (video/rear.mov) inset near the "
+                + "top-left and the dial column (dials.mov) composited on top, right-"
                 + "aligned, and that into the outro. The footage and the dial column run "
-                + "for whichever of the two is shorter. Requires intro.mov, "
+                + "for whichever of the three is shortest. Requires intro.mov, "
                 + "telemetry/route_map.mov, telemetry/dials.mov, and outro.mov to have "
                 + "been rendered already.")
 
@@ -29,6 +30,7 @@ extension DriveBuilder {
                 routeMapURL: outputDirectory.appending(path: "telemetry/route_map.mov"),
                 dialsURL: outputDirectory.appending(path: "telemetry/dials.mov"),
                 frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
+                rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
                 outroURL: outputDirectory.appending(path: "outro.mov"))
             try await composer.writeMovie(to: outputDirectory.appending(path: "final.mov"))
         }
