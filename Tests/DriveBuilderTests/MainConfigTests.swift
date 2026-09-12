@@ -13,7 +13,7 @@ private func journeyDirectory(mainJSON: String?) throws -> URL {
     return directory
 }
 
-@Test func componentOffsetsDecodeAndOtherSectionsAreIgnored() throws {
+@Test func componentOffsetsAndAnnotationsBothDecode() throws {
     let directory = try journeyDirectory(
         mainJSON: """
             {
@@ -23,16 +23,20 @@ private func journeyDirectory(mainJSON: String?) throws -> URL {
                     "rear": { "offset": 34.5 },
                     "telemetry": { "offset": 62.0 },
                 },
-                "annotations": [ { "anything": "at all" } ],
+                "annotations": [
+                    { "video": "Start", "text": "We start our journey." },
+                    { "video": "A27 On", "text": "We multiplex onto the A27." },
+                ],
             }
             """)
     defer { try? FileManager.default.removeItem(at: directory) }
 
-    let offsets = try MainConfig.load(
-        journeyDirectory: directory.path(percentEncoded: false)).startOffsets
-    #expect(offsets.front == 34.0)
-    #expect(offsets.rear == 34.5)
-    #expect(offsets.telemetry == 62.0)
+    let config = try MainConfig.load(journeyDirectory: directory.path(percentEncoded: false))
+    #expect(config.startOffsets.front == 34.0)
+    #expect(config.startOffsets.rear == 34.5)
+    #expect(config.startOffsets.telemetry == 62.0)
+    #expect(config.annotations.map(\.video) == ["Start", "A27 On"])
+    #expect(config.annotations.map(\.text) == ["We start our journey.", "We multiplex onto the A27."])
 }
 
 @Test func missingComponentsOrOffsetsDefaultToZero() throws {

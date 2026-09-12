@@ -98,48 +98,50 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
 }
 
 @Test func lineBreaksInTheAnnotationBecomeSpaces() throws {
-    let file = FileManager.default.temporaryDirectory
-        .appending(path: "annotation-\(UUID().uuidString).txt")
-    defer { try? FileManager.default.removeItem(at: file) }
-    try Data(
-        """
+    let text = """
         Crowmarsh Gifford,
         where the A4130 crosses the Thames.
 
         Often congested.
 
-        """.utf8
-    ).write(to: file)
+        """
 
     #expect(
-        try DriveBuilder.Annotations.annotationText(from: file)
+        DriveBuilder.Annotations.normalizedText(text)
             == "Crowmarsh Gifford, where the A4130 crosses the Thames. Often congested.")
 }
 
-@Test func annotationFilesRequireTheDirectoryAndAtLeastOneTxt() throws {
+@Test func annotationsRequireAtLeastOneEntryInMainJSON() throws {
     let journey = FileManager.default.temporaryDirectory
         .appending(path: "annotations-journey-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: journey, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: journey) }
     let journeyPath = journey.path(percentEncoded: false)
 
-    // No annotations directory at all.
+    // No main.json at all.
     #expect(throws: ValidationError.self) {
-        try DriveBuilder.Annotations.annotationFiles(in: journeyPath)
+        try DriveBuilder.Annotations.annotations(in: journeyPath)
     }
 
-    // An annotations directory with no .txt files.
-    let annotations = journey.appending(path: "annotations")
-    try FileManager.default.createDirectory(at: annotations, withIntermediateDirectories: true)
-    try Data("not an annotation".utf8).write(to: annotations.appending(path: "notes.md"))
+    // A main.json with an empty "annotations" array.
+    try Data(#"{ "annotations": [] }"#.utf8)
+        .write(to: journey.appending(path: "main.json"))
     #expect(throws: ValidationError.self) {
-        try DriveBuilder.Annotations.annotationFiles(in: journeyPath)
+        try DriveBuilder.Annotations.annotations(in: journeyPath)
     }
 
-    // Two .txt files come back sorted by name.
-    try Data("B".utf8).write(to: annotations.appending(path: "Second Bend.txt"))
-    try Data("A".utf8).write(to: annotations.appending(path: "Crowmarsh Roundabout.txt"))
-    let files = try DriveBuilder.Annotations.annotationFiles(in: journeyPath)
-    #expect(
-        files.map(\.lastPathComponent) == ["Crowmarsh Roundabout.txt", "Second Bend.txt"])
+    // Entries come back in file order, with their video name and text.
+    try Data(
+        """
+        {
+            "annotations": [
+                { "video": "Start", "text": "We begin." },
+                { "video": "A27 On", "text": "We multiplex." },
+            ],
+        }
+        """.utf8
+    ).write(to: journey.appending(path: "main.json"))
+    let annotations = try DriveBuilder.Annotations.annotations(in: journeyPath)
+    #expect(annotations.map(\.video) == ["Start", "A27 On"])
+    #expect(annotations.map(\.text) == ["We begin.", "We multiplex."])
 }
