@@ -13,8 +13,11 @@ extension DriveBuilder {
                 + "aligned, and that into the outro. Per-component start offsets from the "
                 + "journey's main.json bring the separately started recordings into sync, "
                 + "and the drive segment runs for whichever of the three is shortest "
-                + "after its offset. Requires intro.mov, telemetry/route_map.mov, "
-                + "telemetry/dials.mov, and outro.mov to have been rendered already.")
+                + "after its offset. Annotation banners (main.json's \"annotations\", "
+                + "already rendered by the annotations command) composite over the "
+                + "bottom of the drive segment, each ending at its own offset. Requires "
+                + "intro.mov, telemetry/route_map.mov, telemetry/dials.mov, and outro.mov "
+                + "to have been rendered already.")
 
         @OptionGroup var telemetry: TelemetryOptions
 
@@ -47,9 +50,18 @@ extension DriveBuilder {
                 frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
                 rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
                 outroURL: outputDirectory.appending(path: "outro.mov"))
-            composer.startOffsets = try MainConfig.load(journeyDirectory: journeyDirectory)
-                .startOffsets
+            let mainConfig = try MainConfig.load(journeyDirectory: journeyDirectory)
+            composer.startOffsets = mainConfig.startOffsets
             composer.maxDriveSegmentSeconds = length
+            composer.annotationClips = try mainConfig.annotations.map { annotation in
+                guard let offset = annotation.offset else {
+                    throw ValidationError(
+                        "Annotation \"\(annotation.video)\" in main.json has no \"offset\".")
+                }
+                return FinalVideoComposer.AnnotationClip(
+                    url: outputDirectory.appending(path: "\(annotation.video).mov"),
+                    rawEndOffsetSeconds: offset)
+            }
             try await composer.writeMovie(to: outputDirectory.appending(path: "final.mov"))
         }
     }

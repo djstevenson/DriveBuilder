@@ -35,6 +35,21 @@ struct FinalVideoComposer {
     /// always play in full; `nil` renders the drive segment at full length.
     var maxDriveSegmentSeconds: Double?
 
+    /// One rendered annotation banner (see `Annotations`) to composite over
+    /// the drive segment.
+    struct AnnotationClip {
+        let url: URL
+        /// Seconds from the start of the raw front.mov file — before that
+        /// file's own `startOffsets.front` is applied — at which the
+        /// annotation should finish. This is main.json's own "offset", not
+        /// yet adjusted to the synced drive-segment timeline.
+        let rawEndOffsetSeconds: Double
+    }
+
+    /// Annotations to composite over the drive segment, bottom-aligned,
+    /// each ending at its own `rawEndOffsetSeconds`.
+    var annotationClips: [AnnotationClip] = []
+
     var framesPerSecond: Int32 = 30
 
     struct MissingClipError: Error, CustomStringConvertible {
@@ -59,6 +74,19 @@ struct FinalVideoComposer {
         case fill
         /// Native size, its top-left corner at the given frame offset.
         case pinned(x: Double, y: Double)
+        /// Scaled to match the frame's width (keeping aspect), flush with
+        /// the bottom edge — for the annotation banners, whose canvases
+        /// carry their own bottom inset and rise-from-below animation.
+        case fitWidthBottom
+    }
+
+    /// One instruction still under construction: a time range and its
+    /// active layers, kept as plain data (rather than the immutable
+    /// `AVVideoCompositionInstruction`) so annotations can later split a
+    /// range and splice their own layer into just the overlapping piece.
+    private struct Phase {
+        var range: CMTimeRange
+        var layers: [AVVideoCompositionLayerInstruction]
     }
 
     private struct Clip {
@@ -210,6 +238,12 @@ struct FinalVideoComposer {
             switch placement {
             case .pinned(let x, let y):
                 placementTransform = CGAffineTransform(translationX: x, y: y)
+            case .fitWidthBottom:
+                let scale = renderSize.width / clip.naturalSize.width
+                let scaledHeight = clip.naturalSize.height * scale
+                placementTransform = CGAffineTransform(
+                    translationX: 0, y: renderSize.height - scaledHeight
+                ).scaledBy(x: scale, y: scale)
             case .fitCentred, .fitTrailing, .fill:
                 let scale: Double
                 if case .fill = placement {
@@ -244,16 +278,12 @@ struct FinalVideoComposer {
             return AVVideoCompositionLayerInstruction(configuration: configuration)
         }
 
-        var instructions: [AVVideoCompositionInstruction] = []
+        var phases: [Phase] = []
         func addInstruction(
             from start: CMTime, to end: CMTime,
             layers: [AVVideoCompositionLayerInstruction]
         ) {
-            instructions.append(
-                AVVideoCompositionInstruction(
-                    configuration: .init(
-                        layerInstructions: layers,
-                        timeRange: CMTimeRange(start: start, end: end))))
+            phases.append(Phase(range: CMTimeRange(start: start, end: end), layers: layers))
         }
 
         // Intro alone.
@@ -335,6 +365,76 @@ struct FinalVideoComposer {
         addInstruction(
             from: dialsEnd, to: outroEnd,
             layers: [layerInstruction(track: trackB, clip: outro)])
+
+        // Splits `phases` at `range`'s bounds (if it doesn't already land on
+        // a boundary) and adds `layer` to every resulting phase inside it,
+        // so an annotation can overlay an arbitrary window without
+        // disturbing the cross-fades already covering that time. `layer`
+        // goes first in each layer list — the topmost, per the convention
+        // every other call to `layerInstruction` above already follows —
+        // or it would render hidden behind the opaque front footage.
+        func insertOverlay(
+            _ layer: AVVideoCompositionLayerInstruction, over range: CMTimeRange
+        ) {
+            var result: [Phase] = []
+            for phase in phases {
+                let start = max(phase.range.start, range.start)
+                let end = min(phase.range.end, range.end)
+                guard start < end else {
+                    result.append(phase)
+                    continue
+                }
+                if phase.range.start < start {
+                    result.append(
+                        Phase(
+                            range: CMTimeRange(start: phase.range.start, end: start),
+                            layers: phase.layers))
+                }
+                result.append(
+                    Phase(range: CMTimeRange(start: start, end: end), layers: [layer] + phase.layers))
+                if end < phase.range.end {
+                    result.append(
+                        Phase(range: CMTimeRange(start: end, end: phase.range.end), layers: phase.layers))
+                }
+            }
+            phases = result
+        }
+
+        // Annotations composite over the drive segment, bottom-aligned, each
+        // ending at its own offset (from main.json, adjusted here from
+        // "since the start of raw front.mov" to the synced drive-segment
+        // timeline) and playing through its own built-in
+        // opening/scrolling/closing animation, so no opacity ramp is needed.
+        for annotationClip in annotationClips {
+            let clip = try await loadClip(at: annotationClip.url)
+            let syncedEndSeconds = annotationClip.rawEndOffsetSeconds - startOffsets.front
+            let end = dialsStart + CMTime(seconds: syncedEndSeconds, preferredTimescale: timescale)
+            let start = end - clip.duration
+            guard start >= dialsStart, end <= dialsEnd else {
+                print(
+                    String(
+                        format: "final: skipping %@ — its offset doesn't fall within the drive "
+                            + "segment (%.1fs to %.1fs).",
+                        annotationClip.url.lastPathComponent, dialsStart.seconds, dialsEnd.seconds))
+                continue
+            }
+            guard
+                let annotationTrack = composition.addMutableTrack(
+                    withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else {
+                throw CompositionError(message: "Could not create composition tracks.")
+            }
+            try annotationTrack.insertTimeRange(
+                CMTimeRange(start: .zero, duration: clip.duration), of: clip.track, at: start)
+            insertOverlay(
+                layerInstruction(track: annotationTrack, clip: clip, placement: .fitWidthBottom),
+                over: CMTimeRange(start: start, end: end))
+        }
+
+        let instructions = phases.map {
+            AVVideoCompositionInstruction(
+                configuration: .init(layerInstructions: $0.layers, timeRange: $0.range))
+        }
 
         // Without an explicit target space, a composition just propagates
         // "the source's" colour tag per source — and our own rendered clips

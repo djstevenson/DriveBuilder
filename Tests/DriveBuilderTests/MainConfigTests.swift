@@ -64,6 +64,18 @@ private func journeyDirectory(mainJSON: String?) throws -> URL {
     #expect(offsets.telemetry == 0)
 }
 
+@Test func quotedAnnotationOffsetIsRejected() throws {
+    let directory = try journeyDirectory(
+        mainJSON: """
+            { "annotations": [ { "video": "Start", "text": "Hi", "offset": "120" } ] }
+            """)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    #expect(throws: (any Error).self) {
+        try MainConfig.load(journeyDirectory: directory.path(percentEncoded: false))
+    }
+}
+
 @Test func malformedMainJSONThrows() throws {
     let directory = try journeyDirectory(mainJSON: "{ not json at all")
     defer { try? FileManager.default.removeItem(at: directory) }

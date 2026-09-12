@@ -1,8 +1,7 @@
 import Foundation
 
 /// The journey's hand-authored `main.json`, kept in the root of the journey's
-/// data directory. Only the parts the final assembly needs are decoded;
-/// other sections (e.g. "annotations") are ignored until they're needed.
+/// data directory.
 struct MainConfig {
     /// Seconds to skip at the start of each separately recorded component so
     /// they play in sync: the cameras and the telemetry logger don't all
@@ -14,10 +13,15 @@ struct MainConfig {
     }
 
     /// One scrolling annotation banner: `video` names the output movie
-    /// (written to `output/<video>.mov`), `text` is what scrolls across it.
+    /// (written to `output/<video>.mov`), `text` is what scrolls across it,
+    /// and `offset` (seconds from the start of the raw front.mov file, before
+    /// that file's own start offset is applied) says when it should end, for
+    /// `final` to place it. `offset` is nil until the author adds it, and
+    /// isn't needed just to render the banner with the `annotations` command.
     struct Annotation {
         var video: String
         var text: String
+        var offset: Double?
     }
 
     var startOffsets = StartOffsets()
@@ -30,6 +34,7 @@ struct MainConfig {
         struct Annotation: Decodable {
             var video: String
             var text: String
+            var offset: Double?
         }
         var components: [String: Component]?
         var annotations: [Annotation]?
@@ -50,7 +55,7 @@ struct MainConfig {
         config.startOffsets.rear = file.components?["rear"]?.offset ?? 0
         config.startOffsets.telemetry = file.components?["telemetry"]?.offset ?? 0
         config.annotations = (file.annotations ?? []).map {
-            Annotation(video: $0.video, text: $0.text)
+            Annotation(video: $0.video, text: $0.text, offset: $0.offset)
         }
         return config
     }
