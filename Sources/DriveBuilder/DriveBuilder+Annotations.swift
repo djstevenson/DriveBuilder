@@ -5,7 +5,10 @@ extension DriveBuilder {
     struct Annotations: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "annotations",
-            abstract: "Build the scrolling annotation banners for a journey.")
+            abstract: "Build the scrolling annotation banners for a journey.",
+            discussion: "Reads the \"annotations\" section of the journey's main.json: each "
+                + "entry's \"video\" names the output (output/<video>.mov) and \"text\" is "
+                + "what scrolls across the banner.")
 
         @OptionGroup var telemetry: TelemetryOptions
 
@@ -14,35 +17,22 @@ extension DriveBuilder {
             help: "Render only the first N frames of each banner, for a quick check.")
         var frameLimit: Int?
 
-        /// Every annotation source in `directory`'s `annotations` directory,
-        /// sorted by name. The directory must exist and contain at least one
-        /// `.txt` file; each becomes one movie named after the file.
-        static func annotationFiles(in directory: String) throws -> [URL] {
-            let annotationsDirectory = URL(filePath: directory).appending(path: "annotations")
-            let path = annotationsDirectory.path(percentEncoded: false)
-
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-                isDirectory.boolValue
-            else {
-                throw ValidationError("No annotations directory at \(path).")
+        /// The journey's annotations, from `main.json`. The file and its
+        /// `annotations` section must exist and list at least one entry.
+        static func annotations(in journeyDirectory: String) throws -> [MainConfig.Annotation] {
+            let annotations = try MainConfig.load(journeyDirectory: journeyDirectory).annotations
+            guard !annotations.isEmpty else {
+                throw ValidationError(
+                    "No \"annotations\" entries in \(journeyDirectory)/main.json.")
             }
-
-            let files = try FileManager.default
-                .contentsOfDirectory(at: annotationsDirectory, includingPropertiesForKeys: nil)
-                .filter { $0.pathExtension.lowercased() == "txt" }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            guard !files.isEmpty else {
-                throw ValidationError("No .txt annotation files in \(path).")
-            }
-            return files
+            return annotations
         }
 
-        /// The annotation's text: the file's lines joined with single spaces,
-        /// since the scroll is one long line. Blank lines and leading or
-        /// trailing whitespace on each line are dropped.
-        static func annotationText(from file: URL) throws -> String {
-            try String(contentsOf: file, encoding: .utf8)
+        /// The annotation's text: lines joined with single spaces, since the
+        /// scroll is one long line. Blank lines and leading or trailing
+        /// whitespace on each line are dropped.
+        static func normalizedText(_ text: String) -> String {
+            text
                 .split(whereSeparator: \.isNewline)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
@@ -51,25 +41,23 @@ extension DriveBuilder {
 
         mutating func run() async throws {
             let directory = try telemetry.journeyDirectory()
-            let files = try Self.annotationFiles(in: directory)
+            let annotations = try Self.annotations(in: directory)
 
-            let outputRoot = URL(filePath: directory).appending(path: "output")
-            let outputDirectory = outputRoot.appending(path: "annotations")
+            let outputDirectory = URL(filePath: directory).appending(path: "output")
             try FileManager.default.createDirectory(
                 at: outputDirectory, withIntermediateDirectories: true)
-            try FileManager.default.excludeFromBackup(outputRoot)
+            try FileManager.default.excludeFromBackup(outputDirectory)
 
-            for file in files {
-                let name = file.deletingPathExtension().lastPathComponent
-                let text = try Self.annotationText(from: file)
+            for annotation in annotations {
+                let text = Self.normalizedText(annotation.text)
                 guard !text.isEmpty else {
                     throw ValidationError(
-                        "Annotation file \(file.path(percentEncoded: false)) is empty.")
+                        "Annotation \"\(annotation.video)\" in main.json has no text.")
                 }
 
                 let renderer = AnnotationRenderer(text: text)
                 try await renderer.writeMovie(
-                    to: outputDirectory.appending(path: "\(name).mov"),
+                    to: outputDirectory.appending(path: "\(annotation.video).mov"),
                     frameLimit: frameLimit)
             }
         }

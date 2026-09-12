@@ -38,18 +38,37 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
     #expect(textWidth < 500)
 }
 
-@Test func bannerOpensFromTwoLinesMeetingAtTheCentre() throws {
+@Test func bannerRisesInFromBelowTheBottomEdge() throws {
     let renderer = AnnotationRenderer(text: "Test")
     let artwork = try renderer.makeArtwork()
 
-    // At t = 0 the two lines coincide at the centre; everything else is
-    // transparent.
+    // At t = 0 both lines sit one row below the canvas — off the bottom of
+    // the video — so the whole frame is transparent.
     let first = try renderer.frame(at: 0, artwork: artwork)
-    #expect(isBorderGreen(colour(first, 10, 80)))
-    #expect(isTransparent(colour(first, 10, 70)))
-    #expect(isTransparent(colour(first, 10, 90)))
-    #expect(isTransparent(colour(first, 10, 0)))
-    #expect(isTransparent(colour(first, 10, 159)))
+    for y in [0, 80, 158, 169] {
+        #expect(isTransparent(colour(first, 10, y)))
+    }
+
+    // One frame in, the pair has risen into the inset region, still
+    // coincident: 4 rows starting at 170 * (1 - (1/30) / 0.7), rounded:
+    // rows 162-165.
+    let rising = try renderer.frame(at: 1, artwork: artwork)
+    #expect(isTransparent(colour(rising, 10, 161)))
+    #expect(isBorderGreen(colour(rising, 10, 162)))
+    #expect(isBorderGreen(colour(rising, 10, 165)))
+    #expect(isTransparent(colour(rising, 10, 166)))
+    #expect(isTransparent(colour(rising, 10, 100)))
+
+    // Partway through the open (frame 10, progress 10/21): the top line has
+    // climbed to row 170 * (1 - 10/21), rounded: 89; the bottom line rests
+    // at rows 156-159 with black between, and the inset below stays clear.
+    let opening = try renderer.frame(at: 10, artwork: artwork)
+    #expect(isBorderGreen(colour(opening, 10, 89)))
+    #expect(isBlack(colour(opening, 10, 120)))
+    #expect(isBorderGreen(colour(opening, 10, 156)))
+    #expect(isBorderGreen(colour(opening, 10, 159)))
+    #expect(isTransparent(colour(opening, 10, 165)))
+    #expect(isTransparent(colour(opening, 10, 50)))
 }
 
 @Test func openBannerHasGreenEdgesAndABlackBand() throws {
@@ -57,13 +76,16 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
     let artwork = try renderer.makeArtwork()
 
     // t = 1s: fully open, text still near the right edge, so the left side
-    // shows the plain banner: green top and bottom rows, black between.
+    // shows the plain banner: green top and bottom rows, black between, and
+    // the bottom inset transparent so the video shows through beneath.
     let frame = try renderer.frame(at: 30, artwork: artwork)
     #expect(isBorderGreen(colour(frame, 100, 0)))
     #expect(isBorderGreen(colour(frame, 100, 1)))
     #expect(isBlack(colour(frame, 100, 80)))
     #expect(isBorderGreen(colour(frame, 100, 158)))
     #expect(isBorderGreen(colour(frame, 100, 159)))
+    #expect(isTransparent(colour(frame, 100, 165)))
+    #expect(isTransparent(colour(frame, 100, 169)))
 }
 
 @Test func textScrollsAcrossInYellow() throws {
@@ -92,54 +114,56 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
     let artwork = try renderer.makeArtwork()
 
     let last = try renderer.frame(at: renderer.frameCount - 1, artwork: artwork)
-    for (x, y) in [(0, 0), (1920, 80), (3839, 159), (100, 1), (100, 158)] {
+    for (x, y) in [(0, 0), (1920, 80), (3839, 169), (100, 1), (100, 158)] {
         #expect(isTransparent(colour(last, x, y)))
     }
 }
 
 @Test func lineBreaksInTheAnnotationBecomeSpaces() throws {
-    let file = FileManager.default.temporaryDirectory
-        .appending(path: "annotation-\(UUID().uuidString).txt")
-    defer { try? FileManager.default.removeItem(at: file) }
-    try Data(
-        """
+    let text = """
         Crowmarsh Gifford,
         where the A4130 crosses the Thames.
 
         Often congested.
 
-        """.utf8
-    ).write(to: file)
+        """
 
     #expect(
-        try DriveBuilder.Annotations.annotationText(from: file)
+        DriveBuilder.Annotations.normalizedText(text)
             == "Crowmarsh Gifford, where the A4130 crosses the Thames. Often congested.")
 }
 
-@Test func annotationFilesRequireTheDirectoryAndAtLeastOneTxt() throws {
+@Test func annotationsRequireAtLeastOneEntryInMainJSON() throws {
     let journey = FileManager.default.temporaryDirectory
         .appending(path: "annotations-journey-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: journey, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: journey) }
     let journeyPath = journey.path(percentEncoded: false)
 
-    // No annotations directory at all.
+    // No main.json at all.
     #expect(throws: ValidationError.self) {
-        try DriveBuilder.Annotations.annotationFiles(in: journeyPath)
+        try DriveBuilder.Annotations.annotations(in: journeyPath)
     }
 
-    // An annotations directory with no .txt files.
-    let annotations = journey.appending(path: "annotations")
-    try FileManager.default.createDirectory(at: annotations, withIntermediateDirectories: true)
-    try Data("not an annotation".utf8).write(to: annotations.appending(path: "notes.md"))
+    // A main.json with an empty "annotations" array.
+    try Data(#"{ "annotations": [] }"#.utf8)
+        .write(to: journey.appending(path: "main.json"))
     #expect(throws: ValidationError.self) {
-        try DriveBuilder.Annotations.annotationFiles(in: journeyPath)
+        try DriveBuilder.Annotations.annotations(in: journeyPath)
     }
 
-    // Two .txt files come back sorted by name.
-    try Data("B".utf8).write(to: annotations.appending(path: "Second Bend.txt"))
-    try Data("A".utf8).write(to: annotations.appending(path: "Crowmarsh Roundabout.txt"))
-    let files = try DriveBuilder.Annotations.annotationFiles(in: journeyPath)
-    #expect(
-        files.map(\.lastPathComponent) == ["Crowmarsh Roundabout.txt", "Second Bend.txt"])
+    // Entries come back in file order, with their video name and text.
+    try Data(
+        """
+        {
+            "annotations": [
+                { "video": "Start", "text": "We begin." },
+                { "video": "A27 On", "text": "We multiplex." },
+            ],
+        }
+        """.utf8
+    ).write(to: journey.appending(path: "main.json"))
+    let annotations = try DriveBuilder.Annotations.annotations(in: journeyPath)
+    #expect(annotations.map(\.video) == ["Start", "A27 On"])
+    #expect(annotations.map(\.text) == ["We begin.", "We multiplex."])
 }
