@@ -18,6 +18,20 @@ extension DriveBuilder {
 
         @OptionGroup var telemetry: TelemetryOptions
 
+        @Option(
+            name: .customLong("length"),
+            help: ArgumentHelp(
+                "Cap the drive segment to at most this many seconds, for a quick test "
+                    + "render while checking sync; the intro and outro still play in full. "
+                    + "Omit for the full-length final video."))
+        var length: Double?
+
+        func validate() throws {
+            if let length, length <= 0 {
+                throw ValidationError("--length must be a positive number of seconds.")
+            }
+        }
+
         mutating func run() async throws {
             let journeyDirectory = try telemetry.journeyDirectory()
             let outputDirectory = URL(filePath: journeyDirectory)
@@ -35,6 +49,7 @@ extension DriveBuilder {
                 outroURL: outputDirectory.appending(path: "outro.mov"))
             composer.startOffsets = try MainConfig.load(journeyDirectory: journeyDirectory)
                 .startOffsets
+            composer.maxDriveSegmentSeconds = length
             try await composer.writeMovie(to: outputDirectory.appending(path: "final.mov"))
         }
     }

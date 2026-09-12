@@ -29,6 +29,12 @@ struct FinalVideoComposer {
     /// sync; the telemetry offset applies to the dials clip rendered from it.
     var startOffsets = MainConfig.StartOffsets()
 
+    /// Caps the drive segment (dials/footage/rear-view) to at most this many
+    /// seconds, for a quick test render while checking sync — e.g. the first
+    /// 30 seconds — rather than the whole journey. The intro and outro
+    /// always play in full; `nil` renders the drive segment at full length.
+    var maxDriveSegmentSeconds: Double?
+
     var framesPerSecond: Int32 = 30
 
     struct MissingClipError: Error, CustomStringConvertible {
@@ -127,12 +133,22 @@ struct FinalVideoComposer {
             throw CompositionError(
                 message: "The main.json start offset for \(empty.0) skips the whole clip.")
         }
-        let dialsSegmentDuration = driveClips.map(\.1).min()!
+        var dialsSegmentDuration = driveClips.map(\.1).min()!
         if driveClips.contains(where: { $0.1 != dialsSegmentDuration }) {
             let shortest = driveClips.min { $0.1 < $1.1 }!.0
             print(
                 "final: \(shortest) is the shortest of dials.mov/front.mov/rear.mov "
                     + "after start offsets; truncating the others to match.")
+        }
+        if let maxDriveSegmentSeconds {
+            let cap = CMTime(seconds: maxDriveSegmentSeconds, preferredTimescale: timescale)
+            if cap < dialsSegmentDuration {
+                print(
+                    String(
+                        format: "final: capping the drive segment to %.1fs for a test render.",
+                        maxDriveSegmentSeconds))
+                dialsSegmentDuration = cap
+            }
         }
         let dialsEnd = dialsStart + dialsSegmentDuration
         let outroStart = dialsEnd - fade
