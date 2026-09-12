@@ -24,6 +24,11 @@ struct FinalVideoComposer {
     /// Gap between the frame's top-left corner and the rear-view inset.
     var rearFootageInset: Double = 20.0
 
+    /// Seconds skipped at the start of each drive-segment source (from the
+    /// journey's main.json) so the separately started recordings play in
+    /// sync; the telemetry offset applies to the dials clip rendered from it.
+    var startOffsets = MainConfig.StartOffsets()
+
     var framesPerSecond: Int32 = 30
 
     struct MissingClipError: Error, CustomStringConvertible {
@@ -93,6 +98,19 @@ struct FinalVideoComposer {
         let timescale: CMTimeScale = 600
         let fade = CMTime(seconds: crossFadeSeconds, preferredTimescale: timescale)
 
+        // The drive-segment sources were recorded separately, so each skips
+        // its own start offset to bring the three into sync; what competes
+        // for "shortest" below is the remainder after that skip.
+        let dialsSourceStart = CMTime(seconds: startOffsets.telemetry, preferredTimescale: timescale)
+        let frontSourceStart = CMTime(seconds: startOffsets.front, preferredTimescale: timescale)
+        let rearSourceStart = CMTime(seconds: startOffsets.rear, preferredTimescale: timescale)
+        if startOffsets.front != 0 || startOffsets.rear != 0 || startOffsets.telemetry != 0 {
+            print(
+                String(
+                    format: "final: start offsets front %.1fs, rear %.1fs, telemetry %.1fs.",
+                    startOffsets.front, startOffsets.rear, startOffsets.telemetry))
+        }
+
         // Timeline: each clip starts one fade-length before its predecessor
         // ends. The dials overlay, the rear-view inset, and the drive footage
         // beneath them run together for whichever of the three is shortest.
@@ -101,16 +119,20 @@ struct FinalVideoComposer {
         let routeEnd = routeStart + routeMap.duration
         let dialsStart = routeEnd - fade
         let driveClips = [
-            ("dials.mov", dials.duration),
-            ("front.mov", frontFootage.duration),
-            ("rear.mov", rearFootage.duration),
+            ("dials.mov", dials.duration - dialsSourceStart),
+            ("front.mov", frontFootage.duration - frontSourceStart),
+            ("rear.mov", rearFootage.duration - rearSourceStart),
         ]
+        if let empty = driveClips.first(where: { $0.1 <= .zero }) {
+            throw CompositionError(
+                message: "The main.json start offset for \(empty.0) skips the whole clip.")
+        }
         let dialsSegmentDuration = driveClips.map(\.1).min()!
         if driveClips.contains(where: { $0.1 != dialsSegmentDuration }) {
             let shortest = driveClips.min { $0.1 < $1.1 }!.0
             print(
-                "final: \(shortest) is the shortest of dials.mov/front.mov/rear.mov; "
-                    + "truncating the others to match.")
+                "final: \(shortest) is the shortest of dials.mov/front.mov/rear.mov "
+                    + "after start offsets; truncating the others to match.")
         }
         let dialsEnd = dialsStart + dialsSegmentDuration
         let outroStart = dialsEnd - fade
@@ -142,13 +164,13 @@ struct FinalVideoComposer {
             CMTimeRange(start: .zero, duration: routeMap.duration),
             of: routeMap.track, at: routeStart)
         try trackA.insertTimeRange(
-            CMTimeRange(start: .zero, duration: dialsSegmentDuration),
+            CMTimeRange(start: dialsSourceStart, duration: dialsSegmentDuration),
             of: dials.track, at: dialsStart)
         try footageTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: dialsSegmentDuration),
+            CMTimeRange(start: frontSourceStart, duration: dialsSegmentDuration),
             of: frontFootage.track, at: dialsStart)
         try rearTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: dialsSegmentDuration),
+            CMTimeRange(start: rearSourceStart, duration: dialsSegmentDuration),
             of: rearFootage.track, at: dialsStart)
         try trackB.insertTimeRange(
             CMTimeRange(start: .zero, duration: outro.duration),
