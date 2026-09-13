@@ -14,10 +14,10 @@ import Foundation
 /// `RouteMapRenderer` and passed in, so it's the very same image the route
 /// map itself then reveals its track over - rendering it twice risked the
 /// external map renderer placing labels slightly differently between the
-/// two calls, which is what the jump cut this replaces was. The zoom
-/// magnifies the national image while the detailed image fades in over it,
-/// in its correct map position, taking over before the national image's
-/// pixels are stretched enough to blur.
+/// two calls, which is what the jump cut this replaces was. Before the zoom
+/// sets off, the detailed image cross-fades in over the national image
+/// inside the box, in its correct map position, so the zoom magnifies
+/// imagery that's already sharp.
 struct NationalRouteMapRenderer {
     static let dialName = "NationalRouteMap"
 
@@ -40,17 +40,15 @@ struct NationalRouteMapRenderer {
     static let routeRevealSeconds = 1.5
     static let routeHoldSeconds = 1.0
     static let routeUndrawSeconds = 1.0 / 3
+    /// Cross-fade from the low-detail national imagery to the route map's
+    /// own high-detail image inside the box, before the zoom sets off, so
+    /// the zoom magnifies imagery that's already sharp.
+    static let detailSwapSeconds = 0.5
     static let zoomSeconds = 3.0
     // Halved from 1.0: combined with the route map's own introSeconds hold
     // right after it, the two static holds back to back made for too long
     // a pause before the track starts snaking out.
     static let outroSeconds = 0.5
-
-    /// The detailed image fades in over this window of the zoom's eased
-    /// progress: starting once the motion is clearly under way, and done
-    /// before the national image is magnified enough to look soft.
-    static let detailFadeInStart = 0.15
-    static let detailFadeInEnd = 0.55
 
     /// The box outline and the outside-the-box dim fade out over this window
     /// of the zoom, before the box's edges reach the frame border, so the
@@ -127,7 +125,7 @@ struct NationalRouteMapRenderer {
 
     static var totalSeconds: Double {
         introSeconds + boxPopSeconds + boxHoldSeconds + routeRevealSeconds + routeHoldSeconds
-            + routeUndrawSeconds + zoomSeconds + outroSeconds
+            + routeUndrawSeconds + detailSwapSeconds + zoomSeconds + outroSeconds
     }
 
     /// One video time per output frame.
@@ -179,7 +177,8 @@ struct NationalRouteMapRenderer {
         let routeRevealEnd = routeStart + Self.routeRevealSeconds
         let routeHoldEnd = routeRevealEnd + Self.routeHoldSeconds
         let routeUndrawEnd = routeHoldEnd + Self.routeUndrawSeconds
-        let zoomStart = routeUndrawEnd
+        let detailSwapStart = routeUndrawEnd
+        let zoomStart = detailSwapStart + Self.detailSwapSeconds
 
         let popT = min(1, max(0, (time - popStart) / Self.boxPopSeconds))
         let boxProgress = Self.smoothstep(popT)
@@ -207,7 +206,7 @@ struct NationalRouteMapRenderer {
                 * (1 - Self.ramp(
                     zoomProgress, from: Self.zoomFadeOutStart, to: Self.zoomFadeOutEnd)),
             detailAlpha: Self.ramp(
-                zoomProgress, from: Self.detailFadeInStart, to: Self.detailFadeInEnd),
+                time, from: detailSwapStart, to: detailSwapStart + Self.detailSwapSeconds),
             routePointCount: routePointCount)
     }
 

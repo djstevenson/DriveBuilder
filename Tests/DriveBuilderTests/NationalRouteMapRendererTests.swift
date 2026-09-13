@@ -163,6 +163,19 @@ private func testRenderer(records: [TelemetryRecord] = testRecords()) -> Nationa
     #expect(abs(hold.overlayAlpha - NationalRouteMapRenderer.overlayMaxAlpha) < 0.000_001)
     #expect(hold.detailAlpha == 0)
 
+    // The detail swap: still wide, the high-detail image fading in over the
+    // box's interior before the zoom sets off, complete as it begins.
+    let swapStart =
+        NationalRouteMapRenderer.introSeconds + NationalRouteMapRenderer.boxPopSeconds
+        + NationalRouteMapRenderer.boxHoldSeconds + NationalRouteMapRenderer.routeRevealSeconds
+        + NationalRouteMapRenderer.routeHoldSeconds + NationalRouteMapRenderer.routeUndrawSeconds
+    let midSwap = renderer.frameState(at: swapStart + NationalRouteMapRenderer.detailSwapSeconds / 2)
+    #expect(midSwap.viewport == national)
+    #expect(abs(midSwap.detailAlpha - 0.5) < 0.000_001)
+    let swapDone = renderer.frameState(at: swapStart + NationalRouteMapRenderer.detailSwapSeconds)
+    #expect(swapDone.viewport == national)
+    #expect(swapDone.detailAlpha == 1)
+
     // End of the zoom and the outro: exactly the route map's area, fully
     // detailed, box and dim gone.
     let end = renderer.frameState(at: NationalRouteMapRenderer.totalSeconds)
@@ -246,7 +259,7 @@ private func testRenderer(records: [TelemetryRecord] = testRecords()) -> Nationa
     let routeHoldEnd =
         routeStart + NationalRouteMapRenderer.routeRevealSeconds
         + NationalRouteMapRenderer.routeHoldSeconds
-    let zoomStart = routeHoldEnd + NationalRouteMapRenderer.routeUndrawSeconds
+    let undrawEnd = routeHoldEnd + NationalRouteMapRenderer.routeUndrawSeconds
 
     // Still fully drawn right as the pause ends.
     #expect(renderer.frameState(at: routeHoldEnd).routePointCount == 5)
@@ -257,9 +270,10 @@ private func testRenderer(records: [TelemetryRecord] = testRecords()) -> Nationa
     #expect(midUndraw.routePointCount > 0)
     #expect(midUndraw.routePointCount < 5)
 
-    // Gone by the time the zoom starts, and stays gone into the zoom.
-    #expect(renderer.frameState(at: zoomStart).routePointCount == 0)
-    #expect(renderer.frameState(at: zoomStart + 0.5).routePointCount == 0)
+    // Gone by the end of the undraw, and stays gone through the detail
+    // swap and into the zoom.
+    #expect(renderer.frameState(at: undrawEnd).routePointCount == 0)
+    #expect(renderer.frameState(at: undrawEnd + 0.5).routePointCount == 0)
 }
 
 @Test func revealedRouteDrawsAThinOrangeSnake() throws {
