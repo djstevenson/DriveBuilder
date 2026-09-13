@@ -560,8 +560,7 @@ struct FinalVideoComposer {
         try await session.export(to: url, as: .mov)
 
         let elapsed = started.duration(to: .now)
-        let seconds =
-            Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        let seconds = elapsed / .seconds(1)
         print(
             String(
                 format: "final: wrote %.1fs in %.1fs to %@",

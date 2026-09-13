@@ -1,15 +1,6 @@
 import ArgumentParser
 import Foundation
 
-/// The canonical telemetry database is the one checked into this source
-/// tree (see DriveBuilder+Telemetry.swift) - cached road data must land
-/// there directly, not in the bundled copy the render subcommands read,
-/// which is recreated from it on every build.
-private let sourceTreeDatabasePath = URL(filePath: #filePath)
-    .deletingLastPathComponent()
-    .appending(path: "Resources/telemetry.sqlite3")
-    .path(percentEncoded: false)
-
 extension DriveBuilder {
     struct RoadData: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
@@ -29,7 +20,7 @@ extension DriveBuilder {
         mutating func run() async throws {
             let roads = try RoadNetwork()
             let places = try PlaceNameLookup()
-            let store = TelemetryStore(path: sourceTreeDatabasePath)
+            let store = TelemetryStore(path: TelemetryDatabase.sourceTreePath)
 
             var cachedCount = 0
             for number in 1...9999 {

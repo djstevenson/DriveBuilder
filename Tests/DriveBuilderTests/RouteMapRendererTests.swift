@@ -89,7 +89,7 @@ private func smallConfig(labels: [RouteMapConfig.Label] = []) -> RouteMapConfig 
     #expect(config.introSeconds == 2.5)  // default kept
     #expect(config.animationSeconds == 30)
     #expect(config.labels.count == 1)
-    #expect(config.labels[0].location == "left")
+    #expect(config.labels[0].location == .left)
     #expect(config.labels[0].distance == nil)
 
     let defaults = try RouteMapConfig.load(path: nil)
@@ -183,7 +183,7 @@ private func smallConfig(labels: [RouteMapConfig.Label] = []) -> RouteMapConfig 
         RouteMapConfig.Label(
             offset: 10, title: "A338", subtitle: "Bournemouth", location: nil, distance: nil),
         RouteMapConfig.Label(
-            offset: 20, title: "A345", subtitle: "Salisbury", location: "left", distance: nil),
+            offset: 20, title: "A345", subtitle: "Salisbury", location: .left, distance: nil),
     ]
     let renderer = RouteMapRenderer(
         records: testRecords(count: 5),

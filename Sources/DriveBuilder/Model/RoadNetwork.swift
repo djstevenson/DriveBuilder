@@ -1,31 +1,19 @@
 import Foundation
 import GRDB
 
-struct GridPoint {
-    let easting: Double
-    let northing: Double
-}
-
 struct RoadEndpoint {
     let nodeID: String
     let formOfRoadNode: String?
-    let location: GridPoint
-}
-
-enum RoadNetworkError: Error {
-    case resourceNotFound(String)
+    let location: OSGB.GridPoint
 }
 
 final class RoadNetwork {
     enum Error: Swift.Error {
         case resourceNotFound(String)
         case roadNotFound(String)
-        case insufficientEndpoints(
-            roadNumber: String,
-            count: Int
-        )
+        case insufficientEndpoints(roadNumber: String, count: Int)
     }
-    
+
     private let dbQueue: DatabaseQueue
 
     init() throws {
@@ -33,7 +21,7 @@ final class RoadNetwork {
             forResource: "oproad_gb",
             withExtension: "gpkg"
         ) else {
-            throw RoadNetworkError.resourceNotFound("oproad_gb.gpkg")
+            throw Error.resourceNotFound("oproad_gb.gpkg")
         }
 
         var configuration = Configuration()
@@ -92,7 +80,7 @@ final class RoadNetwork {
                 return RoadEndpoint(
                     nodeID: nodeID,
                     formOfRoadNode: formOfRoadNode,
-                    location: GridPoint(
+                    location: OSGB.GridPoint(
                         easting: easting,
                         northing: northing
                     )

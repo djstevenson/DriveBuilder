@@ -1,6 +1,22 @@
 import ArgumentParser
 import Foundation
 
+/// The bare `--frame-limit` option, for subcommands (intro, outro,
+/// annotations) whose fixed size and frame rate leave nothing else of
+/// `VideoOptions` applicable.
+struct FrameLimitOptions: ParsableArguments {
+    @Option(
+        name: .customLong("frame-limit"),
+        help: "Render only the first N frames, for a quick check.")
+    var frameLimit: Int?
+
+    func validate() throws {
+        if let frameLimit, frameLimit < 1 {
+            throw ValidationError("--frame-limit must be at least 1.")
+        }
+    }
+}
+
 /// Options shared by every subcommand that renders a dial to a movie.
 struct VideoOptions: ParsableArguments {
     @Option(

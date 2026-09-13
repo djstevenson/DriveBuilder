@@ -12,10 +12,7 @@ extension DriveBuilder {
 
         @OptionGroup var telemetry: TelemetryOptions
 
-        @Option(
-            name: .customLong("frame-limit"),
-            help: "Render only the first N frames of each banner, for a quick check.")
-        var frameLimit: Int?
+        @OptionGroup var video: FrameLimitOptions
 
         /// The journey's annotations, from `main.json`. The file and its
         /// `annotations` section must exist and list at least one entry.
@@ -58,7 +55,7 @@ extension DriveBuilder {
                 let renderer = AnnotationRenderer(text: text)
                 try await renderer.writeMovie(
                     to: outputDirectory.appending(path: "\(annotation.video).mov"),
-                    frameLimit: frameLimit)
+                    frameLimit: video.frameLimit)
             }
         }
     }
