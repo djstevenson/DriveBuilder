@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import QuartzCore
 
 /// Stitches the already-rendered clips into the final programme:
 /// intro → route map → (drive footage with the rear-view inset and dials on
@@ -259,6 +260,27 @@ struct FinalVideoComposer {
         // and the rear-view inset sits at native size near the top-left.
         let renderSize = routeMap.naturalSize
 
+        // Core Animation supplies a transparent synthetic track containing a
+        // soft shadow shaped to the rear inset. The footage is composited
+        // immediately above it.
+        let rearShadowTrackID: CMPersistentTrackID = 0x53484457
+        let shadowCanvas = CALayer()
+        shadowCanvas.frame = CGRect(origin: .zero, size: renderSize)
+        let rearShadow = CALayer()
+        rearShadow.frame = CGRect(
+            x: rearFootageInset,
+            y: renderSize.height - rearFootageInset - rearFootage.naturalSize.height,
+            width: rearFootage.naturalSize.width,
+            height: rearFootage.naturalSize.height)
+        rearShadow.shadowColor = CGColor(gray: 0, alpha: 1)
+        rearShadow.shadowOpacity = 0.55
+        rearShadow.shadowRadius = 24
+        rearShadow.shadowOffset = CGSize(width: 12, height: -12)
+        rearShadow.shadowPath = CGPath(rect: rearShadow.bounds, transform: nil)
+        shadowCanvas.addSublayer(rearShadow)
+        let shadowAnimationTool = AVVideoCompositionCoreAnimationTool(
+            additionalLayer: shadowCanvas, asTrackID: rearShadowTrackID)
+
         func layerInstruction(
             track: AVCompositionTrack, clip: Clip,
             placement: Placement = .fitCentred,
@@ -310,6 +332,17 @@ struct FinalVideoComposer {
             return AVVideoCompositionLayerInstruction(configuration: configuration)
         }
 
+        func shadowLayerInstruction(
+            opacityRamp: AVVideoCompositionLayerInstruction.OpacityRamp? = nil
+        ) -> AVVideoCompositionLayerInstruction {
+            var configuration = AVVideoCompositionLayerInstruction.Configuration(
+                trackID: rearShadowTrackID)
+            if let opacityRamp {
+                configuration.addOpacityRamp(opacityRamp)
+            }
+            return AVVideoCompositionLayerInstruction(configuration: configuration)
+        }
+
         var phases: [Phase] = []
         func addInstruction(
             from start: CMTime, to end: CMTime,
@@ -354,6 +387,7 @@ struct FinalVideoComposer {
                         start: 1, end: 0)),
                 layerInstruction(track: trackA, clip: dials, placement: .fitTrailing),
                 layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
+                shadowLayerInstruction(),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
@@ -363,6 +397,7 @@ struct FinalVideoComposer {
             layers: [
                 layerInstruction(track: trackA, clip: dials, placement: .fitTrailing),
                 layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
+                shadowLayerInstruction(),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
@@ -383,6 +418,10 @@ struct FinalVideoComposer {
                         start: 1, end: 0)),
                 layerInstruction(
                     track: rearTrack, clip: rearFootage, placement: rearPlacement,
+                    opacityRamp: .init(
+                        timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
+                        start: 1, end: 0)),
+                shadowLayerInstruction(
                     opacityRamp: .init(
                         timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
                         start: 1, end: 0)),
@@ -478,6 +517,7 @@ struct FinalVideoComposer {
         // ambiguity.
         let videoComposition = AVVideoComposition(
             configuration: .init(
+                animationTool: shadowAnimationTool,
                 colorPrimaries: AVVideoColorPrimaries_ITU_R_709_2,
                 colorTransferFunction: AVVideoTransferFunction_ITU_R_709_2,
                 colorYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_709_2,
