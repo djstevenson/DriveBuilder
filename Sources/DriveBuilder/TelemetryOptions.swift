@@ -1,6 +1,18 @@
 import ArgumentParser
 import Foundation
 
+/// The canonical telemetry database is the one checked into this source
+/// tree. The copy the render subcommands read from `Bundle.module` is
+/// recreated from it on every build, so writes (new journeys, cached road
+/// data) must land here - and want a rebuild afterwards - to be seen and
+/// to survive.
+enum TelemetryDatabase {
+    static let sourceTreePath = URL(filePath: #filePath)
+        .deletingLastPathComponent()
+        .appending(path: "Resources/telemetry.sqlite3")
+        .path(percentEncoded: false)
+}
+
 /// Options shared by every subcommand that works from journey telemetry.
 ///
 /// Include with `@OptionGroup` so a subcommand picks up the flag and the

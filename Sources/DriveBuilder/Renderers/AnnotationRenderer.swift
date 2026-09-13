@@ -53,7 +53,7 @@ struct AnnotationRenderer {
     static let fontSize = 92.0
 
     static let borderColour = CGColor(
-        srgbRed: 0x66 / 255, green: 0x99 / 255, blue: 0x33 / 255, alpha: 1)
+        srgbRed: 0.0, green: 0x99 / 255, blue: 0.0, alpha: 1)
     static let backgroundColour = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
     static let textColour = CGColor(srgbRed: 1, green: 1, blue: 0, alpha: 1)
 
@@ -243,8 +243,7 @@ struct AnnotationRenderer {
             })
 
         let elapsed = started.duration(to: .now)
-        let seconds =
-            Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        let seconds = elapsed / .seconds(1)
         print(
             String(
                 format: "  wrote %.1fs of %dx%d ProRes 4444 in %.1fs to %@",

@@ -229,8 +229,16 @@ struct NationalRouteMapRenderer {
         {
             let startCentre = (start0 + start1) / 2
             let endCentre = (end0 + end1) / 2
-            let fixed = (endCentre - startCentre * ratio) / (1 - ratio)
-            let centre = fixed + (startCentre - fixed) * scale
+            // Equal spans make the move a pure pan with no fixed point (the
+            // general formula below divides by 1 - ratio), so the centre
+            // just lerps.
+            let centre: Double
+            if abs(1 - ratio) < 1e-9 {
+                centre = startCentre + (endCentre - startCentre) * t
+            } else {
+                let fixed = (endCentre - startCentre * ratio) / (1 - ratio)
+                centre = fixed + (startCentre - fixed) * scale
+            }
             let halfSpan = (start1 - start0) / 2 * scale
             return (centre - halfSpan, centre + halfSpan)
         }

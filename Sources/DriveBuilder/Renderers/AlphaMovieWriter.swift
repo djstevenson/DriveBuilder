@@ -33,6 +33,15 @@ enum AlphaMovieWriterError: Error, CustomStringConvertible {
     }
 }
 
+/// One composited batch handed from the drawing task to the append loop.
+/// `@unchecked Sendable` because ownership transfers wholesale: the drawing
+/// task is done with every buffer before the batch is returned, and only
+/// the append loop touches them afterwards.
+private struct FrameBatch: @unchecked Sendable {
+    let firstIndex: Int
+    let buffers: [CVPixelBuffer]
+}
+
 /// Writes a sequence of frames to a QuickTime movie as ProRes 4444,
 /// which is the only widely supported codec that keeps an alpha channel.
 ///
@@ -102,32 +111,33 @@ struct AlphaMovieWriter {
         }
 
         let batchSize = max(1, concurrency)
-        var index = 0
-        while index < frameCount {
-            let count = min(batchSize, frameCount - index)
+
+        // Composites the batch of frames starting at `first` into freshly
+        // allocated buffers, in parallel. Each iteration writes only to its
+        // own buffer and `concurrentPerform` joins before returning, so the
+        // unsafe opt-outs below never actually share mutable state:
+        // CVPixelBuffer and the caller's closure aren't Sendable, but each
+        // buffer is touched by exactly one iteration, and `drawFrame`'s
+        // contract (documented above) requires it to tolerate concurrent
+        // calls with distinct contexts.
+        nonisolated(unsafe) let draw = drawFrame
+        nonisolated(unsafe) let bufferPool = pool
+        @Sendable func renderBatch(from first: Int) throws -> FrameBatch {
+            let count = min(batchSize, frameCount - first)
 
             // Allocate the whole batch up front so each worker owns one buffer.
             var batch: [CVPixelBuffer] = []
             batch.reserveCapacity(count)
             for _ in 0..<count {
                 var buffer: CVPixelBuffer?
-                let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
+                let status = CVPixelBufferPoolCreatePixelBuffer(nil, bufferPool, &buffer)
                 guard status == kCVReturnSuccess, let buffer else {
                     throw AlphaMovieWriterError.pixelBufferAllocationFailed(status)
                 }
                 batch.append(buffer)
             }
 
-            // Composite in parallel. Each iteration writes only to its own
-            // buffer and `concurrentPerform` joins before returning, so the
-            // unsafe opt-outs below never actually share mutable state:
-            // CVPixelBuffer and the caller's closure aren't Sendable, but each
-            // buffer is touched by exactly one iteration, and `drawFrame`'s
-            // contract (documented above) requires it to tolerate concurrent
-            // calls with distinct contexts.
             nonisolated(unsafe) let buffers = batch
-            nonisolated(unsafe) let draw = drawFrame
-            let first = index
             let failure = Mutex<(any Error)?>(nil)
             DispatchQueue.concurrentPerform(iterations: count) { slot in
                 do {
@@ -139,22 +149,34 @@ struct AlphaMovieWriter {
                 }
             }
             if let failure = failure.withLock({ $0 }) { throw failure }
+            return FrameBatch(firstIndex: first, buffers: batch)
+        }
+
+        // Compositing and appending are pipelined: while one batch feeds the
+        // (mostly encoder-bound) append loop, the next is already being
+        // drawn, at the cost of keeping two batches of buffers alive.
+        var current = frameCount > 0 ? try renderBatch(from: 0) : nil
+        while let batch = current {
+            let nextIndex = batch.firstIndex + batch.buffers.count
+            async let next: FrameBatch? =
+                nextIndex < frameCount ? try renderBatch(from: nextIndex) : nil
 
             // Append in order.
-            for slot in 0..<count {
+            for (slot, buffer) in batch.buffers.enumerated() {
                 while !input.isReadyForMoreMediaData {
                     try await Task.sleep(for: .milliseconds(2))
                 }
-                let time = CMTime(value: CMTimeValue(first + slot), timescale: framesPerSecond)
-                guard adaptor.append(buffers[slot], withPresentationTime: time) else {
+                let time = CMTime(
+                    value: CMTimeValue(batch.firstIndex + slot), timescale: framesPerSecond)
+                guard adaptor.append(buffer, withPresentationTime: time) else {
                     throw AlphaMovieWriterError.appendFailed(
-                        frameIndex: first + slot,
+                        frameIndex: batch.firstIndex + slot,
                         reason: writer.error?.localizedDescription ?? "unknown error")
                 }
-                progress(first + slot + 1)
+                progress(batch.firstIndex + slot + 1)
             }
 
-            index += count
+            current = try await next
         }
 
         input.markAsFinished()

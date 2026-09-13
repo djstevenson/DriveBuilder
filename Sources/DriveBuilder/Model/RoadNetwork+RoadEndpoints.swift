@@ -14,7 +14,7 @@ extension RoadNetwork {
             throw Error.insufficientEndpoints(roadNumber: roadNumber, count: candidates.count)
         }
 
-        var bestPair: RoadEndpoints?
+        var bestPair = RoadEndpoints(first: candidates[0], second: candidates[1])
         var bestDistanceSquared = -Double.infinity
 
         for i in 0..<(candidates.count - 1) {
@@ -37,6 +37,6 @@ extension RoadNetwork {
             }
         }
 
-        return bestPair!
+        return bestPair
     }
 }

@@ -1,15 +1,6 @@
 import ArgumentParser
 import Foundation
 
-/// The canonical telemetry database is the one checked into this source
-/// tree. The copy the render subcommands read from `Bundle.module` is
-/// recreated from it on every build, so inserts must land here (and want a
-/// rebuild afterwards) to be seen and to survive.
-private let sourceTreeDatabasePath = URL(filePath: #filePath)
-    .deletingLastPathComponent()
-    .appending(path: "Resources/telemetry.sqlite3")
-    .path(percentEncoded: false)
-
 extension DriveBuilder {
     struct Telemetry: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
@@ -33,7 +24,7 @@ extension DriveBuilder {
         var title: String
 
         @Option(help: "The telemetry database to insert into.")
-        var database: String = sourceTreeDatabasePath
+        var database: String = TelemetryDatabase.sourceTreePath
 
         mutating func run() async throws {
             // The journey is named by its directory path, trailing slashes

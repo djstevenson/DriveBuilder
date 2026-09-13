@@ -7,14 +7,14 @@ import Testing
 /// names only change if the resource is replaced.
 @Test func placeNameFindsTheNearestSettlementToA338sSouthernEnd() throws {
     let places = try PlaceNameLookup()
-    let name = try places.placeName(near: GridPoint(easting: 406660.1875, northing: 91592.828125))
+    let name = try places.placeName(near: OSGB.GridPoint(easting: 406660.1875, northing: 91592.828125))
     #expect(name == "Westbourne")
 }
 
 @Test func placeNameFindsTheNearestSettlementToA338sNorthernEnd() throws {
     let places = try PlaceNameLookup()
     let name = try places.placeName(
-        near: GridPoint(easting: 445103.25, northing: 200662.484375))
+        near: OSGB.GridPoint(easting: 445103.25, northing: 200662.484375))
     #expect(name == "Appleton")
 }
 
@@ -23,6 +23,6 @@ import Testing
 /// search box.
 @Test func placeNameIsNilFarOutsideGreatBritain() throws {
     let places = try PlaceNameLookup()
-    let name = try places.placeName(near: GridPoint(easting: 2_000_000, northing: 2_000_000))
+    let name = try places.placeName(near: OSGB.GridPoint(easting: 2_000_000, northing: 2_000_000))
     #expect(name == nil)
 }

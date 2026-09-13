@@ -9,10 +9,7 @@ extension DriveBuilder {
 
         @OptionGroup var telemetry: TelemetryOptions
 
-        @Option(
-            name: .customLong("frame-limit"),
-            help: "Render only the first N frames, for a quick check.")
-        var frameLimit: Int?
+        @OptionGroup var video: FrameLimitOptions
 
         mutating func run() async throws {
             let road = try telemetry.journeyRoad()
@@ -31,7 +28,7 @@ extension DriveBuilder {
                 width: size.width, height: size.height)
             try await renderer.writeMovie(
                 to: outputDirectory.appending(path: "outro.mov"),
-                frameLimit: frameLimit)
+                frameLimit: video.frameLimit)
         }
     }
 }

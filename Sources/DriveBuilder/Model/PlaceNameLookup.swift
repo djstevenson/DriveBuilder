@@ -39,7 +39,7 @@ final class PlaceNameLookup {
 
     /// The name of the nearest city, town, village, hamlet, or suburb to
     /// `point`, or nil if the dataset has no settlement anywhere near it.
-    func placeName(near point: GridPoint) throws -> String? {
+    func placeName(near point: OSGB.GridPoint) throws -> String? {
         try dbQueue.read { db in
             var radius = Self.initialSearchRadius
             while radius <= Self.maxSearchRadius {
@@ -58,7 +58,7 @@ final class PlaceNameLookup {
     /// inside it by true distance - the rtree itself can only test bounding
     /// box overlap, not order by distance.
     private static func nearestPlaceName(
-        in db: Database, near point: GridPoint, radius: Double
+        in db: Database, near point: OSGB.GridPoint, radius: Double
     ) throws -> String? {
         let row = try Row.fetchOne(
             db,

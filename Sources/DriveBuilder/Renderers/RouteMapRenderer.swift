@@ -38,10 +38,18 @@ struct RouteMapConfig: Sendable {
     /// (seconds from the start of the telemetry) and left up thereafter.
     /// `location`/`distance` position it relative to that point.
     struct Label: Decodable, Sendable {
+        /// Which side of the track point the sign sits on; anything else in
+        /// the hand-edited JSON is a decode error rather than silently
+        /// falling back to one side. Omitted means right.
+        enum Location: String, Decodable, Sendable {
+            case left
+            case right
+        }
+
         var offset: Double
         var title: String
         var subtitle: String
-        var location: String?
+        var location: Location?
         var distance: Double?
     }
 
@@ -407,7 +415,7 @@ struct RouteMapRenderer {
         // point, or its right edge when it sits to the left.
         let boxX: Double
         let arrowBaseX: Double
-        if placed.label.location == "left" {
+        if placed.label.location == .left {
             boxX = point.x - distance - boxWidth
             arrowBaseX = boxX + boxWidth
         } else {
@@ -573,8 +581,7 @@ struct RouteMapRenderer {
             })
 
         let elapsed = started.duration(to: .now)
-        let seconds =
-            Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        let seconds = elapsed / .seconds(1)
         print(
             String(
                 format: "  wrote %.1fs of %dx%d ProRes 4444 in %.1fs (%.3f ms/frame) to %@",

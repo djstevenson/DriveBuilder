@@ -91,8 +91,7 @@ extension DialRenderer {
             })
 
         let elapsed = started.duration(to: .now)
-        let seconds =
-            Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        let seconds = elapsed / .seconds(1)
         print(
             String(
                 format: "  wrote %.1fs of %dx%d ProRes 4444 in %.1fs (%.3f ms/frame) to %@",

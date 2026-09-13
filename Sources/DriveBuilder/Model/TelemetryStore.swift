@@ -37,12 +37,7 @@ struct TelemetryStore {
 
     /// Every telemetry sample belonging to `journeyID`, in timestamp order.
     func records(journeyID: Int64) throws -> [TelemetryRecord] {
-        var database: OpaquePointer?
-        guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            let message = Self.lastErrorMessage(database)
-            sqlite3_close(database)
-            throw TelemetryStoreError.openFailed(path: path, message: message)
-        }
+        let database = try open(flags: SQLITE_OPEN_READONLY)
         defer { sqlite3_close(database) }
 
         guard try Self.journeyExists(journeyID: journeyID, database: database) else {
@@ -95,84 +90,61 @@ struct TelemetryStore {
         return sqlite3_step(statement) == SQLITE_ROW
     }
 
-    /// The journey's directory, where its source footage, annotations, and
-    /// output live, as recorded by the capture pipeline in `journeys.source`.
-    func journeyDirectory(journeyID: Int64) throws -> String? {
-        var database: OpaquePointer?
-        guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            let message = Self.lastErrorMessage(database)
-            sqlite3_close(database)
-            throw TelemetryStoreError.openFailed(path: path, message: message)
-        }
+    /// Opens the database read-only, binds `journeyID` to `sql`'s single
+    /// placeholder, and hands the first result row to `read`; nil if there
+    /// is no such journey (or `read` itself returns nil).
+    private func fetchJourneyRow<T>(
+        journeyID: Int64, sql: String, read: (OpaquePointer?) -> T?
+    ) throws -> T? {
+        let database = try open(flags: SQLITE_OPEN_READONLY)
         defer { sqlite3_close(database) }
 
         var statement: OpaquePointer?
-        guard
-            sqlite3_prepare_v2(
-                database, "SELECT source FROM journeys WHERE id = ?", -1, &statement, nil)
-                == SQLITE_OK
-        else {
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
         }
         defer { sqlite3_finalize(statement) }
 
         sqlite3_bind_int64(statement, 1, journeyID)
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return Self.string(statement, column: 0)
+        return read(statement)
+    }
+
+    /// The journey's directory, where its source footage, annotations, and
+    /// output live, as recorded by the capture pipeline in `journeys.source`.
+    func journeyDirectory(journeyID: Int64) throws -> String? {
+        try fetchJourneyRow(
+            journeyID: journeyID, sql: "SELECT source FROM journeys WHERE id = ?"
+        ) {
+            Self.string($0, column: 0)
+        }
     }
 
     /// The journey's title, as recorded by the capture pipeline in
     /// `journeys.title`.
     func journeyTitle(journeyID: Int64) throws -> String? {
-        var database: OpaquePointer?
-        guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            let message = Self.lastErrorMessage(database)
-            sqlite3_close(database)
-            throw TelemetryStoreError.openFailed(path: path, message: message)
+        try fetchJourneyRow(
+            journeyID: journeyID, sql: "SELECT title FROM journeys WHERE id = ?"
+        ) {
+            Self.string($0, column: 0)
         }
-        defer { sqlite3_close(database) }
-
-        var statement: OpaquePointer?
-        guard
-            sqlite3_prepare_v2(
-                database, "SELECT title FROM journeys WHERE id = ?", -1, &statement, nil)
-                == SQLITE_OK
-        else {
-            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
-        }
-        defer { sqlite3_finalize(statement) }
-
-        sqlite3_bind_int64(statement, 1, journeyID)
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return Self.string(statement, column: 0)
     }
 
     /// The journey's road, as recorded by the capture pipeline in
-    /// `journeys.road_type`/`journeys.road_number`, e.g. ("A", 338).
+    /// `journeys.road_type`/`journeys.road_number`, e.g. ("A", 338); nil if
+    /// either column is missing, rather than letting SQLite's NULL-as-zero
+    /// read produce a road like "A0".
     func journeyRoad(journeyID: Int64) throws -> (type: String, number: Int)? {
-        var database: OpaquePointer?
-        guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            let message = Self.lastErrorMessage(database)
-            sqlite3_close(database)
-            throw TelemetryStoreError.openFailed(path: path, message: message)
+        try fetchJourneyRow(
+            journeyID: journeyID,
+            sql: "SELECT road_type, road_number FROM journeys WHERE id = ?"
+        ) { statement in
+            guard
+                let type = Self.string(statement, column: 0),
+                let number = Self.integer(statement, column: 1)
+            else { return nil }
+            return (type: type, number: number)
         }
-        defer { sqlite3_close(database) }
-
-        var statement: OpaquePointer?
-        guard
-            sqlite3_prepare_v2(
-                database, "SELECT road_type, road_number FROM journeys WHERE id = ?", -1,
-                &statement, nil)
-                == SQLITE_OK
-        else {
-            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
-        }
-        defer { sqlite3_finalize(statement) }
-
-        sqlite3_bind_int64(statement, 1, journeyID)
-        guard sqlite3_step(statement) == SQLITE_ROW, let type = Self.string(statement, column: 0)
-        else { return nil }
-        return (type: type, number: Int(sqlite3_column_int64(statement, 1)))
     }
 
     // MARK: - Writing
