@@ -22,7 +22,7 @@ extension DriveBuilder {
         @OptionGroup var telemetry: TelemetryOptions
 
         @Option(
-            name: .customLong("length"),
+            name: [.customShort("l"), .customLong("length")],
             help: ArgumentHelp(
                 "Cap the drive segment to at most this many seconds, for a quick test "
                     + "render while checking sync; the intro and outro still play in full. "
