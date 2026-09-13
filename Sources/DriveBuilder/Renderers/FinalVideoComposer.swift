@@ -220,6 +220,38 @@ struct FinalVideoComposer {
             CMTimeRange(start: .zero, duration: outro.duration),
             of: outro.track, at: outroStart)
 
+        // The front camera also provides the drive segment's sound: its
+        // audio is inserted in the same synced, truncated window as its
+        // picture, fading in and out with the video cross-fades either
+        // side. The rest of the programme stays silent.
+        var audioMix: AVAudioMix?
+        if let frontAudio = try await frontFootage.asset.loadTracks(withMediaType: .audio).first {
+            guard
+                let audioTrack = composition.addMutableTrack(
+                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else {
+                throw CompositionError(message: "Could not create composition tracks.")
+            }
+            try audioTrack.insertTimeRange(
+                CMTimeRange(start: frontSourceStart, duration: dialsSegmentDuration),
+                of: frontAudio, at: dialsStart)
+
+            let fadeParameters = AVMutableAudioMixInputParameters(track: audioTrack)
+            fadeParameters.setVolumeRamp(
+                fromStartVolume: 0, toEndVolume: 1,
+                timeRange: CMTimeRange(start: dialsStart, end: routeEnd))
+            fadeParameters.setVolumeRamp(
+                fromStartVolume: 1, toEndVolume: 0,
+                timeRange: CMTimeRange(start: outroStart, end: dialsEnd))
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = [fadeParameters]
+            audioMix = mix
+        } else {
+            print(
+                "final: \(frontFootageURL.lastPathComponent) has no audio track; "
+                    + "the output will be silent.")
+        }
+
         // The route map is the full-screen element, so it sets the frame
         // size; the narrower intro and outro are scaled to fit and centred,
         // the dial column is scaled to fit and right-aligned, the drive
@@ -469,6 +501,7 @@ struct FinalVideoComposer {
             throw CompositionError(message: "Could not create the export session.")
         }
         session.videoComposition = videoComposition
+        session.audioMix = audioMix
 
         // A full-length export takes many minutes, so report progress
         // periodically while it runs.
