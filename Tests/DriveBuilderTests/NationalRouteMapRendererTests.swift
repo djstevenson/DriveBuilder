@@ -59,16 +59,16 @@ private func smallConfig() -> RouteMapConfig {
 /// The detail image and bbox are now rendered by `RouteMapRenderer` and
 /// injected, so tests build a real detail image the same way the merged
 /// movie does: at the bbox `RouteMapRenderer` itself would use.
-private func testRenderer() -> NationalRouteMapRenderer {
+private func testRenderer(records: [TelemetryRecord] = testRecords()) -> NationalRouteMapRenderer {
     let config = smallConfig()
     let detailBBox = RouteMapRenderer(
-        records: testRecords(), tileRenderer: SolidTileRenderer(red: 1, green: 0, blue: 0),
+        records: records, tileRenderer: SolidTileRenderer(red: 1, green: 0, blue: 0),
         config: config
     ).mapBBox
     let detail = try! SolidTileRenderer(red: 1, green: 0, blue: 0).renderMap(detailBBox)
 
     return NationalRouteMapRenderer(
-        records: testRecords(),
+        records: records,
         nationalTileRenderer: SolidTileRenderer(red: 1, green: 1, blue: 1),
         detail: detail,
         detailBBox: detailBBox,
@@ -136,27 +136,40 @@ private func testRenderer() -> NationalRouteMapRenderer {
     let national = renderer.nationalBBox
     let route = renderer.detailBBox
 
-    // Intro: just the country, no box yet.
+    // Intro: just the country; the box still off screen, nothing dimmed.
     let intro = renderer.frameState(at: 0)
     #expect(intro.viewport == national)
-    #expect(intro.boxScale == 0)
+    #expect(intro.boxProgress == 0)
+    #expect(intro.overlayAlpha == 0)
     #expect(intro.detailAlpha == 0)
 
-    // Hold after the pop: box settled, camera still wide.
+    // Mid-sweep: the box is travelling in, its outline strengthening from a
+    // third towards full while the dim rises.
+    let midTime =
+        NationalRouteMapRenderer.introSeconds + NationalRouteMapRenderer.boxPopSeconds / 2
+    let mid = renderer.frameState(at: midTime)
+    #expect(abs(mid.boxProgress - 0.5) < 0.000_001)  // smoothstep(0.5) == 0.5
+    #expect(abs(mid.boxAlpha - 2.0 / 3) < 0.000_001)
+    #expect(abs(mid.overlayAlpha - NationalRouteMapRenderer.overlayMaxAlpha / 2) < 0.000_001)
+
+    // Hold after the sweep: box settled at full opacity over the dimmed
+    // surroundings; camera still wide.
     let holdTime =
         NationalRouteMapRenderer.introSeconds + NationalRouteMapRenderer.boxPopSeconds + 0.1
     let hold = renderer.frameState(at: holdTime)
     #expect(hold.viewport == national)
-    #expect(hold.boxScale == 1)
+    #expect(hold.boxProgress == 1)
     #expect(hold.boxAlpha == 1)
+    #expect(abs(hold.overlayAlpha - NationalRouteMapRenderer.overlayMaxAlpha) < 0.000_001)
     #expect(hold.detailAlpha == 0)
 
     // End of the zoom and the outro: exactly the route map's area, fully
-    // detailed, box gone.
+    // detailed, box and dim gone.
     let end = renderer.frameState(at: NationalRouteMapRenderer.totalSeconds)
     #expect(end.viewport == route)
     #expect(end.detailAlpha == 1)
     #expect(end.boxAlpha == 0)
+    #expect(end.overlayAlpha == 0)
 }
 
 @Test func framePlanCoversEveryPhaseAtTheConfiguredRate() {
@@ -218,7 +231,11 @@ private func testRenderer() -> NationalRouteMapRenderer {
         at: routeStart + NationalRouteMapRenderer.routeRevealSeconds
             + NationalRouteMapRenderer.routeHoldSeconds - 0.01)
     #expect(holdEnd.routePointCount == 5)
+    // The box and the outside-the-area dim persist until the zoom is
+    // under way.
     #expect(holdEnd.boxAlpha == 1)
+    #expect(
+        abs(holdEnd.overlayAlpha - NationalRouteMapRenderer.overlayMaxAlpha) < 0.000_001)
 }
 
 @Test func routeUndrawsBeforeTheZoomStarts() {
@@ -280,8 +297,18 @@ private func testRenderer() -> NationalRouteMapRenderer {
     #expect(orangeNearby > 0)
 }
 
-@Test func holdFrameShowsTheBoxAroundTheRouteArea() throws {
-    let renderer = testRenderer()
+@Test func holdFrameDimsTheCountryOutsideTheRouteArea() throws {
+    // A route spanning the best part of a degree, so its box has an
+    // interior tens of pixels across at the test's 640x360 national scale;
+    // the default test route's box is subpixel here.
+    let start = Date(timeIntervalSince1970: 1_775_000_000)
+    let wideRecords = (0..<5).map {
+        record(
+            latitude: 51.0 + Double($0) * 0.2,
+            longitude: -1.5 + Double($0) * 0.3,
+            timestamp: start.addingTimeInterval(Double($0) * 10))
+    }
+    let renderer = testRenderer(records: wideRecords)
     let artwork = try renderer.makeArtwork()
 
     let canvas = try SVGRasterizer.blankBitmap(width: 640, height: 360)
@@ -290,27 +317,28 @@ private func testRenderer() -> NationalRouteMapRenderer {
         NationalRouteMapRenderer.introSeconds + NationalRouteMapRenderer.boxPopSeconds + 0.1
     renderer.draw(at: holdTime, artwork: artwork, into: context.cgContext)
 
-    // Centroid of the box's semi-transparent black ink - grey once
-    // composited over the white national map - should sit on the box's
-    // centre. The frame rect is in Core Graphics bottom-left coordinates;
-    // the bitmap scan is top-left, so flip y.
+    // Inside the route's area the white national map shows undimmed. The
+    // frame rect is in Core Graphics bottom-left coordinates; the bitmap
+    // scan is top-left, so flip y.
     let rect = renderer.frameRect(of: renderer.detailBBox, under: renderer.nationalBBox)
-    var sumX = 0.0
-    var sumY = 0.0
-    var count = 0
-    for y in 0..<360 {
-        for x in 0..<640 {
-            guard let colour = canvas.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
-                colour.redComponent < 0.9,
-                abs(colour.redComponent - colour.greenComponent) < 0.05,
-                abs(colour.redComponent - colour.blueComponent) < 0.05
-            else { continue }
-            sumX += Double(x)
-            sumY += Double(y)
-            count += 1
-        }
+    let inside = try #require(
+        canvas.colorAt(x: Int(rect.midX), y: 360 - Int(rect.midY))?.usingColorSpace(.deviceRGB))
+    #expect(inside.redComponent > 0.98)
+    #expect(inside.greenComponent > 0.98)
+
+    // A corner well away from the box: dimmed to roughly 70% white.
+    let outside = try #require(canvas.colorAt(x: 10, y: 10)?.usingColorSpace(.deviceRGB))
+    #expect(abs(outside.redComponent - 0.7) < 0.03)
+    #expect(abs(outside.redComponent - outside.greenComponent) < 0.01)
+    #expect(abs(outside.redComponent - outside.blueComponent) < 0.01)
+
+    // The settled outline: near-black ink within a few rows of the box's
+    // top edge (the 5px stroke straddles the boundary).
+    let edgeRow = 360 - Int(rect.maxY)
+    let strokeInk = ((edgeRow - 4)...(edgeRow + 4)).contains { y in
+        guard let c = canvas.colorAt(x: Int(rect.midX), y: y)?.usingColorSpace(.deviceRGB)
+        else { return false }
+        return c.redComponent < 0.2
     }
-    #expect(count > 0)
-    #expect(abs(sumX / Double(count) - rect.midX) < 3)
-    #expect(abs(sumY / Double(count) - (360 - rect.midY)) < 3)
+    #expect(strokeInk)
 }
