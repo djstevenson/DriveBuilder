@@ -2,20 +2,22 @@ import CoreGraphics
 import Foundation
 
 /// Builds the national establishing shot that leads into the route map. A
-/// map of Great Britain fills the frame, a box pops in around the area the
-/// route map covers, and the camera zooms into that box. The final frame is
-/// exactly the route map's own base image, so `RouteMapRenderer` can play
-/// its own frames straight on from these with no jump cut.
+/// map of Great Britain fills the frame, a box sweeps in from just outside
+/// the frame's edges — its outline strengthening as it converges on the area
+/// the route map covers, while the country outside it dims — and the camera
+/// zooms into that area. The final frame is exactly the route map's own base
+/// image, so `RouteMapRenderer` can play its own frames straight on from
+/// these with no jump cut.
 ///
 /// The country is rendered here, in a low-detail style (main roads and
 /// motorways only); the route's own detailed base image is rendered by
 /// `RouteMapRenderer` and passed in, so it's the very same image the route
 /// map itself then reveals its track over - rendering it twice risked the
 /// external map renderer placing labels slightly differently between the
-/// two calls, which is what the jump cut this replaces was. The zoom
-/// magnifies the national image while the detailed image fades in over it,
-/// in its correct map position, taking over before the national image's
-/// pixels are stretched enough to blur.
+/// two calls, which is what the jump cut this replaces was. Before the zoom
+/// sets off, the detailed image cross-fades in over the national image
+/// inside the box, in its correct map position, so the zoom magnifies
+/// imagery that's already sharp.
 struct NationalRouteMapRenderer {
     static let dialName = "NationalRouteMap"
 
@@ -38,29 +40,37 @@ struct NationalRouteMapRenderer {
     static let routeRevealSeconds = 1.5
     static let routeHoldSeconds = 1.0
     static let routeUndrawSeconds = 1.0 / 3
+    /// Cross-fade from the low-detail national imagery to the route map's
+    /// own high-detail image inside the box, before the zoom sets off, so
+    /// the zoom magnifies imagery that's already sharp.
+    static let detailSwapSeconds = 0.5
     static let zoomSeconds = 3.0
     // Halved from 1.0: combined with the route map's own introSeconds hold
     // right after it, the two static holds back to back made for too long
     // a pause before the track starts snaking out.
     static let outroSeconds = 0.5
 
-    /// The detailed image fades in over this window of the zoom's eased
-    /// progress: starting once the motion is clearly under way, and done
-    /// before the national image is magnified enough to look soft.
-    static let detailFadeInStart = 0.15
-    static let detailFadeInEnd = 0.55
+    /// The box outline and the outside-the-box dim fade out over this window
+    /// of the zoom, before the box's edges reach the frame border, so the
+    /// final frames are clean for the cut.
+    static let zoomFadeOutStart = 0.5
+    static let zoomFadeOutEnd = 0.8
 
-    /// The box fades out over this window of the zoom, before its edges
-    /// reach the frame border, so the final frames are clean for the cut.
-    static let boxFadeOutStart = 0.5
-    static let boxFadeOutEnd = 0.8
-
-    /// Black rather than the track's orange, so the pop-in box that
+    /// Black rather than the track's orange, so the sweep-in box that
     /// previews the route's area doesn't read as the same colour as the
-    /// route preview drawn over it moments later. Semi-transparent so the
-    /// map underneath stays legible through it.
-    static let boxColour = CGColor(gray: 0, alpha: 0.5)
-    static let boxLineWidth = RouteMapRenderer.trackCasingWidth
+    /// route preview drawn over it moments later. Thin and fully opaque:
+    /// a heavier translucent stroke read as a smudge over the map.
+    static let boxColour = CGColor(gray: 0, alpha: 1)
+    static let boxLineWidth = 5.0
+
+    /// Peak opacity of the black dim over everything outside the route's
+    /// area, reached as the box finishes its sweep.
+    static let overlayMaxAlpha = 0.3
+
+    /// The outline's opacity at the start of the sweep; it fades up to full
+    /// as the box converges on the route's area. A third rather than zero so
+    /// the thin, fast-moving line already reads during the sweep itself.
+    static let boxMinAlpha = 1.0 / 3
 
     /// The route preview, drawn in the same "orange snake" style as the
     /// route map's own track, but thinner: at this zoomed-out scale the
@@ -115,7 +125,7 @@ struct NationalRouteMapRenderer {
 
     static var totalSeconds: Double {
         introSeconds + boxPopSeconds + boxHoldSeconds + routeRevealSeconds + routeHoldSeconds
-            + routeUndrawSeconds + zoomSeconds + outroSeconds
+            + routeUndrawSeconds + detailSwapSeconds + zoomSeconds + outroSeconds
     }
 
     /// One video time per output frame.
@@ -130,10 +140,17 @@ struct NationalRouteMapRenderer {
     struct FrameState {
         /// The map area the frame shows.
         var viewport: MapBBox
-        /// Pop-in scale of the box, 0 (absent) through 1 (settled), briefly
-        /// overshooting 1 on the way.
-        var boxScale: Double
+        /// Sweep-in progress of the box: 0 is a frame-sized rectangle just
+        /// outside the video's edges, 1 is settled on the route's area.
+        var boxProgress: Double
+        /// The box outline's opacity: a third as the sweep starts, rising to
+        /// full as it settles on the route's area, then fading back out
+        /// during the zoom.
         var boxAlpha: Double
+        /// Black dim over everything outside the box: rising as the box
+        /// sweeps in, easing back out during the zoom so the final frames
+        /// are clean for the cut.
+        var overlayAlpha: Double
         var detailAlpha: Double
         /// How much of the route preview to draw: growing in as it reveals,
         /// holding at full length, then shrinking back to nothing before
@@ -160,9 +177,11 @@ struct NationalRouteMapRenderer {
         let routeRevealEnd = routeStart + Self.routeRevealSeconds
         let routeHoldEnd = routeRevealEnd + Self.routeHoldSeconds
         let routeUndrawEnd = routeHoldEnd + Self.routeUndrawSeconds
-        let zoomStart = routeUndrawEnd
+        let detailSwapStart = routeUndrawEnd
+        let zoomStart = detailSwapStart + Self.detailSwapSeconds
 
-        let boxScale = RouteMapRenderer.popScale((time - popStart) / Self.boxPopSeconds)
+        let popT = min(1, max(0, (time - popStart) / Self.boxPopSeconds))
+        let boxProgress = Self.smoothstep(popT)
         let zoomProgress = Self.smoothstep((time - zoomStart) / Self.zoomSeconds)
 
         // Grows in over the reveal window; once past the hold that follows,
@@ -179,11 +198,15 @@ struct NationalRouteMapRenderer {
         return FrameState(
             viewport: Self.viewport(
                 at: zoomProgress, from: nationalBBox, to: detailBBox),
-            boxScale: boxScale,
-            boxAlpha: 1 - Self.ramp(
-                zoomProgress, from: Self.boxFadeOutStart, to: Self.boxFadeOutEnd),
+            boxProgress: boxProgress,
+            boxAlpha: (Self.boxMinAlpha + (1 - Self.boxMinAlpha) * boxProgress)
+                * (1 - Self.ramp(
+                    zoomProgress, from: Self.zoomFadeOutStart, to: Self.zoomFadeOutEnd)),
+            overlayAlpha: Self.overlayMaxAlpha * boxProgress
+                * (1 - Self.ramp(
+                    zoomProgress, from: Self.zoomFadeOutStart, to: Self.zoomFadeOutEnd)),
             detailAlpha: Self.ramp(
-                zoomProgress, from: Self.detailFadeInStart, to: Self.detailFadeInEnd),
+                time, from: detailSwapStart, to: detailSwapStart + Self.detailSwapSeconds),
             routePointCount: routePointCount)
     }
 
@@ -276,30 +299,64 @@ struct NationalRouteMapRenderer {
             context.restoreGState()
         }
 
-        if state.routePointCount >= 2 && state.boxAlpha > 0 {
-            drawRoute(
-                state.routePointCount, artwork: artwork, viewport: state.viewport,
-                alpha: state.boxAlpha, into: context)
+        let boxRect = sweepRect(
+            at: state.boxProgress,
+            to: frameRect(of: artwork.detailBBox, under: state.viewport))
+
+        if state.overlayAlpha > 0 {
+            drawOverlay(outside: boxRect, alpha: state.overlayAlpha, into: context)
         }
 
-        if state.boxScale > 0 && state.boxAlpha > 0 {
-            drawBox(
-                frameRect(of: artwork.detailBBox, under: state.viewport),
-                scale: state.boxScale, alpha: state.boxAlpha, into: context)
+        if state.routePointCount >= 2 {
+            drawRoute(
+                state.routePointCount, artwork: artwork, viewport: state.viewport, into: context)
         }
+
+        if state.boxProgress > 0 && state.boxAlpha > 0 {
+            drawBox(boxRect, alpha: state.boxAlpha, into: context)
+        }
+    }
+
+    /// The sweeping box: a rectangle far enough outside the video's edges
+    /// that its stroke is entirely off screen at progress 0, converging on
+    /// the route-area rect at 1.
+    private func sweepRect(at progress: Double, to target: CGRect) -> CGRect {
+        let outset = Self.boxLineWidth
+        let start = CGRect(
+            x: -outset, y: -outset,
+            width: Double(config.width) + 2 * outset,
+            height: Double(config.height) + 2 * outset)
+        func lerp(_ a: Double, _ b: Double) -> Double { a + (b - a) * progress }
+        return CGRect(
+            x: lerp(start.minX, target.minX),
+            y: lerp(start.minY, target.minY),
+            width: lerp(start.width, target.width),
+            height: lerp(start.height, target.height))
+    }
+
+    /// Fills everything outside `rect` with black at `alpha`, dimming the
+    /// country around the route's area.
+    private func drawOverlay(outside rect: CGRect, alpha: Double, into context: CGContext) {
+        context.saveGState()
+        context.setAlpha(alpha)
+        context.setFillColor(Self.boxColour)
+        context.addRect(
+            CGRect(x: 0, y: 0, width: Double(config.width), height: Double(config.height)))
+        context.addRect(rect)
+        context.fillPath(using: .evenOdd)
+        context.restoreGState()
     }
 
     /// Draws the revealed prefix of the route preview, projected onto the
     /// current viewport. Shares the route map's track drawing and colours,
     /// but at a thinner scale suited to the country-wide view.
     private func drawRoute(
-        _ pointCount: Int, artwork: Artwork, viewport: MapBBox, alpha: Double,
+        _ pointCount: Int, artwork: Artwork, viewport: MapBBox,
         into context: CGContext
     ) {
         let points = artwork.trackGridPoints[0..<pointCount].map(viewport.pixelPosition)
 
         context.saveGState()
-        context.setAlpha(alpha)
         // Track points follow the top-left-origin frame geometry, as the
         // route map itself draws in.
         context.translateBy(x: 0, y: Double(config.height))
@@ -314,19 +371,13 @@ struct NationalRouteMapRenderer {
         context.restoreGState()
     }
 
-    /// Strokes the route-area box, popped about its centre, in a single
-    /// semi-transparent black stroke.
-    private func drawBox(_ rect: CGRect, scale: Double, alpha: Double, into context: CGContext) {
+    /// Strokes the sweeping route-area box in a single thin black stroke.
+    private func drawBox(_ rect: CGRect, alpha: Double, into context: CGContext) {
         context.saveGState()
         context.setAlpha(alpha)
-        context.translateBy(x: rect.midX, y: rect.midY)
-        context.scaleBy(x: scale, y: scale)
-        context.translateBy(x: -rect.midX, y: -rect.midY)
-
         context.setLineJoin(.round)
         context.setStrokeColor(Self.boxColour)
         context.stroke(rect, width: Self.boxLineWidth)
-
         context.restoreGState()
     }
 }
