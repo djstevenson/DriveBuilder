@@ -50,6 +50,23 @@ struct JourneyDetailView: View {
                 } header: {
                     annotationsHeader
                 }
+                Section("Source Video and Telemetry") {
+                    SourceVideoRow(
+                        name: "Front camera",
+                        url: URL(filePath: journey.directory).appending(path: "video/front.mov"))
+                    SourceVideoRow(
+                        name: "Rear camera",
+                        url: URL(filePath: journey.directory).appending(path: "video/rear.mov"))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Telemetry")
+                        Text(telemetryLength ?? "No telemetry")
+                            .font(.appCaption)
+                            .foregroundStyle(
+                                telemetryLength != nil
+                                    ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                    }
+                    .padding(.vertical, 4)
+                }
             }
             if let active = model.activeRender, active.journeyID == journey.id {
                 Divider()
@@ -161,17 +178,17 @@ struct JourneyDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(journey.title)
-                    .font(.title2.bold())
+                    .font(.appTitle2.bold())
                 Text(journey.roadName)
-                    .font(.headline)
+                    .font(.appHeadline)
                     .foregroundStyle(.secondary)
             }
             Text(summaryLine)
-                .font(.callout)
+                .font(.appCallout)
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 Text(journey.directory)
-                    .font(.caption.monospaced())
+                    .font(.appCaption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -180,9 +197,17 @@ struct JourneyDetailView: View {
                         [URL(filePath: journey.directory)])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(.appCaption)
             }
         }
+    }
+
+    /// The span of the journey's telemetry samples, from the database's
+    /// start/end timestamps, in the same format as the video lengths.
+    private var telemetryLength: String? {
+        guard let start = journey.start, let end = journey.end else { return nil }
+        return Duration.seconds(end.timeIntervalSince(start))
+            .formatted(.time(pattern: .hourMinuteSecond))
     }
 
     private var summaryLine: String {

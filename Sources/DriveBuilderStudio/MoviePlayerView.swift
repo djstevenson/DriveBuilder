@@ -15,9 +15,9 @@ struct MoviePlayerView: View {
         VStack(spacing: 0) {
             HStack {
                 Text(title)
-                    .font(.headline)
+                    .font(.appHeadline)
                 Text(url.lastPathComponent)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Done") { dismiss() }

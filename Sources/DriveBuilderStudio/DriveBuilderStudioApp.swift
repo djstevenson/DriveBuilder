@@ -16,6 +16,7 @@ struct DriveBuilderStudioApp: App {
         WindowGroup("DriveBuilder Studio") {
             ContentView()
                 .environment(model)
+                .font(.appBody)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
                     NSApplication.shared.activate()
