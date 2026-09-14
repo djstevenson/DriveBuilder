@@ -69,6 +69,23 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).insertAnnotation(
             journeyID: journeyID, video: video, text: text, offset: offset)
     }
+
+    /// Rewrites one annotation's fields. Throws
+    /// `TelemetryStoreError.duplicateAnnotation` if the new `video` clashes
+    /// with another annotation on the same journey.
+    @concurrent
+    package func updateAnnotation(
+        id: Int64, video: String, text: String, offset: Double
+    ) async throws {
+        try TelemetryStore(path: databasePath).updateAnnotation(
+            id: id, video: video, text: text, offset: offset)
+    }
+
+    /// Removes one annotation. The rendered movie, if any, stays on disk.
+    @concurrent
+    package func deleteAnnotation(id: Int64) async throws {
+        try TelemetryStore(path: databasePath).deleteAnnotation(id: id)
+    }
 }
 
 /// Something needed by a render is missing or malformed (a journey column,

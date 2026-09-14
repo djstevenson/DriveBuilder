@@ -1,23 +1,39 @@
 import DriveBuilder
 import SwiftUI
 
-/// The sheet for authoring a new annotation banner: the output movie's
-/// name, the text that scrolls across it, and the offset in seconds into
-/// the raw front footage where the banner should finish.
+/// The sheet for authoring an annotation banner: the output movie's name,
+/// the text that scrolls across it, and the offset in seconds into the raw
+/// front footage where the banner should finish. Creates a new annotation,
+/// or edits `annotation` when one is passed.
 struct AnnotationForm: View {
     @Environment(\.dismiss) private var dismiss
 
     let journey: JourneySummary
     let databasePath: String
+    /// The annotation being edited; nil means the form creates a new one.
+    let annotation: Annotation?
     /// Runs after a successful save, so the annotations list re-reads the
     /// database.
     let onSave: () -> Void
 
-    @State private var video = ""
-    @State private var text = ""
-    @State private var offsetText = ""
+    @State private var video: String
+    @State private var text: String
+    @State private var offsetText: String
     @State private var isSaving = false
     @State private var saveError: String?
+
+    init(
+        journey: JourneySummary, databasePath: String, annotation: Annotation? = nil,
+        onSave: @escaping () -> Void
+    ) {
+        self.journey = journey
+        self.databasePath = databasePath
+        self.annotation = annotation
+        self.onSave = onSave
+        _video = State(initialValue: annotation?.video ?? "")
+        _text = State(initialValue: annotation?.text ?? "")
+        _offsetText = State(initialValue: annotation.map { String($0.offset) } ?? "")
+    }
 
     /// The offset parsed as seconds; decimals are fine ("94.5").
     private var offset: Double? {
@@ -26,7 +42,7 @@ struct AnnotationForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New Annotation")
+            Text(annotation == nil ? "New Annotation" : "Edit Annotation")
                 .font(.headline)
             Form {
                 TextField("Video name", text: $video, prompt: Text("e.g. A27 On"))
@@ -50,7 +66,7 @@ struct AnnotationForm: View {
                 Button("Cancel", role: .cancel) {
                     dismiss()
                 }
-                Button("Add") {
+                Button(annotation == nil ? "Add" : "Save") {
                     save()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -79,8 +95,14 @@ struct AnnotationForm: View {
         let name = video.trimmingCharacters(in: .whitespaces)
         Task {
             do {
-                try await JourneyLibrary(databasePath: databasePath).addAnnotation(
-                    journeyID: journey.id, video: name, text: text, offset: offset)
+                let library = JourneyLibrary(databasePath: databasePath)
+                if let annotation {
+                    try await library.updateAnnotation(
+                        id: annotation.id, video: name, text: text, offset: offset)
+                } else {
+                    try await library.addAnnotation(
+                        journeyID: journey.id, video: name, text: text, offset: offset)
+                }
                 onSave()
                 dismiss()
             } catch {

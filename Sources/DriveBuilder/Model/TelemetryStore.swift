@@ -157,6 +157,60 @@ struct TelemetryStore {
         }
     }
 
+    /// Rewrites one annotation's fields. Like inserting, the new `video`
+    /// must stay unique within the journey, so a clash throws
+    /// `duplicateAnnotation`.
+    func updateAnnotation(id: Int64, video: String, text: String, offset: Double) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database,
+                "UPDATE annotations SET video = ?, text = ?, offset = ? WHERE id = ?",
+                -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, video, -1, Self.transient)
+        sqlite3_bind_text(statement, 2, text, -1, Self.transient)
+        sqlite3_bind_double(statement, 3, offset)
+        sqlite3_bind_int64(statement, 4, id)
+
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_DONE else {
+            if result == SQLITE_CONSTRAINT {
+                throw TelemetryStoreError.duplicateAnnotation(video: video)
+            }
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
+    /// Removes one annotation. The rendered movie, if any, stays on disk.
+    func deleteAnnotation(id: Int64) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database, "DELETE FROM annotations WHERE id = ?", -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
     private static func journeyExists(journeyID: Int64, database: OpaquePointer?) throws -> Bool {
         var statement: OpaquePointer?
         guard

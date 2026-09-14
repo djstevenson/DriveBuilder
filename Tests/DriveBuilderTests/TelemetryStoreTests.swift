@@ -204,6 +204,45 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(try store.annotations(journeyID: 1).count == 1)
 }
 
+@Test func updatesAndDeletesAnnotations() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    try store.insertAnnotation(journeyID: 1, video: "Start", text: "We begin.", offset: 30)
+    try store.insertAnnotation(journeyID: 1, video: "A27 On", text: "We multiplex.", offset: 120)
+    let inserted = try store.annotations(journeyID: 1)
+    #expect(inserted.map(\.video) == ["Start", "A27 On"])
+
+    // Rewriting every field, including a new offset that reorders the rows.
+    try store.updateAnnotation(
+        id: inserted[0].id, video: "Depart", text: "Off we go.", offset: 150)
+    let updated = try store.annotations(journeyID: 1)
+    #expect(updated.map(\.video) == ["A27 On", "Depart"])
+    #expect(updated[1].text == "Off we go.")
+    #expect(updated[1].offset == 150)
+
+    // Renaming onto another annotation's video is rejected.
+    do {
+        try store.updateAnnotation(
+            id: updated[1].id, video: "A27 On", text: "Off we go.", offset: 150)
+        Issue.record("expected renaming to a duplicate video to throw")
+    } catch TelemetryStoreError.duplicateAnnotation(let video) {
+        #expect(video == "A27 On")
+    }
+
+    try store.deleteAnnotation(id: updated[0].id)
+    #expect(try store.annotations(journeyID: 1).map(\.video) == ["Depart"])
+}
+
 @Test func throwsTelemetryNotFoundForAJourneyWithNoTelemetry() throws {
     // Copy the fixture database and add a journey row with no telemetry rows,
     // rather than mutating the checked-in fixture.
