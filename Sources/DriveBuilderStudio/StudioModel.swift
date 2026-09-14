@@ -46,9 +46,9 @@ final class StudioModel {
         journeys.first { $0.id == selectedJourneyID }
     }
 
-    func reload() {
+    func reload() async {
         do {
-            journeys = try JourneyLibrary(databasePath: databasePath).journeys()
+            journeys = try await JourneyLibrary(databasePath: databasePath).journeys()
             loadError = nil
             if selectedJourneyID == nil {
                 selectedJourneyID = journeys.first?.id

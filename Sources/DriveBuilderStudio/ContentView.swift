@@ -39,12 +39,12 @@ struct ContentView: View {
             }
             ToolbarItem {
                 Button("Reload", systemImage: "arrow.clockwise") {
-                    model.reload()
+                    Task { await model.reload() }
                 }
                 .help("Re-read the journeys database and the output files on disk.")
             }
         }
-        .task { model.reload() }
+        .task { await model.reload() }
         .alert(
             "Render failed",
             isPresented: Binding(

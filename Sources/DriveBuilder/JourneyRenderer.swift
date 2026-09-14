@@ -42,7 +42,10 @@ package struct JourneyLibrary: Sendable {
         self.databasePath = databasePath
     }
 
-    package func journeys() throws -> [JourneySummary] {
+    /// `@concurrent` for the same reason as the `JourneyRenderer` methods:
+    /// keep the database read off the caller's (GUI main) actor.
+    @concurrent
+    package func journeys() async throws -> [JourneySummary] {
         try TelemetryStore(path: databasePath).allJourneys()
     }
 }
@@ -80,7 +83,14 @@ package struct JourneyRenderer: Sendable {
 
     // MARK: - Components
 
+    // The render methods are `@concurrent`: under ApproachableConcurrency a
+    // plain nonisolated async function runs on the *caller's* actor, so the
+    // Studio GUI (main-actor by default isolation) would do all the slow
+    // setup — telemetry loads, map tile subprocesses — on the main thread
+    // and beachball until the first progress callback.
+
     /// The road-number intro badge: `output/intro.mov`.
+    @concurrent
     package func renderIntro(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
         let road = try journeyRoad()
@@ -112,6 +122,7 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// The road-number outro badge: `output/outro.mov`.
+    @concurrent
     package func renderOutro(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
         let road = try journeyRoad()
@@ -131,6 +142,7 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// The combined telemetry video: `output/telemetry/dials.mov`.
+    @concurrent
     package func renderDials(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
         let records = try records()
@@ -151,6 +163,7 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// The route overview map: `output/telemetry/route_map.mov`.
+    @concurrent
     package func renderRouteMap(
         routeConfigPath: String? = nil, progress: RenderProgressHandler? = nil
     ) async throws -> URL {
@@ -183,6 +196,7 @@ package struct JourneyRenderer: Sendable {
 
     /// Every scrolling annotation banner from main.json, in order:
     /// `output/<video>.mov` each.
+    @concurrent
     package func renderAnnotations(
         progress: RenderProgressHandler? = nil
     ) async throws -> [URL] {
@@ -209,6 +223,7 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// One annotation banner, picked out of main.json by its output name.
+    @concurrent
     package func renderAnnotation(
         video: String, progress: RenderProgressHandler? = nil
     ) async throws -> URL {
@@ -244,6 +259,7 @@ package struct JourneyRenderer: Sendable {
     ///
     /// `driveSegmentSeconds` caps the drive segment for a quick sync check,
     /// like the CLI's --length; the intro and outro still play in full.
+    @concurrent
     package func renderFinal(
         driveSegmentSeconds: Double? = nil, progress: RenderProgressHandler? = nil
     ) async throws -> URL {
