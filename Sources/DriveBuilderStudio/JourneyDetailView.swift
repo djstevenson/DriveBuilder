@@ -15,6 +15,7 @@ struct JourneyDetailView: View {
     let journey: JourneySummary
 
     @State private var annotations: [Annotation] = []
+    @State private var addingAnnotation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,10 +47,19 @@ struct JourneyDetailView: View {
             }
         }
         .task(id: AnnotationsLoadKey(journeyID: journey.id, outputsVersion: model.outputsVersion)) {
-            annotations =
-                (try? await JourneyLibrary(databasePath: model.databasePath)
-                    .annotations(journeyID: journey.id)) ?? []
+            await loadAnnotations()
         }
+        .sheet(isPresented: $addingAnnotation) {
+            AnnotationForm(journey: journey, databasePath: model.databasePath) {
+                Task { await loadAnnotations() }
+            }
+        }
+    }
+
+    private func loadAnnotations() async {
+        annotations =
+            (try? await JourneyLibrary(databasePath: model.databasePath)
+                .annotations(journeyID: journey.id)) ?? []
     }
 
     private var header: some View {
@@ -76,6 +86,9 @@ struct JourneyDetailView: View {
                 ProgressView()
                     .controlSize(.small)
                     .padding(.trailing, 4)
+            }
+            Button("Add", systemImage: "plus") {
+                addingAnnotation = true
             }
             Button("Render All") {
                 model.render(.allAnnotations, journey: journey)

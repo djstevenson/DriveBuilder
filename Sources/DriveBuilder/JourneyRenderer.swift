@@ -58,6 +58,17 @@ package struct JourneyLibrary: Sendable {
     package func annotations(journeyID: Int64) async throws -> [Annotation] {
         try TelemetryStore(path: databasePath).annotations(journeyID: journeyID)
     }
+
+    /// Adds one annotation banner for `journeyID`. Throws
+    /// `TelemetryStoreError.duplicateAnnotation` if `video` already names
+    /// an annotation on that journey.
+    @concurrent
+    package func addAnnotation(
+        journeyID: Int64, video: String, text: String, offset: Double
+    ) async throws {
+        try TelemetryStore(path: databasePath).insertAnnotation(
+            journeyID: journeyID, video: video, text: text, offset: offset)
+    }
 }
 
 /// Something needed by a render is missing or malformed (a journey column,

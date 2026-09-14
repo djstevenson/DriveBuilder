@@ -7,6 +7,7 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
     case unparsableTimestamp(String)
     case journeyNotFound(journeyID: Int64)
     case telemetryNotFound(journeyID: Int64)
+    case duplicateAnnotation(video: String)
 
     var description: String {
         switch self {
@@ -20,6 +21,8 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
             "Journey not found: no journey with id \(journeyID)"
         case .telemetryNotFound(let journeyID):
             "Telemetry not found: journey \(journeyID) exists but has no telemetry data"
+        case .duplicateAnnotation(let video):
+            "An annotation named \"\(video)\" already exists for this journey"
         }
     }
 }
@@ -113,6 +116,45 @@ struct TelemetryStore {
                     offset: sqlite3_column_double(statement, 4)))
         }
         return annotations
+    }
+
+    /// Inserts one annotation banner for `journeyID`. `video` must be
+    /// unique within the journey — it names the output movie — so a
+    /// duplicate throws `duplicateAnnotation` rather than a raw SQLite
+    /// constraint message.
+    func insertAnnotation(
+        journeyID: Int64, video: String, text: String, offset: Double
+    ) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database,
+                "INSERT INTO annotations (journey_id, video, text, offset) VALUES (?, ?, ?, ?)",
+                -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, journeyID)
+        sqlite3_bind_text(statement, 2, video, -1, Self.transient)
+        sqlite3_bind_text(statement, 3, text, -1, Self.transient)
+        sqlite3_bind_double(statement, 4, offset)
+
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_DONE else {
+            // The only constraint reachable here is UNIQUE (journey_id,
+            // video): every column is bound, and foreign keys aren't
+            // enforced without PRAGMA foreign_keys.
+            if result == SQLITE_CONSTRAINT {
+                throw TelemetryStoreError.duplicateAnnotation(video: video)
+            }
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
     }
 
     private static func journeyExists(journeyID: Int64, database: OpaquePointer?) throws -> Bool {

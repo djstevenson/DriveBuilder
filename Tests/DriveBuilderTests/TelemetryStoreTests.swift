@@ -172,6 +172,38 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(try store.annotations(journeyID: 999_999).isEmpty)
 }
 
+@Test func insertsAnAnnotationAndRejectsDuplicateVideoNames() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    try store.insertAnnotation(journeyID: 1, video: "Start", text: "We begin.", offset: 94.5)
+
+    let annotations = try store.annotations(journeyID: 1)
+    #expect(annotations.count == 1)
+    #expect(annotations[0].video == "Start")
+    #expect(annotations[0].text == "We begin.")
+    #expect(annotations[0].offset == 94.5)
+    #expect(annotations[0].journeyID == 1)
+
+    do {
+        try store.insertAnnotation(journeyID: 1, video: "Start", text: "Again.", offset: 200)
+        Issue.record("expected a duplicate video name to throw")
+    } catch TelemetryStoreError.duplicateAnnotation(let video) {
+        #expect(video == "Start")
+    }
+    // The failed insert left nothing behind.
+    #expect(try store.annotations(journeyID: 1).count == 1)
+}
+
 @Test func throwsTelemetryNotFoundForAJourneyWithNoTelemetry() throws {
     // Copy the fixture database and add a journey row with no telemetry rows,
     // rather than mutating the checked-in fixture.
