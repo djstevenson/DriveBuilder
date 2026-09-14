@@ -53,3 +53,50 @@ struct ComponentRow: View {
         return active.journeyID == journey.id && active.componentID == component.id
     }
 }
+
+/// One node of the component tree: a plain `ComponentRow` for leaves, and
+/// for groups a disclosure row (expanded by default) whose label carries
+/// the group name and its bulk "Render All" button.
+struct ComponentTreeRow: View {
+    @Environment(StudioModel.self) private var model
+    let node: ComponentNode
+    let journey: JourneySummary
+
+    @State private var isExpanded = true
+
+    var body: some View {
+        switch node.content {
+        case .component(let component):
+            ComponentRow(component: component, journey: journey)
+        case .group(let name, let renderAll):
+            DisclosureGroup(isExpanded: $isExpanded) {
+                ForEach(node.children ?? []) { child in
+                    ComponentTreeRow(node: child, journey: journey)
+                }
+            } label: {
+                HStack {
+                    Text(name)
+                        .font(.headline)
+                    Spacer()
+                    if let renderAll {
+                        if isRendering(renderAll) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(.trailing, 4)
+                        }
+                        Button("Render All") {
+                            model.render(renderAll, journey: journey)
+                        }
+                        .disabled(model.isRendering)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private func isRendering(_ component: RenderComponent) -> Bool {
+        guard let active = model.activeRender else { return false }
+        return active.journeyID == journey.id && active.componentID == component.id
+    }
+}

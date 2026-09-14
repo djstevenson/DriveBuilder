@@ -7,17 +7,17 @@ struct JourneyDetailView: View {
     let journey: JourneySummary
 
     var body: some View {
-        let components = RenderComponent.components(for: journey)
+        let tree = RenderComponent.tree(for: journey)
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding()
             Divider()
-            List(components) { component in
-                ComponentRow(component: component, journey: journey)
+            List {
+                ComponentTreeRow(node: tree, journey: journey)
             }
             if let active = model.activeRender, active.journeyID == journey.id {
                 Divider()
-                progressBar(for: active, components: components)
+                progressBar(for: active, tree: tree)
                     .padding()
             }
         }
@@ -68,9 +68,10 @@ struct JourneyDetailView: View {
     }
 
     private func progressBar(
-        for active: ActiveRender, components: [RenderComponent]
+        for active: ActiveRender, tree: ComponentNode
     ) -> some View {
-        let name = components.first { $0.id == active.componentID }?.name ?? "component"
+        let name = tree.allComponents
+            .first { $0.id == active.componentID }?.name ?? "component"
         return HStack(spacing: 12) {
             switch active.progress {
             case .preparing:

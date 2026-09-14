@@ -295,6 +295,47 @@ package struct JourneyRenderer: Sendable {
         }
     }
 
+    /// The whole programme in order — intro, route map, dials, every
+    /// annotation, outro — then the final assembly. Each component gets an
+    /// equal slice of the progress fraction. Returns the final video's URL.
+    @concurrent
+    package func renderProject(
+        driveSegmentSeconds: Double? = nil, progress: RenderProgressHandler? = nil
+    ) async throws -> URL {
+        progress?(.preparing)
+        let steps: [(RenderProgressHandler?) async throws -> Void] = [
+            { _ = try await self.renderIntro(progress: $0) },
+            { _ = try await self.renderRouteMap(progress: $0) },
+            { _ = try await self.renderDials(progress: $0) },
+            { _ = try await self.renderAnnotations(progress: $0) },
+            { _ = try await self.renderOutro(progress: $0) },
+        ]
+        let count = steps.count + 1
+        for (phase, step) in steps.enumerated() {
+            try await step(Self.slice(progress, phase: phase, of: count))
+        }
+        return try await renderFinal(
+            driveSegmentSeconds: driveSegmentSeconds,
+            progress: Self.slice(progress, phase: steps.count, of: count))
+    }
+
+    /// Maps one phase's progress into its 1/count slice of the whole; a
+    /// phase's `.preparing` shows as the fraction reached so far rather
+    /// than dropping the bar back to indeterminate.
+    private static func slice(
+        _ progress: RenderProgressHandler?, phase: Int, of count: Int
+    ) -> RenderProgressHandler? {
+        guard let progress else { return nil }
+        return { update in
+            switch update {
+            case .preparing:
+                progress(.fraction(Double(phase) / Double(count)))
+            case .fraction(let fraction):
+                progress(.fraction((Double(phase) + fraction) / Double(count)))
+            }
+        }
+    }
+
     // MARK: - Shared paths
 
     /// Destination for a named clip under the journey's `output/telemetry`

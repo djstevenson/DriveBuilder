@@ -90,8 +90,13 @@ final class StudioModel {
                     _ = try await renderer.renderRouteMap(progress: progress)
                 case .annotation(let video):
                     _ = try await renderer.renderAnnotation(video: video, progress: progress)
+                case .allAnnotations:
+                    _ = try await renderer.renderAnnotations(progress: progress)
                 case .final:
                     _ = try await renderer.renderFinal(
+                        driveSegmentSeconds: driveSegmentSeconds, progress: progress)
+                case .project:
+                    _ = try await renderer.renderProject(
                         driveSegmentSeconds: driveSegmentSeconds, progress: progress)
                 }
             } catch is CancellationError {
