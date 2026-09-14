@@ -2,6 +2,16 @@ import AVFoundation
 import Foundation
 import QuartzCore
 
+/// Seconds to skip at the start of each separately recorded component so
+/// they play in sync: the cameras and the telemetry logger don't all start
+/// recording at the same moment. Read from the journey's database row
+/// (`front_offset`, `rear_offset`, `telemetry_offset`).
+struct StartOffsets {
+    var front = 0.0
+    var rear = 0.0
+    var telemetry = 0.0
+}
+
 /// Stitches the already-rendered clips into the final programme:
 /// intro → route map → (drive footage with the rear-view inset and dials on
 /// top) → outro, with a one-second cross-fade between each. The dials clip
@@ -26,9 +36,9 @@ struct FinalVideoComposer {
     var rearFootageInset: Double = 20.0
 
     /// Seconds skipped at the start of each drive-segment source (from the
-    /// journey's main.json) so the separately started recordings play in
+    /// journey's database row) so the separately started recordings play in
     /// sync; the telemetry offset applies to the dials clip rendered from it.
-    var startOffsets = MainConfig.StartOffsets()
+    var startOffsets = StartOffsets()
 
     /// Caps the drive segment (dials/footage/rear-view) to at most this many
     /// seconds, for a quick test render while checking sync — e.g. the first
@@ -42,8 +52,8 @@ struct FinalVideoComposer {
         let url: URL
         /// Seconds from the start of the raw front.mov file — before that
         /// file's own `startOffsets.front` is applied — at which the
-        /// annotation should finish. This is main.json's own "offset", not
-        /// yet adjusted to the synced drive-segment timeline.
+        /// annotation should finish. This is the annotation row's own
+        /// "offset", not yet adjusted to the synced drive-segment timeline.
         let rawEndOffsetSeconds: Double
     }
 
@@ -164,7 +174,7 @@ struct FinalVideoComposer {
         ]
         if let empty = driveClips.first(where: { $0.1 <= .zero }) {
             throw CompositionError(
-                message: "The main.json start offset for \(empty.0) skips the whole clip.")
+                message: "The journey's start offset for \(empty.0) skips the whole clip.")
         }
         var dialsSegmentDuration = driveClips.map(\.1).min()!
         if driveClips.contains(where: { $0.1 != dialsSegmentDuration }) {
@@ -476,7 +486,7 @@ struct FinalVideoComposer {
         }
 
         // Annotations composite over the drive segment, bottom-aligned, each
-        // ending at its own offset (from main.json, adjusted here from
+        // ending at its own offset (from the annotations table, adjusted here from
         // "since the start of raw front.mov" to the synced drive-segment
         // timeline) and playing through its own built-in
         // opening/scrolling/closing animation, so no opacity ramp is needed.

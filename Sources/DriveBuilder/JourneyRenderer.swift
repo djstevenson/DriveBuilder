@@ -94,8 +94,8 @@ package struct JourneyLibrary: Sendable {
     }
 }
 
-/// Something needed by a render is missing or malformed (a journey column,
-/// a main.json field); the render never started.
+/// Something needed by a render is missing or malformed (e.g. a journey
+/// column); the render never started.
 package struct RenderSetupError: Error, CustomStringConvertible {
     package let message: String
     package var description: String { message }
@@ -317,7 +317,7 @@ package struct JourneyRenderer: Sendable {
             frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
-        composer.startOffsets = try MainConfig.load(journeyDirectory: journeyDirectory).startOffsets
+        composer.startOffsets = try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets()
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
         composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
             FinalVideoComposer.AnnotationClip(

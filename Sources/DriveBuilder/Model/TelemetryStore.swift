@@ -265,6 +265,21 @@ struct TelemetryStore {
         }
     }
 
+    /// The journey's per-source synchronisation offsets, as recorded in
+    /// `journeys.front_offset`/`rear_offset`/`telemetry_offset`, for the
+    /// final composition to line up the separately started recordings.
+    func journeyStartOffsets(journeyID: Int64) throws -> StartOffsets? {
+        try fetchJourneyRow(
+            journeyID: journeyID,
+            sql: "SELECT front_offset, rear_offset, telemetry_offset FROM journeys WHERE id = ?"
+        ) { statement in
+            StartOffsets(
+                front: Self.double(statement, column: 0) ?? 0,
+                rear: Self.double(statement, column: 1) ?? 0,
+                telemetry: Self.double(statement, column: 2) ?? 0)
+        }
+    }
+
     /// The journey's road, as recorded by the capture pipeline in
     /// `journeys.road_type`/`journeys.road_number`, e.g. ("A", 338); nil if
     /// either column is missing, rather than letting SQLite's NULL-as-zero
