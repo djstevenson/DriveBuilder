@@ -1,5 +1,4 @@
 import AppKit
-import ArgumentParser
 import Foundation
 import Testing
 
@@ -9,11 +8,14 @@ private func colour(_ frame: NSBitmapImageRep, _ x: Int, _ y: Int) -> NSColor? {
     frame.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
 }
 
-/// The border green is #669933.
+/// `AnnotationRenderer.borderColour` is sRGB (0, 0x99, 0); converting that
+/// through `usingColorSpace(.deviceRGB)` on this OS yields (0, 0.6, 0)
+/// unchanged, rather than the muted (0.4, 0.6, 0.2) an older macOS produced
+/// for the same source colour.
 private func isBorderGreen(_ colour: NSColor?) -> Bool {
     guard let colour else { return false }
-    return abs(colour.redComponent - 0.4) < 0.1 && abs(colour.greenComponent - 0.6) < 0.1
-        && abs(colour.blueComponent - 0.2) < 0.1 && colour.alphaComponent > 0.9
+    return colour.redComponent < 0.1 && abs(colour.greenComponent - 0.6) < 0.1
+        && colour.blueComponent < 0.1 && colour.alphaComponent > 0.9
 }
 
 private func isBlack(_ colour: NSColor?) -> Bool {
@@ -133,37 +135,3 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
             == "Crowmarsh Gifford, where the A4130 crosses the Thames. Often congested.")
 }
 
-@Test func annotationsRequireAtLeastOneEntryInMainJSON() throws {
-    let journey = FileManager.default.temporaryDirectory
-        .appending(path: "annotations-journey-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: journey, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: journey) }
-    let journeyPath = journey.path(percentEncoded: false)
-
-    // No main.json at all.
-    #expect(throws: ValidationError.self) {
-        try DriveBuilder.Annotations.annotations(in: journeyPath)
-    }
-
-    // A main.json with an empty "annotations" array.
-    try Data(#"{ "annotations": [] }"#.utf8)
-        .write(to: journey.appending(path: "main.json"))
-    #expect(throws: ValidationError.self) {
-        try DriveBuilder.Annotations.annotations(in: journeyPath)
-    }
-
-    // Entries come back in file order, with their video name and text.
-    try Data(
-        """
-        {
-            "annotations": [
-                { "video": "Start", "text": "We begin." },
-                { "video": "A27 On", "text": "We multiplex." },
-            ],
-        }
-        """.utf8
-    ).write(to: journey.appending(path: "main.json"))
-    let annotations = try DriveBuilder.Annotations.annotations(in: journeyPath)
-    #expect(annotations.map(\.video) == ["Start", "A27 On"])
-    #expect(annotations.map(\.text) == ["We begin.", "We multiplex."])
-}

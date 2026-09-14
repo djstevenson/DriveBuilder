@@ -18,8 +18,8 @@ package struct JourneySummary: Identifiable, Sendable {
     package let title: String
     package let roadType: String
     package let roadNumber: Int
-    /// The journey's directory, where its source footage, annotations, and
-    /// output live.
+    /// The journey's directory, where its source footage and output live
+    /// (its annotations live in the database's `annotations` table).
     package let directory: String
     package let sampleCount: Int
     package let start: Date?
@@ -48,10 +48,48 @@ package struct JourneyLibrary: Sendable {
     package func journeys() async throws -> [JourneySummary] {
         try TelemetryStore(path: databasePath).allJourneys()
     }
+
+    /// A journey's annotation banners, in the order they end in the video.
+    /// No rows just means none have been authored yet, not an error.
+    ///
+    /// `@concurrent` for the same reason as `journeys()`: keep the database
+    /// read off the caller's (GUI main) actor.
+    @concurrent
+    package func annotations(journeyID: Int64) async throws -> [Annotation] {
+        try TelemetryStore(path: databasePath).annotations(journeyID: journeyID)
+    }
+
+    /// Adds one annotation banner for `journeyID`. Throws
+    /// `TelemetryStoreError.duplicateAnnotation` if `video` already names
+    /// an annotation on that journey.
+    @concurrent
+    package func addAnnotation(
+        journeyID: Int64, video: String, text: String, offset: Double
+    ) async throws {
+        try TelemetryStore(path: databasePath).insertAnnotation(
+            journeyID: journeyID, video: video, text: text, offset: offset)
+    }
+
+    /// Rewrites one annotation's fields. Throws
+    /// `TelemetryStoreError.duplicateAnnotation` if the new `video` clashes
+    /// with another annotation on the same journey.
+    @concurrent
+    package func updateAnnotation(
+        id: Int64, video: String, text: String, offset: Double
+    ) async throws {
+        try TelemetryStore(path: databasePath).updateAnnotation(
+            id: id, video: video, text: text, offset: offset)
+    }
+
+    /// Removes one annotation. The rendered movie, if any, stays on disk.
+    @concurrent
+    package func deleteAnnotation(id: Int64) async throws {
+        try TelemetryStore(path: databasePath).deleteAnnotation(id: id)
+    }
 }
 
 /// Something needed by a render is missing or malformed (a journey column,
-/// a main.json entry); the render never started.
+/// a main.json field); the render never started.
 package struct RenderSetupError: Error, CustomStringConvertible {
     package let message: String
     package var description: String { message }
@@ -194,15 +232,14 @@ package struct JourneyRenderer: Sendable {
         }
     }
 
-    /// Every scrolling annotation banner from main.json, in order:
-    /// `output/<video>.mov` each.
+    /// Every scrolling annotation banner in the database's `annotations`
+    /// table, in order: `output/<video>.mov` each. No rows is a no-op.
     @concurrent
     package func renderAnnotations(
         progress: RenderProgressHandler? = nil
     ) async throws -> [URL] {
         progress?(.preparing)
-        let directory = try journeyDirectory()
-        let annotations = try DriveBuilder.Annotations.annotations(in: directory)
+        let annotations = try store.annotations(journeyID: journeyID)
         let outputDirectory = try makeOutputDirectory()
 
         var urls: [URL] = []
@@ -222,29 +259,29 @@ package struct JourneyRenderer: Sendable {
         return urls
     }
 
-    /// One annotation banner, picked out of main.json by its output name.
+    /// One annotation banner, picked out of the `annotations` table by its
+    /// output name.
     @concurrent
     package func renderAnnotation(
         video: String, progress: RenderProgressHandler? = nil
     ) async throws -> URL {
         progress?(.preparing)
-        let directory = try journeyDirectory()
-        let annotations = try DriveBuilder.Annotations.annotations(in: directory)
+        let annotations = try store.annotations(journeyID: journeyID)
         guard let annotation = annotations.first(where: { $0.video == video }) else {
             throw RenderSetupError(
-                message: "No annotation named \"\(video)\" in \(directory)/main.json.")
+                message: "No annotation named \"\(video)\" for journey \(journeyID).")
         }
         return try await render(annotation, to: try makeOutputDirectory(), progress: progress)
     }
 
     private func render(
-        _ annotation: MainConfig.Annotation, to outputDirectory: URL,
+        _ annotation: Annotation, to outputDirectory: URL,
         progress: RenderProgressHandler?
     ) async throws -> URL {
         let text = DriveBuilder.Annotations.normalizedText(annotation.text)
         guard !text.isEmpty else {
             throw RenderSetupError(
-                message: "Annotation \"\(annotation.video)\" in main.json has no text.")
+                message: "Annotation \"\(annotation.video)\" has empty text.")
         }
         let renderer = AnnotationRenderer(text: text)
         let url = outputDirectory.appending(path: "\(annotation.video).mov")
@@ -274,17 +311,12 @@ package struct JourneyRenderer: Sendable {
             frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
-        let mainConfig = try MainConfig.load(journeyDirectory: journeyDirectory)
-        composer.startOffsets = mainConfig.startOffsets
+        composer.startOffsets = try MainConfig.load(journeyDirectory: journeyDirectory).startOffsets
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
-        composer.annotationClips = try mainConfig.annotations.map { annotation in
-            guard let offset = annotation.offset else {
-                throw RenderSetupError(
-                    message: "Annotation \"\(annotation.video)\" in main.json has no \"offset\".")
-            }
-            return FinalVideoComposer.AnnotationClip(
+        composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
+            FinalVideoComposer.AnnotationClip(
                 url: outputDirectory.appending(path: "\(annotation.video).mov"),
-                rawEndOffsetSeconds: offset)
+                rawEndOffsetSeconds: annotation.offset)
         }
         if let progress {
             composer.progressHandler = { fraction in progress(.fraction(fraction)) }

@@ -13,7 +13,7 @@ private func journeyDirectory(mainJSON: String?) throws -> URL {
     return directory
 }
 
-@Test func componentOffsetsAndAnnotationsBothDecode() throws {
+@Test func componentOffsetsDecode() throws {
     let directory = try journeyDirectory(
         mainJSON: """
             {
@@ -23,10 +23,6 @@ private func journeyDirectory(mainJSON: String?) throws -> URL {
                     "rear": { "offset": 34.5 },
                     "telemetry": { "offset": 62.0 },
                 },
-                "annotations": [
-                    { "video": "Start", "text": "We start our journey." },
-                    { "video": "A27 On", "text": "We multiplex onto the A27." },
-                ],
             }
             """)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -35,8 +31,6 @@ private func journeyDirectory(mainJSON: String?) throws -> URL {
     #expect(config.startOffsets.front == 34.0)
     #expect(config.startOffsets.rear == 34.5)
     #expect(config.startOffsets.telemetry == 62.0)
-    #expect(config.annotations.map(\.video) == ["Start", "A27 On"])
-    #expect(config.annotations.map(\.text) == ["We start our journey.", "We multiplex onto the A27."])
 }
 
 @Test func missingComponentsOrOffsetsDefaultToZero() throws {
@@ -62,18 +56,6 @@ private func journeyDirectory(mainJSON: String?) throws -> URL {
     #expect(offsets.front == 0)
     #expect(offsets.rear == 0)
     #expect(offsets.telemetry == 0)
-}
-
-@Test func quotedAnnotationOffsetIsRejected() throws {
-    let directory = try journeyDirectory(
-        mainJSON: """
-            { "annotations": [ { "video": "Start", "text": "Hi", "offset": "120" } ] }
-            """)
-    defer { try? FileManager.default.removeItem(at: directory) }
-
-    #expect(throws: (any Error).self) {
-        try MainConfig.load(journeyDirectory: directory.path(percentEncoded: false))
-    }
 }
 
 @Test func malformedMainJSONThrows() throws {

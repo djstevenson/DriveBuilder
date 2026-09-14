@@ -9,7 +9,7 @@ struct RenderComponent: Identifiable, Equatable {
         case dials
         case routeMap
         case annotation(video: String)
-        /// Every annotation banner in main.json, in order.
+        /// Every annotation banner in the database, in order.
         case allAnnotations
         case outro
         case final
@@ -35,97 +35,34 @@ struct RenderComponent: Identifiable, Equatable {
     static let project = RenderComponent(
         kind: .project, name: "Whole project", relativePath: "output/project")
 
-    /// The component tree for one journey, in programme order. Annotation
-    /// rows come from the journey's main.json and sit in a nested group
-    /// with their own render-all. A missing or malformed main.json just
-    /// means no annotation group.
-    static func nodes(for journey: JourneySummary) -> [ComponentNode] {
-        var children: [ComponentNode] = [
-            .component(
-                RenderComponent(kind: .intro, name: "Intro", relativePath: "output/intro.mov")),
-            .component(
-                RenderComponent(
-                    kind: .routeMap, name: "Route map",
-                    relativePath: "output/telemetry/route_map.mov")),
-            .component(
-                RenderComponent(
-                    kind: .dials, name: "Dials", relativePath: "output/telemetry/dials.mov")),
-        ]
-        let annotations =
-            (try? MainConfig.load(journeyDirectory: journey.directory).annotations) ?? []
-        if !annotations.isEmpty {
-            children.append(
-                .group(
-                    name: "Annotations",
-                    renderAll: RenderComponent(
-                        kind: .allAnnotations, name: "All annotations",
-                        relativePath: "output/annotations"),
-                    children: annotations.map { annotation in
-                        .component(
-                            RenderComponent(
-                                kind: .annotation(video: annotation.video),
-                                name: "Annotation \u{201C}\(annotation.video)\u{201D}",
-                                relativePath: "output/\(annotation.video).mov"))
-                    }))
-        }
-        children.append(
-            .component(
-                RenderComponent(kind: .outro, name: "Outro", relativePath: "output/outro.mov")))
-        children.append(
-            .component(
-                RenderComponent(
-                    kind: .final, name: "Final video", relativePath: "output/final.mov")))
-        return children
-    }
-}
+    /// The synthetic component behind the Annotations section's Render All:
+    /// every annotation banner in the database, in order. Like `project`,
+    /// it has no output file of its own — its `relativePath` only serves as
+    /// a unique ID, so it must never be stat'ed or played.
+    static let allAnnotations = RenderComponent(
+        kind: .allAnnotations, name: "All annotations", relativePath: "output/annotations")
 
-/// A node in the component tree: either one renderable row, or a named
-/// group whose row carries a bulk "Render All" action over everything
-/// beneath it. Groups nest to any depth.
-struct ComponentNode: Identifiable {
-    enum Content {
-        case component(RenderComponent)
-        /// `renderAll` is a synthetic component with no output file of its
-        /// own — its `relativePath` only serves as a unique ID, so it must
-        /// never be stat'ed or played.
-        case group(name: String, renderAll: RenderComponent?)
+    /// The row for one annotation banner from the database's `annotations`
+    /// table.
+    static func component(for annotation: Annotation) -> RenderComponent {
+        RenderComponent(
+            kind: .annotation(video: annotation.video),
+            name: "Annotation \u{201C}\(annotation.video)\u{201D}",
+            relativePath: "output/\(annotation.video).mov")
     }
 
-    let content: Content
-    let children: [ComponentNode]?
-
-    static func component(_ component: RenderComponent) -> ComponentNode {
-        ComponentNode(content: .component(component), children: nil)
-    }
-
-    static func group(
-        name: String, renderAll: RenderComponent?, children: [ComponentNode]
-    ) -> ComponentNode {
-        ComponentNode(content: .group(name: name, renderAll: renderAll), children: children)
-    }
-
-    var id: String {
-        switch content {
-        case .component(let component): component.id
-        case .group(let name, _): "group:\(name)"
-        }
-    }
-
-    /// Every component in the subtree including synthetic render-alls, for
-    /// lookups like naming the active render in the progress bar.
-    var allComponents: [RenderComponent] {
-        var components: [RenderComponent] = []
-        switch content {
-        case .component(let component):
-            components.append(component)
-        case .group(_, let renderAll):
-            if let renderAll { components.append(renderAll) }
-        }
-        for child in children ?? [] {
-            components.append(contentsOf: child.allComponents)
-        }
-        return components
-    }
+    /// The clip rows for a journey, in programme order. Annotations are not
+    /// included: they live in their own section of the journey pane (see
+    /// `JourneyDetailView`).
+    static let standardComponents: [RenderComponent] = [
+        RenderComponent(kind: .intro, name: "Intro", relativePath: "output/intro.mov"),
+        RenderComponent(
+            kind: .routeMap, name: "Route map",
+            relativePath: "output/telemetry/route_map.mov"),
+        RenderComponent(kind: .dials, name: "Dials", relativePath: "output/telemetry/dials.mov"),
+        RenderComponent(kind: .outro, name: "Outro", relativePath: "output/outro.mov"),
+        RenderComponent(kind: .final, name: "Final video", relativePath: "output/final.mov"),
+    ]
 }
 
 /// What's on disk for one component's output right now.
