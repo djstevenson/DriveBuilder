@@ -6,8 +6,8 @@ import Foundation
 /// recreated from it on every build, so writes (new journeys, cached road
 /// data) must land here - and want a rebuild afterwards - to be seen and
 /// to survive.
-enum TelemetryDatabase {
-    static let sourceTreePath = URL(filePath: #filePath)
+package enum TelemetryDatabase {
+    package static let sourceTreePath = URL(filePath: #filePath)
         .deletingLastPathComponent()
         .appending(path: "Resources/telemetry.sqlite3")
         .path(percentEncoded: false)
@@ -26,7 +26,7 @@ struct TelemetryOptions: ParsableArguments {
         help: "The journey to render.")
     var journeyID: Int64
 
-    private static func databasePath() throws -> String {
+    static func databasePath() throws -> String {
         guard let url = Bundle.module.url(forResource: "telemetry", withExtension: "sqlite3")
         else {
             throw ValidationError("Bundled telemetry.sqlite3 resource is missing.")

@@ -157,6 +157,8 @@ struct AlphaMovieWriter {
         // drawn, at the cost of keeping two batches of buffers alive.
         var current = frameCount > 0 ? try renderBatch(from: 0) : nil
         while let batch = current {
+            // Let a front end's Cancel button take effect between batches.
+            try Task.checkCancellation()
             let nextIndex = batch.firstIndex + batch.buffers.count
             async let next: FrameBatch? =
                 nextIndex < frameCount ? try renderBatch(from: nextIndex) : nil

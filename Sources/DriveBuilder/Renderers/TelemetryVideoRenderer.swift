@@ -205,7 +205,8 @@ struct TelemetryVideoRenderer {
     func writeMovie(
         to url: URL,
         frameLimit: Int? = nil,
-        concurrency: Int = ProcessInfo.processInfo.activeProcessorCount
+        concurrency: Int = ProcessInfo.processInfo.activeProcessorCount,
+        progress: RenderProgressHandler? = nil
     ) async throws {
         var frames = expandedRecords
         if let frameLimit, frameLimit < frames.count {
@@ -231,6 +232,7 @@ struct TelemetryVideoRenderer {
         try await writer.write(
             frameCount: frames.count,
             progress: { done in
+                progress?(.fraction(Double(done) / Double(max(frames.count, 1))))
                 guard done % 1000 == 0 || done == frames.count else { return }
                 FileHandle.standardError.write(Data("  \(done)/\(frames.count) frames\n".utf8))
             },

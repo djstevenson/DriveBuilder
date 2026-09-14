@@ -36,10 +36,7 @@ struct CompassRenderer: DialRenderer {
                     from: BundledArtwork.svg(name, dial: "compass"),
                     width: pixelSize,
                     height: pixelSize)
-                guard let image = bitmap.cgImage else {
-                    throw SVGRasterizerError.undecodableArtwork
-                }
-                return image
+                return try SVGRasterizer.cgImage(from: bitmap)
             }
 
             dial = try layer("dial")

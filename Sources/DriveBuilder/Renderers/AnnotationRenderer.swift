@@ -221,7 +221,8 @@ struct AnnotationRenderer {
     func writeMovie(
         to url: URL,
         frameLimit: Int? = nil,
-        concurrency: Int = ProcessInfo.processInfo.activeProcessorCount
+        concurrency: Int = ProcessInfo.processInfo.activeProcessorCount,
+        progress: RenderProgressHandler? = nil
     ) async throws {
         let artwork = try makeArtwork()
         let frameCount = min(frameCount, frameLimit ?? .max)
@@ -238,6 +239,9 @@ struct AnnotationRenderer {
         let started = ContinuousClock.now
         try await writer.write(
             frameCount: frameCount,
+            progress: { done in
+                progress?(.fraction(Double(done) / Double(max(frameCount, 1))))
+            },
             drawFrame: { index, context in
                 draw(frameIndex: index, into: context, artwork: artwork)
             })

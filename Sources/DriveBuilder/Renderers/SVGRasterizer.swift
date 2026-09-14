@@ -125,6 +125,18 @@ struct SVGRasterizer {
         return png
     }
 
+    /// The bitmap's pixels as a `CGImage` safe to draw from several threads
+    /// at once. `NSBitmapImageRep.cgImage` (like ImageIO decoding) returns a
+    /// lazily materialized image whose CGAccessSession is tied to the first
+    /// thread that draws it; the frame loops draw shared artwork from many
+    /// threads, so hand out an eagerly decoded plain-memory copy instead.
+    static func cgImage(from bitmap: NSBitmapImageRep) throws -> CGImage {
+        guard let image = bitmap.cgImage?.bitmapBackedCopy() else {
+            throw SVGRasterizerError.undecodableArtwork
+        }
+        return image
+    }
+
     /// An empty transparent bitmap sized in pixels rather than points.
     static func blankBitmap(width: Int, height: Int) throws -> NSBitmapImageRep {
         guard width > 0, height > 0 else {
@@ -148,5 +160,25 @@ struct SVGRasterizer {
         // Without this the rep reports its size in points, and drawing scales by the display factor.
         canvas.size = NSSize(width: width, height: height)
         return canvas
+    }
+}
+
+extension CGImage {
+    /// A copy backed by plain bitmap memory, decoded eagerly on the calling
+    /// thread, so it can safely be drawn from several threads at once.
+    func bitmapBackedCopy() -> CGImage? {
+        guard
+            let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                    | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        context.draw(self, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 }

@@ -102,6 +102,14 @@ struct MaprenderTileRenderer: MapTileRenderer {
         else {
             throw MapTileError.undecodableImage
         }
-        return image
+        // An ImageIO-backed image decodes lazily through a CGAccessSession
+        // tied to this thread, and the frame loops draw tiles from many
+        // threads at once — each first touch then logs "CGAccessSession
+        // cannot be shared between threads". Blit into plain bitmap memory
+        // here so the PNG decode happens once, on this thread.
+        guard let decoded = image.bitmapBackedCopy() else {
+            throw MapTileError.undecodableImage
+        }
+        return decoded
     }
 }

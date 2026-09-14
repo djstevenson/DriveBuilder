@@ -12,10 +12,7 @@ enum CarMarker {
             from: BundledArtwork.svg("car", dial: "progress_map"),
             width: size,
             height: size)
-        guard let image = bitmap.cgImage else {
-            throw SVGRasterizerError.undecodableArtwork
-        }
-        return image
+        return try SVGRasterizer.cgImage(from: bitmap)
     }
 
     /// Draws the marker centred on `position` (top-left-origin frame

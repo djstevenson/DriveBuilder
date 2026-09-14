@@ -37,26 +37,11 @@ extension DriveBuilder {
         }
 
         mutating func run() async throws {
-            let directory = try telemetry.journeyDirectory()
-            let annotations = try Self.annotations(in: directory)
-
-            let outputDirectory = URL(filePath: directory).appending(path: "output")
-            try FileManager.default.createDirectory(
-                at: outputDirectory, withIntermediateDirectories: true)
-            try FileManager.default.excludeFromBackup(outputDirectory)
-
-            for annotation in annotations {
-                let text = Self.normalizedText(annotation.text)
-                guard !text.isEmpty else {
-                    throw ValidationError(
-                        "Annotation \"\(annotation.video)\" in main.json has no text.")
-                }
-
-                let renderer = AnnotationRenderer(text: text)
-                try await renderer.writeMovie(
-                    to: outputDirectory.appending(path: "\(annotation.video).mov"),
-                    frameLimit: video.frameLimit)
-            }
+            var renderer = JourneyRenderer(
+                journeyID: telemetry.journeyID,
+                databasePath: try TelemetryOptions.databasePath())
+            renderer.frameLimit = video.frameLimit
+            _ = try await renderer.renderAnnotations()
         }
     }
 }

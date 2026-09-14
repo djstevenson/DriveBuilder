@@ -15,17 +15,8 @@ struct RouteMapOptions: ParsableArguments {
     /// exist, otherwise `route_map.json` beside the journey's source footage
     /// is used when present, otherwise the built-in defaults.
     func loadConfig(journeyDirectory: String?) throws -> RouteMapConfig {
-        if let routeConfigPath {
-            return try RouteMapConfig.load(path: routeConfigPath)
-        }
-        if let journeyDirectory {
-            let conventional = URL(filePath: journeyDirectory).appending(path: "route_map.json")
-                .path(percentEncoded: false)
-            if FileManager.default.fileExists(atPath: conventional) {
-                return try RouteMapConfig.load(path: conventional)
-            }
-        }
-        return RouteMapConfig()
+        try JourneyRenderer.routeMapConfig(
+            explicitPath: routeConfigPath, journeyDirectory: journeyDirectory)
     }
 }
 
@@ -50,26 +41,12 @@ extension DriveBuilder {
         @OptionGroup var route: RouteMapOptions
 
         mutating func run() async throws {
-            let journeyDirectory = try telemetry.journeyDirectory()
-            let config = try route.loadConfig(journeyDirectory: journeyDirectory)
-
-            var tileRenderer = map.tileRenderer
-            tileRenderer.scaleFactor =
-                Double(config.width) / RouteMapRenderer.mapXMLDesignWidth
-
-            var nationalTileRenderer = map.tileRenderer
-            nationalTileRenderer.stylesheet = "map-national.xml"
-            nationalTileRenderer.scaleFactor =
-                Double(config.width) / RouteMapRenderer.mapXMLDesignWidth
-
-            let renderer = RouteMapRenderer(
-                records: try telemetry.load(),
-                tileRenderer: tileRenderer,
-                config: config)
-            try await renderer.writeMovie(
-                nationalTileRenderer: nationalTileRenderer,
-                to: video.outputURL(named: "route_map", journeyDirectory: journeyDirectory),
-                frameLimit: video.frameLimit)
+            var renderer = JourneyRenderer(
+                journeyID: telemetry.journeyID,
+                databasePath: try TelemetryOptions.databasePath())
+            renderer.frameLimit = video.frameLimit
+            renderer.mapDirectory = map.mapDirectory
+            _ = try await renderer.renderRouteMap(routeConfigPath: route.routeConfigPath)
         }
     }
 }

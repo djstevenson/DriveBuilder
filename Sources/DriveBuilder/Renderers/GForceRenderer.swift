@@ -78,10 +78,7 @@ struct GForceRenderer: DialRenderer {
                 from: BundledArtwork.svg("dial", dial: "gforce"),
                 width: pixelSize,
                 height: pixelSize)
-            guard let image = bitmap.cgImage else {
-                throw SVGRasterizerError.undecodableArtwork
-            }
-            dial = image
+            dial = try SVGRasterizer.cgImage(from: bitmap)
         }
     }
 
