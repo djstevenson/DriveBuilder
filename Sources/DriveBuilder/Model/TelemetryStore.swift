@@ -292,7 +292,8 @@ struct TelemetryStore {
         let sql = """
             SELECT j.id, j.title, j.road_type, j.road_number, j.source,
                    COUNT(t.id), MIN(t.timestamp), MAX(t.timestamp),
-                   MAX(t.odometer) - MIN(t.odometer)
+                   MAX(t.odometer) - MIN(t.odometer),
+                   j.front_offset, j.rear_offset, j.telemetry_offset
             FROM journeys j
             LEFT JOIN telemetry t ON t.journey_id = j.id
             GROUP BY j.id
@@ -322,7 +323,10 @@ struct TelemetryStore {
                     sampleCount: Self.integer(statement, column: 5) ?? 0,
                     start: try Self.date(statement, column: 6),
                     end: try Self.date(statement, column: 7),
-                    distanceMetres: Self.double(statement, column: 8) ?? 0))
+                    distanceMetres: Self.double(statement, column: 8) ?? 0,
+                    frontOffset: Self.double(statement, column: 9) ?? 0,
+                    rearOffset: Self.double(statement, column: 10) ?? 0,
+                    telemetryOffset: Self.double(statement, column: 11) ?? 0))
         }
         return journeys
     }

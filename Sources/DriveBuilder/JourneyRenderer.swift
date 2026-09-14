@@ -25,6 +25,12 @@ package struct JourneySummary: Identifiable, Sendable {
     package let start: Date?
     package let end: Date?
     package let distanceMetres: Double
+    /// Synchronisation offsets, in seconds, for lining up the separately
+    /// captured sources. Display-only for now: the render pipeline does
+    /// not read these yet.
+    package let frontOffset: Double
+    package let rearOffset: Double
+    package let telemetryOffset: Double
 
     package var roadName: String { "\(roadType)\(roadNumber)" }
 }

@@ -18,15 +18,18 @@ struct SourceVideoRow: View {
     @Environment(StudioModel.self) private var model
     let name: String
     let url: URL
+    /// The journey's synchronisation offset for this source, in seconds.
+    let offset: Double
 
     @State private var details: String?
 
     var body: some View {
         let status = FileStatus(url: url)
+        let fileDetails = status.exists ? (details ?? "Loading\u{2026}") : "Missing"
 
         VStack(alignment: .leading, spacing: 2) {
             Text(name)
-            Text(status.exists ? (details ?? "Loading\u{2026}") : "Missing")
+            Text("\(fileDetails) \u{00B7} \(Self.offsetText(offset))")
                 .font(.appCaption)
                 .foregroundStyle(
                     status.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
@@ -35,6 +38,12 @@ struct SourceVideoRow: View {
         .task(id: SourceVideoLoadKey(url: url, outputsVersion: model.outputsVersion)) {
             details = status.exists ? await loadDetails(status: status) : nil
         }
+    }
+
+    /// The detail line's offset part, shared with the telemetry row so all
+    /// three sources format their offsets identically.
+    static func offsetText(_ offset: Double) -> String {
+        "Offset \(offset.formatted(.number.precision(.fractionLength(0...3)))) s"
     }
 
     private func loadDetails(status: FileStatus) async -> String {

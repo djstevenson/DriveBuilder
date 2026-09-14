@@ -53,13 +53,17 @@ struct JourneyDetailView: View {
                 Section("Source Video and Telemetry") {
                     SourceVideoRow(
                         name: "Front camera",
-                        url: URL(filePath: journey.directory).appending(path: "video/front.mov"))
+                        url: URL(filePath: journey.directory).appending(path: "video/front.mov"),
+                        offset: journey.frontOffset)
                     SourceVideoRow(
                         name: "Rear camera",
-                        url: URL(filePath: journey.directory).appending(path: "video/rear.mov"))
+                        url: URL(filePath: journey.directory).appending(path: "video/rear.mov"),
+                        offset: journey.rearOffset)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Telemetry")
-                        Text(telemetryLength ?? "No telemetry")
+                        Text(
+                            "\(telemetryLength ?? "No telemetry") \u{00B7} "
+                                + SourceVideoRow.offsetText(journey.telemetryOffset))
                             .font(.appCaption)
                             .foregroundStyle(
                                 telemetryLength != nil
