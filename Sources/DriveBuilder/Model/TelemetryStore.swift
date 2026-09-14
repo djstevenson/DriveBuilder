@@ -76,6 +76,45 @@ struct TelemetryStore {
         return records
     }
 
+    /// Every annotation banner for `journeyID`, in the order they end in the
+    /// video. No rows just means none have been authored yet, not an error.
+    func annotations(journeyID: Int64) throws -> [Annotation] {
+        let database = try open(flags: SQLITE_OPEN_READONLY)
+        defer { sqlite3_close(database) }
+
+        let sql = """
+            SELECT id, journey_id, video, text, offset
+            FROM annotations
+            WHERE journey_id = ?
+            ORDER BY offset
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, journeyID)
+
+        var annotations: [Annotation] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { break }
+            guard result == SQLITE_ROW else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            annotations.append(
+                Annotation(
+                    id: sqlite3_column_int64(statement, 0),
+                    journeyID: sqlite3_column_int64(statement, 1),
+                    video: Self.string(statement, column: 2) ?? "",
+                    text: Self.string(statement, column: 3) ?? "",
+                    offset: sqlite3_column_double(statement, 4)))
+        }
+        return annotations
+    }
+
     private static func journeyExists(journeyID: Int64, database: OpaquePointer?) throws -> Bool {
         var statement: OpaquePointer?
         guard

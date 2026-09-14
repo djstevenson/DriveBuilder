@@ -13,8 +13,8 @@ extension DriveBuilder {
                 + "aligned, and that into the outro. Per-component start offsets from the "
                 + "journey's main.json bring the separately started recordings into sync, "
                 + "and the drive segment runs for whichever of the three is shortest "
-                + "after its offset. Annotation banners (main.json's \"annotations\", "
-                + "already rendered by the annotations command) composite over the "
+                + "after its offset. Annotation banners (the database's \"annotations\" "
+                + "table, already rendered by the annotations command) composite over the "
                 + "bottom of the drive segment, each ending at its own offset. Requires "
                 + "intro.mov, telemetry/route_map.mov, telemetry/dials.mov, and outro.mov "
                 + "to have been rendered already.")

@@ -18,8 +18,9 @@ package enum TelemetryDatabase {
 /// Include with `@OptionGroup` so a subcommand picks up the flag and the
 /// loading in one place. The database lives in this project (see
 /// `Resources/telemetry.sqlite3`), not on the command line: a journey's
-/// source footage, annotations, and output all live in the directory
-/// recorded for it in the database, so the CLI only ever needs its id.
+/// source footage and output live in the directory recorded for it in the
+/// database (its annotations live in the database itself), so the CLI only
+/// ever needs its id.
 struct TelemetryOptions: ParsableArguments {
     @Option(
         name: [.customShort("j"), .customLong("journey-id")],

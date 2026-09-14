@@ -12,36 +12,17 @@ package struct MainConfig {
         package var telemetry = 0.0
     }
 
-    /// One scrolling annotation banner: `video` names the output movie
-    /// (written to `output/<video>.mov`), `text` is what scrolls across it,
-    /// and `offset` (seconds from the start of the raw front.mov file, before
-    /// that file's own start offset is applied) says when it should end, for
-    /// `final` to place it. `offset` is nil until the author adds it, and
-    /// isn't needed just to render the banner with the `annotations` command.
-    package struct Annotation {
-        package var video: String
-        package var text: String
-        package var offset: Double?
-    }
-
     package var startOffsets = StartOffsets()
-    package var annotations: [Annotation] = []
 
     private struct File: Decodable {
         struct Component: Decodable {
             var offset: Double?
         }
-        struct Annotation: Decodable {
-            var video: String
-            var text: String
-            var offset: Double?
-        }
         var components: [String: Component]?
-        var annotations: [Annotation]?
     }
 
     /// Loads `main.json` from the journey directory. A missing file just
-    /// means no offsets and no annotations; a malformed one is an error.
+    /// means no offsets; a malformed one is an error.
     package static func load(journeyDirectory: String) throws -> MainConfig {
         var config = MainConfig()
         let url = URL(filePath: journeyDirectory).appending(path: "main.json")
@@ -54,9 +35,6 @@ package struct MainConfig {
         config.startOffsets.front = file.components?["front"]?.offset ?? 0
         config.startOffsets.rear = file.components?["rear"]?.offset ?? 0
         config.startOffsets.telemetry = file.components?["telemetry"]?.offset ?? 0
-        config.annotations = (file.annotations ?? []).map {
-            Annotation(video: $0.video, text: $0.text, offset: $0.offset)
-        }
         return config
     }
 }

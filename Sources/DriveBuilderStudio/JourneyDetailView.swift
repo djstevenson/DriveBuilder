@@ -2,26 +2,53 @@ import AppKit
 import DriveBuilder
 import SwiftUI
 
+/// Keys the annotations reload to both the selected journey and the
+/// toolbar's Reload button, so switching journeys or reloading always
+/// re-reads the database rather than showing a stale list.
+private struct AnnotationsLoadKey: Equatable {
+    let journeyID: Int64
+    let outputsVersion: Int
+}
+
 struct JourneyDetailView: View {
     @Environment(StudioModel.self) private var model
     let journey: JourneySummary
 
+    @State private var annotations: [Annotation] = []
+
     var body: some View {
-        let nodes = RenderComponent.nodes(for: journey)
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding()
             Divider()
             List {
-                ForEach(nodes) { node in
-                    ComponentTreeRow(node: node, journey: journey)
+                ForEach(RenderComponent.standardComponents) { component in
+                    ComponentRow(component: component, journey: journey)
+                }
+                Section {
+                    if annotations.isEmpty {
+                        Text("No annotations yet")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(annotations) { annotation in
+                            ComponentRow(
+                                component: .component(for: annotation), journey: journey)
+                        }
+                    }
+                } header: {
+                    annotationsHeader
                 }
             }
             if let active = model.activeRender, active.journeyID == journey.id {
                 Divider()
-                progressBar(for: active, nodes: nodes)
+                progressBar(for: active)
                     .padding()
             }
+        }
+        .task(id: AnnotationsLoadKey(journeyID: journey.id, outputsVersion: model.outputsVersion)) {
+            annotations =
+                (try? await JourneyLibrary(databasePath: model.databasePath)
+                    .annotations(journeyID: journey.id)) ?? []
         }
     }
 
@@ -29,7 +56,7 @@ struct JourneyDetailView: View {
         HStack(alignment: .top) {
             journeySummaryHeader
             Spacer()
-            if isRenderingProject {
+            if isRendering(.project) {
                 ProgressView()
                     .controlSize(.small)
                     .padding(.trailing, 4)
@@ -41,10 +68,25 @@ struct JourneyDetailView: View {
         }
     }
 
-    private var isRenderingProject: Bool {
+    private var annotationsHeader: some View {
+        HStack {
+            Text("Annotations")
+            Spacer()
+            if isRendering(.allAnnotations) {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.trailing, 4)
+            }
+            Button("Render All") {
+                model.render(.allAnnotations, journey: journey)
+            }
+            .disabled(model.isRendering || annotations.isEmpty)
+        }
+    }
+
+    private func isRendering(_ component: RenderComponent) -> Bool {
         guard let active = model.activeRender else { return false }
-        return active.journeyID == journey.id
-            && active.componentID == RenderComponent.project.id
+        return active.journeyID == journey.id && active.componentID == component.id
     }
 
     private var journeySummaryHeader: some View {
@@ -91,10 +133,10 @@ struct JourneyDetailView: View {
         return parts.joined(separator: " \u{00B7} ")
     }
 
-    private func progressBar(
-        for active: ActiveRender, nodes: [ComponentNode]
-    ) -> some View {
-        let name = (nodes.flatMap(\.allComponents) + [RenderComponent.project])
+    private func progressBar(for active: ActiveRender) -> some View {
+        let name = (RenderComponent.standardComponents
+            + annotations.map(RenderComponent.component(for:))
+            + [RenderComponent.allAnnotations, RenderComponent.project])
             .first { $0.id == active.componentID }?.name ?? "component"
         return HStack(spacing: 12) {
             switch active.progress {

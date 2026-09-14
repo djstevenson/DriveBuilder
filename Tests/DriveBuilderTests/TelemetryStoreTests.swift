@@ -130,6 +130,48 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(replaced?.endJunctionRoad == nil)
 }
 
+@Test func journeyWithNoAnnotationsReadsBackEmpty() throws {
+    let store = TelemetryStore(path: fixtureDirectory.appending(path: "telemetry.sqlite3").path)
+    #expect(try store.annotations(journeyID: 1).isEmpty)
+}
+
+@Test func annotationsReadBackInOffsetOrder() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    var database: OpaquePointer?
+    #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
+    defer { sqlite3_close(database) }
+    #expect(
+        sqlite3_exec(
+            database,
+            """
+            INSERT INTO annotations (journey_id, video, text, offset) VALUES
+                (1, 'A27 On', 'We multiplex onto the A27.', 120.0),
+                (1, 'Start', 'We start our journey.', 30.0);
+            """,
+            nil, nil, nil) == SQLITE_OK)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    let annotations = try store.annotations(journeyID: 1)
+    // Rows come back in offset order, not insertion order.
+    #expect(annotations.map(\.video) == ["Start", "A27 On"])
+    #expect(annotations.map(\.text) == ["We start our journey.", "We multiplex onto the A27."])
+    #expect(annotations.map(\.offset) == [30.0, 120.0])
+    #expect(annotations.map(\.journeyID) == [1, 1])
+
+    // A journey with no rows of its own doesn't see another's.
+    #expect(try store.annotations(journeyID: 999_999).isEmpty)
+}
+
 @Test func throwsTelemetryNotFoundForAJourneyWithNoTelemetry() throws {
     // Copy the fixture database and add a journey row with no telemetry rows,
     // rather than mutating the checked-in fixture.
