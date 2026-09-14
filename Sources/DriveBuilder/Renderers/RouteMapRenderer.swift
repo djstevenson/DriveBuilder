@@ -532,7 +532,8 @@ struct RouteMapRenderer {
         nationalTileRenderer: any MapTileRenderer,
         to url: URL,
         frameLimit: Int? = nil,
-        concurrency: Int = ProcessInfo.processInfo.activeProcessorCount
+        concurrency: Int = ProcessInfo.processInfo.activeProcessorCount,
+        progress: RenderProgressHandler? = nil
     ) async throws {
         let artwork = try makeArtwork()
 
@@ -569,6 +570,7 @@ struct RouteMapRenderer {
         try await writer.write(
             frameCount: frameCount,
             progress: { done in
+                progress?(.fraction(Double(done) / Double(max(frameCount, 1))))
                 guard done % 100 == 0 || done == frameCount else { return }
                 FileHandle.standardError.write(Data("  \(done)/\(frameCount) frames\n".utf8))
             },

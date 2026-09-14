@@ -36,33 +36,10 @@ extension DriveBuilder {
         }
 
         mutating func run() async throws {
-            let journeyDirectory = try telemetry.journeyDirectory()
-            let outputDirectory = URL(filePath: journeyDirectory)
-                .appending(path: "output")
-            try FileManager.default.createDirectory(
-                at: outputDirectory, withIntermediateDirectories: true)
-            try FileManager.default.excludeFromBackup(outputDirectory)
-
-            var composer = FinalVideoComposer(
-                introURL: outputDirectory.appending(path: "intro.mov"),
-                routeMapURL: outputDirectory.appending(path: "telemetry/route_map.mov"),
-                dialsURL: outputDirectory.appending(path: "telemetry/dials.mov"),
-                frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
-                rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
-                outroURL: outputDirectory.appending(path: "outro.mov"))
-            let mainConfig = try MainConfig.load(journeyDirectory: journeyDirectory)
-            composer.startOffsets = mainConfig.startOffsets
-            composer.maxDriveSegmentSeconds = length
-            composer.annotationClips = try mainConfig.annotations.map { annotation in
-                guard let offset = annotation.offset else {
-                    throw ValidationError(
-                        "Annotation \"\(annotation.video)\" in main.json has no \"offset\".")
-                }
-                return FinalVideoComposer.AnnotationClip(
-                    url: outputDirectory.appending(path: "\(annotation.video).mov"),
-                    rawEndOffsetSeconds: offset)
-            }
-            try await composer.writeMovie(to: outputDirectory.appending(path: "final.mov"))
+            let renderer = JourneyRenderer(
+                journeyID: telemetry.journeyID,
+                databasePath: try TelemetryOptions.databasePath())
+            _ = try await renderer.renderFinal(driveSegmentSeconds: length)
         }
     }
 }

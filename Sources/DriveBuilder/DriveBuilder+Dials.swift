@@ -28,20 +28,12 @@ extension DriveBuilder {
         }
 
         mutating func run() async throws {
-            let records = try telemetry.load()
-            let journeyDirectory = try telemetry.journeyDirectory()
-            var progressTileRenderer = map.tileRenderer
-            progressTileRenderer.scaleFactor =
-                Double(video.mapPixelSize) / ProgressMapRenderer.designPixelSize
-
-            try await TelemetryVideoRenderer(
-                records: records,
-                dialPixelSize: video.dialPixelSize,
-                mapPixelSize: video.mapPixelSize,
-                tileRenderer: progressTileRenderer)
-                .writeMovie(
-                    to: video.outputURL(named: "dials", journeyDirectory: journeyDirectory),
-                    frameLimit: video.frameLimit)
+            var renderer = JourneyRenderer(
+                journeyID: telemetry.journeyID,
+                databasePath: try TelemetryOptions.databasePath())
+            renderer.frameLimit = video.frameLimit
+            renderer.mapDirectory = map.mapDirectory
+            _ = try await renderer.renderDials()
         }
     }
 }

@@ -2,14 +2,14 @@ import Foundation
 
 /// The journey's hand-authored `main.json`, kept in the root of the journey's
 /// data directory.
-struct MainConfig {
+package struct MainConfig {
     /// Seconds to skip at the start of each separately recorded component so
     /// they play in sync: the cameras and the telemetry logger don't all
     /// start recording at the same moment.
-    struct StartOffsets {
-        var front = 0.0
-        var rear = 0.0
-        var telemetry = 0.0
+    package struct StartOffsets {
+        package var front = 0.0
+        package var rear = 0.0
+        package var telemetry = 0.0
     }
 
     /// One scrolling annotation banner: `video` names the output movie
@@ -18,14 +18,14 @@ struct MainConfig {
     /// that file's own start offset is applied) says when it should end, for
     /// `final` to place it. `offset` is nil until the author adds it, and
     /// isn't needed just to render the banner with the `annotations` command.
-    struct Annotation {
-        var video: String
-        var text: String
-        var offset: Double?
+    package struct Annotation {
+        package var video: String
+        package var text: String
+        package var offset: Double?
     }
 
-    var startOffsets = StartOffsets()
-    var annotations: [Annotation] = []
+    package var startOffsets = StartOffsets()
+    package var annotations: [Annotation] = []
 
     private struct File: Decodable {
         struct Component: Decodable {
@@ -42,7 +42,7 @@ struct MainConfig {
 
     /// Loads `main.json` from the journey directory. A missing file just
     /// means no offsets and no annotations; a malformed one is an error.
-    static func load(journeyDirectory: String) throws -> MainConfig {
+    package static func load(journeyDirectory: String) throws -> MainConfig {
         var config = MainConfig()
         let url = URL(filePath: journeyDirectory).appending(path: "main.json")
         guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {

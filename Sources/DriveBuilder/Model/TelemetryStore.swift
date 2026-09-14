@@ -147,6 +147,59 @@ struct TelemetryStore {
         }
     }
 
+    /// A summary of every journey with its telemetry aggregates, newest
+    /// first. Journeys with no telemetry still appear, with a zero sample
+    /// count and nil timestamps.
+    func allJourneys() throws -> [JourneySummary] {
+        let database = try open(flags: SQLITE_OPEN_READONLY)
+        defer { sqlite3_close(database) }
+
+        let sql = """
+            SELECT j.id, j.title, j.road_type, j.road_number, j.source,
+                   COUNT(t.id), MIN(t.timestamp), MAX(t.timestamp),
+                   MAX(t.odometer) - MIN(t.odometer)
+            FROM journeys j
+            LEFT JOIN telemetry t ON t.journey_id = j.id
+            GROUP BY j.id
+            ORDER BY j.id DESC
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var journeys: [JourneySummary] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { break }
+            guard result == SQLITE_ROW else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            journeys.append(
+                JourneySummary(
+                    id: sqlite3_column_int64(statement, 0),
+                    title: Self.string(statement, column: 1) ?? "",
+                    roadType: Self.string(statement, column: 2) ?? "",
+                    roadNumber: Self.integer(statement, column: 3) ?? 0,
+                    directory: Self.string(statement, column: 4) ?? "",
+                    sampleCount: Self.integer(statement, column: 5) ?? 0,
+                    start: try Self.date(statement, column: 6),
+                    end: try Self.date(statement, column: 7),
+                    distanceMetres: Self.double(statement, column: 8) ?? 0))
+        }
+        return journeys
+    }
+
+    private static func date(_ statement: OpaquePointer?, column: Int32) throws -> Date? {
+        guard let raw = string(statement, column: column) else { return nil }
+        guard let date = try? Date(raw, strategy: timestampStrategy) else {
+            throw TelemetryStoreError.unparsableTimestamp(raw)
+        }
+        return date
+    }
+
     // MARK: - Writing
 
     /// The id of the journey whose source directory is `source`, if any.

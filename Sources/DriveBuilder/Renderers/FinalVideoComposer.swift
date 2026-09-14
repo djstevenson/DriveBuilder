@@ -53,6 +53,10 @@ struct FinalVideoComposer {
 
     var framesPerSecond: Int32 = 30
 
+    /// Called with the export's 0...1 fraction as it runs, for a front end's
+    /// progress bar; when nil the CLI's periodic stdout report is used instead.
+    var progressHandler: (@Sendable (Double) -> Void)?
+
     struct MissingClipError: Error, CustomStringConvertible {
         let url: URL
         var description: String {
@@ -544,15 +548,21 @@ struct FinalVideoComposer {
         session.audioMix = audioMix
 
         // A full-length export takes many minutes, so report progress
-        // periodically while it runs.
-        let states = session.states(updateInterval: 15)
+        // periodically while it runs: to the handler when a front end
+        // installed one, otherwise to stdout for the CLI.
+        let handler = progressHandler
+        let states = session.states(updateInterval: handler == nil ? 15 : 0.5)
         let monitor = Task {
             for await state in states {
                 if case .exporting(let progress) = state {
-                    print(
-                        String(
-                            format: "final: exporting, %.0f%% complete",
-                            progress.fractionCompleted * 100))
+                    if let handler {
+                        handler(progress.fractionCompleted)
+                    } else {
+                        print(
+                            String(
+                                format: "final: exporting, %.0f%% complete",
+                                progress.fractionCompleted * 100))
+                    }
                 }
             }
         }

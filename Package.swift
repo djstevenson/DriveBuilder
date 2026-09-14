@@ -8,14 +8,21 @@ let package = Package(
     platforms: [
         .macOS(.v26),
     ],
+    products: [
+        // Keeps the CLI binary named DriveBuilder (`swift run DriveBuilder ...`)
+        // even though the command definitions now live in the library target.
+        .executable(name: "DriveBuilder", targets: ["DriveBuilderCLI"]),
+        .executable(name: "DriveBuilderStudio", targets: ["DriveBuilderStudio"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
-        .executableTarget(
+        // The models, renderers, resources, and CLI command definitions,
+        // shared by the two front ends: the CLI executable and the Studio
+        // GUI. Cross-target API is marked `package`.
+        .target(
             name: "DriveBuilder",
             dependencies:  [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
@@ -33,6 +40,23 @@ let package = Package(
                 .copy("Resources/opname_gb.gpkg"),
             ],
             swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+        // Thin entry point so the package can also vend the library above.
+        .executableTarget(
+            name: "DriveBuilderCLI",
+            dependencies: ["DriveBuilder"],
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+        // The SwiftUI GUI: browse journeys and render their video components.
+        .executableTarget(
+            name: "DriveBuilderStudio",
+            dependencies: ["DriveBuilder"],
+            swiftSettings: [
+                .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("ApproachableConcurrency"),
             ],
         ),
