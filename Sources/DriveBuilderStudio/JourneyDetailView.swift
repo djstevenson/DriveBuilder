@@ -7,23 +7,47 @@ struct JourneyDetailView: View {
     let journey: JourneySummary
 
     var body: some View {
-        let tree = RenderComponent.tree(for: journey)
+        let nodes = RenderComponent.nodes(for: journey)
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding()
             Divider()
             List {
-                ComponentTreeRow(node: tree, journey: journey)
+                ForEach(nodes) { node in
+                    ComponentTreeRow(node: node, journey: journey)
+                }
             }
             if let active = model.activeRender, active.journeyID == journey.id {
                 Divider()
-                progressBar(for: active, tree: tree)
+                progressBar(for: active, nodes: nodes)
                     .padding()
             }
         }
     }
 
     private var header: some View {
+        HStack(alignment: .top) {
+            journeySummaryHeader
+            Spacer()
+            if isRenderingProject {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.trailing, 4)
+            }
+            Button("Render All") {
+                model.render(.project, journey: journey)
+            }
+            .disabled(model.isRendering)
+        }
+    }
+
+    private var isRenderingProject: Bool {
+        guard let active = model.activeRender else { return false }
+        return active.journeyID == journey.id
+            && active.componentID == RenderComponent.project.id
+    }
+
+    private var journeySummaryHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(journey.title)
@@ -68,9 +92,9 @@ struct JourneyDetailView: View {
     }
 
     private func progressBar(
-        for active: ActiveRender, tree: ComponentNode
+        for active: ActiveRender, nodes: [ComponentNode]
     ) -> some View {
-        let name = tree.allComponents
+        let name = (nodes.flatMap(\.allComponents) + [RenderComponent.project])
             .first { $0.id == active.componentID }?.name ?? "component"
         return HStack(spacing: 12) {
             switch active.progress {

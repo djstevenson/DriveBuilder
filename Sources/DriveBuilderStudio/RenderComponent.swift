@@ -28,12 +28,18 @@ struct RenderComponent: Identifiable, Equatable {
         URL(filePath: journeyDirectory).appending(path: relativePath)
     }
 
-    /// The component tree for one journey, in programme order. The root is
-    /// a "Whole project" group wrapping everything; annotation rows come
-    /// from the journey's main.json and sit in a nested group with their
-    /// own render-all. A missing or malformed main.json just means no
-    /// annotation group.
-    static func tree(for journey: JourneySummary) -> ComponentNode {
+    /// The synthetic whole-project component behind the header's Render All:
+    /// every component in programme order, then the final assembly. It has
+    /// no output file of its own — its `relativePath` only serves as a
+    /// unique ID, so it must never be stat'ed or played.
+    static let project = RenderComponent(
+        kind: .project, name: "Whole project", relativePath: "output/project")
+
+    /// The component tree for one journey, in programme order. Annotation
+    /// rows come from the journey's main.json and sit in a nested group
+    /// with their own render-all. A missing or malformed main.json just
+    /// means no annotation group.
+    static func nodes(for journey: JourneySummary) -> [ComponentNode] {
         var children: [ComponentNode] = [
             .component(
                 RenderComponent(kind: .intro, name: "Intro", relativePath: "output/intro.mov")),
@@ -69,11 +75,7 @@ struct RenderComponent: Identifiable, Equatable {
             .component(
                 RenderComponent(
                     kind: .final, name: "Final video", relativePath: "output/final.mov")))
-        return .group(
-            name: "Whole project",
-            renderAll: RenderComponent(
-                kind: .project, name: "Whole project", relativePath: "output/project"),
-            children: children)
+        return children
     }
 }
 
