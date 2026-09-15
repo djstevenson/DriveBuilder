@@ -10,6 +10,15 @@ private struct AnnotationsLoadKey: Equatable {
     let outputsVersion: Int
 }
 
+extension RouteMapLabel {
+    /// Namespaced row identity for the journey pane's List. Labels and
+    /// annotations both use their SQLite row ids, which overlap (both
+    /// count up from 1), and the List diffs rows by identity across the
+    /// whole list — equal ids make it render one row's content in the
+    /// other's place.
+    fileprivate var listRowID: String { "route-map-label-\(id)" }
+}
+
 struct JourneyDetailView: View {
     @Environment(StudioModel.self) private var model
     let journey: JourneySummary
@@ -20,6 +29,10 @@ struct JourneyDetailView: View {
     @State private var annotationToDelete: Annotation?
     @State private var deleteError: String?
     @State private var editingOffsetSource: StartOffsetSource?
+    @State private var routeMapLabels: [RouteMapLabel] = []
+    @State private var addingLabel = false
+    @State private var editingLabel: RouteMapLabel?
+    @State private var labelToDelete: RouteMapLabel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,8 +40,46 @@ struct JourneyDetailView: View {
                 .padding()
             Divider()
             List {
-                ForEach(RenderComponent.standardComponents) { component in
-                    ComponentRow(component: component, journey: journey)
+                // In their own Section: unsectioned rows at the top of a
+                // List can shift the following sections' header association
+                // on macOS, putting each header above the wrong rows.
+                Section {
+                    ForEach(RenderComponent.standardComponents) { component in
+                        ComponentRow(component: component, journey: journey)
+                    }
+                }
+                Section {
+                    if routeMapLabels.isEmpty {
+                        Text("No route map labels yet")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(routeMapLabels, id: \.listRowID) { label in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(label.title)
+                                    Text(labelDetail(label))
+                                        .font(.appCaption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Edit", systemImage: "pencil") {
+                                    editingLabel = label
+                                }
+                                Button("Delete", systemImage: "trash", role: .destructive) {
+                                    labelToDelete = label
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text("Route Map Labels")
+                        Spacer()
+                        Button("Add", systemImage: "plus") {
+                            addingLabel = true
+                        }
+                    }
                 }
                 Section {
                     if annotations.isEmpty {
@@ -93,6 +144,31 @@ struct JourneyDetailView: View {
         }
         .task(id: AnnotationsLoadKey(journeyID: journey.id, outputsVersion: model.outputsVersion)) {
             await loadAnnotations()
+            await loadRouteMapLabels()
+        }
+        .sheet(isPresented: $addingLabel) {
+            RouteMapLabelForm(journey: journey, databasePath: model.databasePath) {
+                Task { await loadRouteMapLabels() }
+            }
+        }
+        .sheet(item: $editingLabel) { label in
+            RouteMapLabelForm(journey: journey, databasePath: model.databasePath, label: label) {
+                Task { await loadRouteMapLabels() }
+            }
+        }
+        .alert(
+            "Delete route map label?",
+            isPresented: Binding(
+                get: { labelToDelete != nil },
+                set: { if !$0 { labelToDelete = nil } }),
+            presenting: labelToDelete
+        ) { label in
+            Button("Delete", role: .destructive) {
+                Task { await delete(label) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { label in
+            Text("\u{201C}\(label.title)\u{201D} will be removed from the database.")
         }
         .sheet(isPresented: $addingAnnotation) {
             AnnotationForm(journey: journey, databasePath: model.databasePath) {
@@ -150,10 +226,40 @@ struct JourneyDetailView: View {
         }
     }
 
+    private func delete(_ label: RouteMapLabel) async {
+        do {
+            try await JourneyLibrary(databasePath: model.databasePath)
+                .deleteRouteMapLabel(id: label.id)
+            await loadRouteMapLabels()
+        } catch {
+            deleteError = String(describing: error)
+        }
+    }
+
     private func loadAnnotations() async {
         annotations =
             (try? await JourneyLibrary(databasePath: model.databasePath)
                 .annotations(journeyID: journey.id)) ?? []
+    }
+
+    private func loadRouteMapLabels() async {
+        routeMapLabels =
+            (try? await JourneyLibrary(databasePath: model.databasePath)
+                .routeMapLabels(journeyID: journey.id)) ?? []
+    }
+
+    /// The label row's caption: when the sign appears, which side it sits
+    /// on, its gap from the track point when overridden, and the subtitle.
+    private func labelDetail(_ label: RouteMapLabel) -> String {
+        var parts = [SourceVideoRow.offsetText(label.offset), label.location.rawValue]
+        if let distance = label.distance {
+            parts.append(
+                "gap \(distance.formatted(.number.precision(.fractionLength(0...1))))")
+        }
+        if !label.subtitle.isEmpty {
+            parts.append(label.subtitle)
+        }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     private var header: some View {

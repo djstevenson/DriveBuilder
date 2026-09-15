@@ -51,11 +51,11 @@ struct VideoOptions: ParsableArguments {
         }
     }
 
-    /// Destination for a named dial's movie, under the journey's
-    /// `output/telemetry` directory. Creates that directory if it doesn't
-    /// exist yet, and removes any existing movie of the same name so the
-    /// render always starts from a clean slate.
+    /// Destination for a named dial's movie, under the journey's plain
+    /// `output` directory. Creates that directory if it doesn't exist yet,
+    /// and removes any existing movie of the same name so the render
+    /// always starts from a clean slate.
     func outputURL(named name: String, journeyDirectory: String) throws -> URL {
-        try JourneyRenderer.telemetryOutputURL(named: name, journeyDirectory: journeyDirectory)
+        try JourneyRenderer.namedOutputURL(named: name, journeyDirectory: journeyDirectory)
     }
 }

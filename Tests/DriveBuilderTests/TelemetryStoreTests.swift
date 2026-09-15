@@ -112,6 +112,51 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(offsets.telemetry == 62.0)
 }
 
+@Test func insertsUpdatesAndDeletesRouteMapLabels() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    #expect(try store.routeMapLabels(journeyID: 1).isEmpty)
+
+    try store.insertRouteMapLabel(
+        journeyID: 1, offset: 383.0, title: "A31 Near Ringwood",
+        subtitle: "A338/A31 multiplex", location: .left, distance: 75.0)
+    try store.insertRouteMapLabel(
+        journeyID: 1, offset: 0.0, title: "A338 Start",
+        subtitle: "", location: .right, distance: nil)
+
+    // Reads back in offset order, with the nil distance kept as nil.
+    var labels = try store.routeMapLabels(journeyID: 1)
+    #expect(labels.map(\.title) == ["A338 Start", "A31 Near Ringwood"])
+    #expect(labels[0].location == .right)
+    #expect(labels[0].distance == nil)
+    #expect(labels[1].location == .left)
+    #expect(labels[1].distance == 75.0)
+    #expect(try store.routeMapLabels(journeyID: 999).isEmpty)
+
+    try store.updateRouteMapLabel(
+        id: labels[0].id, offset: 5.0, title: "A338",
+        subtitle: "Near Bournemouth", location: .left, distance: 40.0)
+    labels = try store.routeMapLabels(journeyID: 1)
+    #expect(labels[0].title == "A338")
+    #expect(labels[0].offset == 5.0)
+    #expect(labels[0].subtitle == "Near Bournemouth")
+    #expect(labels[0].location == .left)
+    #expect(labels[0].distance == 40.0)
+
+    try store.deleteRouteMapLabel(id: labels[0].id)
+    #expect(try store.routeMapLabels(journeyID: 1).map(\.title) == ["A31 Near Ringwood"])
+}
+
 @Test func cachesAndReadsBackARoadsEndpoints() throws {
     // Copy the fixture database rather than mutating the checked-in fixture.
     let tempDirectory = FileManager.default.temporaryDirectory

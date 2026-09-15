@@ -58,8 +58,8 @@ struct RenderComponent: Identifiable, Equatable {
         RenderComponent(kind: .intro, name: "Intro", relativePath: "output/intro.mov"),
         RenderComponent(
             kind: .routeMap, name: "Route map",
-            relativePath: "output/telemetry/route_map.mov"),
-        RenderComponent(kind: .dials, name: "Dials", relativePath: "output/telemetry/dials.mov"),
+            relativePath: "output/route_map.mov"),
+        RenderComponent(kind: .dials, name: "Dials", relativePath: "output/dials.mov"),
         RenderComponent(kind: .outro, name: "Outro", relativePath: "output/outro.mov"),
         RenderComponent(kind: .final, name: "Final video", relativePath: "output/final.mov"),
     ]

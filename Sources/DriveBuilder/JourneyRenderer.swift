@@ -120,6 +120,42 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).updateStartOffset(
             journeyID: journeyID, source: source, offset: offset)
     }
+
+    /// A journey's route-map labels, in the order the animated track
+    /// reveals them. No rows just means none have been authored yet.
+    @concurrent
+    package func routeMapLabels(journeyID: Int64) async throws -> [RouteMapLabel] {
+        try TelemetryStore(path: databasePath).routeMapLabels(journeyID: journeyID)
+    }
+
+    /// Adds one route-map label for `journeyID`. A nil `distance` means
+    /// the renderer's default gap.
+    @concurrent
+    package func addRouteMapLabel(
+        journeyID: Int64, offset: Double, title: String, subtitle: String,
+        location: RouteMapLabel.Location, distance: Double?
+    ) async throws {
+        try TelemetryStore(path: databasePath).insertRouteMapLabel(
+            journeyID: journeyID, offset: offset, title: title, subtitle: subtitle,
+            location: location, distance: distance)
+    }
+
+    /// Rewrites one route-map label's fields.
+    @concurrent
+    package func updateRouteMapLabel(
+        id: Int64, offset: Double, title: String, subtitle: String,
+        location: RouteMapLabel.Location, distance: Double?
+    ) async throws {
+        try TelemetryStore(path: databasePath).updateRouteMapLabel(
+            id: id, offset: offset, title: title, subtitle: subtitle,
+            location: location, distance: distance)
+    }
+
+    /// Removes one route-map label.
+    @concurrent
+    package func deleteRouteMapLabel(id: Int64) async throws {
+        try TelemetryStore(path: databasePath).deleteRouteMapLabel(id: id)
+    }
 }
 
 /// Something needed by a render is missing or malformed (e.g. a journey
@@ -213,12 +249,12 @@ package struct JourneyRenderer: Sendable {
         }
     }
 
-    /// The combined telemetry video: `output/telemetry/dials.mov`.
+    /// The combined telemetry video: `output/dials.mov`.
     @concurrent
     package func renderDials(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
         let records = try records()
-        let journeyDirectory = try journeyDirectory()
+        let outputDirectory = try makeOutputDirectory()
         var tileRenderer = MaprenderTileRenderer(directory: URL(filePath: mapDirectory))
         tileRenderer.scaleFactor =
             Double(Self.defaultMapPixelSize) / ProgressMapRenderer.designPixelSize
@@ -228,21 +264,25 @@ package struct JourneyRenderer: Sendable {
             dialPixelSize: Self.defaultDialPixelSize,
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)
-        let url = try Self.telemetryOutputURL(named: "dials", journeyDirectory: journeyDirectory)
+        let url = outputDirectory.appending(path: "dials.mov")
         return try await write(url) {
             try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
         }
     }
 
-    /// The route overview map: `output/telemetry/route_map.mov`.
+    /// The route overview map: `output/route_map.mov`. The labels popping
+    /// in along the track come from the database's `route_map_labels`
+    /// table.
     @concurrent
-    package func renderRouteMap(
-        routeConfigPath: String? = nil, progress: RenderProgressHandler? = nil
-    ) async throws -> URL {
+    package func renderRouteMap(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
-        let journeyDirectory = try journeyDirectory()
-        let config = try Self.routeMapConfig(
-            explicitPath: routeConfigPath, journeyDirectory: journeyDirectory)
+        let outputDirectory = try makeOutputDirectory()
+        var config = RouteMapConfig()
+        config.labels = try store.routeMapLabels(journeyID: journeyID).map { label in
+            RouteMapConfig.Label(
+                offset: label.offset, title: label.title, subtitle: label.subtitle,
+                location: label.location, distance: label.distance)
+        }
 
         var tileRenderer = MaprenderTileRenderer(directory: URL(filePath: mapDirectory))
         tileRenderer.scaleFactor =
@@ -257,8 +297,7 @@ package struct JourneyRenderer: Sendable {
             records: try records(),
             tileRenderer: tileRenderer,
             config: config)
-        let url = try Self.telemetryOutputURL(
-            named: "route_map", journeyDirectory: journeyDirectory)
+        let url = outputDirectory.appending(path: "route_map.mov")
         return try await write(url) {
             try await renderer.writeMovie(
                 nationalTileRenderer: nationalTileRenderer,
@@ -325,8 +364,8 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// The assembled final video: `output/final.mov`. Requires intro.mov,
-    /// telemetry/route_map.mov, telemetry/dials.mov, outro.mov, and every
-    /// annotation banner to have been rendered already.
+    /// route_map.mov, dials.mov, outro.mov, and every annotation banner to
+    /// have been rendered already.
     ///
     /// `driveSegmentSeconds` caps the drive segment for a quick sync check,
     /// like the CLI's --length; the intro and outro still play in full.
@@ -340,8 +379,8 @@ package struct JourneyRenderer: Sendable {
 
         var composer = FinalVideoComposer(
             introURL: outputDirectory.appending(path: "intro.mov"),
-            routeMapURL: outputDirectory.appending(path: "telemetry/route_map.mov"),
-            dialsURL: outputDirectory.appending(path: "telemetry/dials.mov"),
+            routeMapURL: outputDirectory.appending(path: "route_map.mov"),
+            dialsURL: outputDirectory.appending(path: "dials.mov"),
             frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
@@ -404,40 +443,21 @@ package struct JourneyRenderer: Sendable {
 
     // MARK: - Shared paths
 
-    /// Destination for a named clip under the journey's `output/telemetry`
+    /// Destination for a named clip under the journey's plain `output`
     /// directory. Creates that directory if it doesn't exist yet, and
     /// removes any existing movie of the same name so the render always
     /// starts from a clean slate.
-    static func telemetryOutputURL(named name: String, journeyDirectory: String) throws -> URL {
+    static func namedOutputURL(named name: String, journeyDirectory: String) throws -> URL {
         let outputDirectory = URL(filePath: journeyDirectory).appending(path: "output")
-        let directory = outputDirectory.appending(path: "telemetry")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: outputDirectory, withIntermediateDirectories: true)
         try FileManager.default.excludeFromBackup(outputDirectory)
 
-        let url = directory.appending(path: "\(name).mov")
+        let url = outputDirectory.appending(path: "\(name).mov")
         if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             try FileManager.default.removeItem(at: url)
         }
         return url
-    }
-
-    /// Resolves the route-map config like the Perl pipeline: an explicit
-    /// path must exist, otherwise `route_map.json` beside the journey's
-    /// source footage is used when present, otherwise the built-in defaults.
-    static func routeMapConfig(
-        explicitPath: String?, journeyDirectory: String?
-    ) throws -> RouteMapConfig {
-        if let explicitPath {
-            return try RouteMapConfig.load(path: explicitPath)
-        }
-        if let journeyDirectory {
-            let conventional = URL(filePath: journeyDirectory).appending(path: "route_map.json")
-                .path(percentEncoded: false)
-            if FileManager.default.fileExists(atPath: conventional) {
-                return try RouteMapConfig.load(path: conventional)
-            }
-        }
-        return RouteMapConfig()
     }
 
     // MARK: - Journey lookups

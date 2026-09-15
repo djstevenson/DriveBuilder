@@ -3,23 +3,9 @@ import CoreGraphics
 import CoreText
 import Foundation
 
-/// Output size, phase timings, and labels for the route map, read from an
-/// optional JSON config file since they change from one video to the next.
-///
-/// Any section or key can be omitted to fall back to the defaults; labels
-/// default to none. Parsed as JSON5 (trailing commas etc. allowed), since
-/// this is a hand-edited file. The shape:
-///
-///     {
-///       "output": { "width": 3840, "height": 2160, "fps": 30 },
-///       "timing": { "intro": 5, "animation": 20, "outro": 5 },
-///       "labels": [
-///         {
-///           "offset": 0, "title": "...", "subtitle": "...",
-///           "location": "right", "distance": 75
-///         }
-///       ]
-///     }
+/// Output size, phase timings, and labels for the route map. The size and
+/// timings are built-in constants; the labels vary per journey and come
+/// from the database's `route_map_labels` table (see `RouteMapLabel`).
 struct RouteMapConfig: Sendable {
     var width = 3840
     var height = 2160
@@ -36,57 +22,14 @@ struct RouteMapConfig: Sendable {
 
     /// A road-sign placard revealed as the track reaches its `offset`
     /// (seconds from the start of the telemetry) and left up thereafter.
-    /// `location`/`distance` position it relative to that point.
-    struct Label: Decodable, Sendable {
-        /// Which side of the track point the sign sits on; anything else in
-        /// the hand-edited JSON is a decode error rather than silently
-        /// falling back to one side. Omitted means right.
-        enum Location: String, Decodable, Sendable {
-            case left
-            case right
-        }
-
+    /// `location`/`distance` position it relative to that point; omitted
+    /// means right, at the default gap.
+    struct Label: Sendable {
         var offset: Double
         var title: String
         var subtitle: String
-        var location: Location?
+        var location: RouteMapLabel.Location?
         var distance: Double?
-    }
-
-    /// Mirrors the file with everything optional, so a partial file
-    /// overlays the defaults per key.
-    private struct File: Decodable {
-        struct Output: Decodable {
-            var width: Int?
-            var height: Int?
-            var fps: Int32?
-        }
-        struct Timing: Decodable {
-            var intro: Double?
-            var animation: Double?
-            var outro: Double?
-        }
-        var output: Output?
-        var timing: Timing?
-        var labels: [Label]?
-    }
-
-    static func load(path: String?) throws -> RouteMapConfig {
-        var config = RouteMapConfig()
-        guard let path else { return config }
-
-        let decoder = JSONDecoder()
-        decoder.allowsJSON5 = true
-        let file = try decoder.decode(File.self, from: Data(contentsOf: URL(filePath: path)))
-
-        config.width = file.output?.width ?? config.width
-        config.height = file.output?.height ?? config.height
-        config.framesPerSecond = file.output?.fps ?? config.framesPerSecond
-        config.introSeconds = file.timing?.intro ?? config.introSeconds
-        config.animationSeconds = file.timing?.animation ?? config.animationSeconds
-        config.outroSeconds = file.timing?.outro ?? config.outroSeconds
-        config.labels = file.labels ?? []
-        return config
     }
 }
 

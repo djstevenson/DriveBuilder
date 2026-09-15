@@ -118,6 +118,151 @@ struct TelemetryStore {
         return annotations
     }
 
+    /// A journey's route-map labels, in the order the animated track
+    /// reveals them. No rows just means none have been authored yet.
+    func routeMapLabels(journeyID: Int64) throws -> [RouteMapLabel] {
+        let database = try open(flags: SQLITE_OPEN_READONLY)
+        defer { sqlite3_close(database) }
+
+        let sql = """
+            SELECT id, journey_id, offset, title, subtitle, location, distance
+            FROM route_map_labels
+            WHERE journey_id = ?
+            ORDER BY offset
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, journeyID)
+
+        var labels: [RouteMapLabel] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { break }
+            guard result == SQLITE_ROW else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            labels.append(
+                RouteMapLabel(
+                    id: sqlite3_column_int64(statement, 0),
+                    journeyID: sqlite3_column_int64(statement, 1),
+                    offset: sqlite3_column_double(statement, 2),
+                    title: Self.string(statement, column: 3) ?? "",
+                    subtitle: Self.string(statement, column: 4) ?? "",
+                    location: RouteMapLabel.Location(
+                        rawValue: Self.string(statement, column: 5) ?? "") ?? .right,
+                    distance: Self.double(statement, column: 6)))
+        }
+        return labels
+    }
+
+    /// Inserts one route-map label for `journeyID`. A nil `distance` is
+    /// stored as NULL, meaning the renderer's default gap.
+    func insertRouteMapLabel(
+        journeyID: Int64, offset: Double, title: String, subtitle: String,
+        location: RouteMapLabel.Location, distance: Double?
+    ) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database,
+                """
+                INSERT INTO route_map_labels
+                    (journey_id, offset, title, subtitle, location, distance)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, journeyID)
+        sqlite3_bind_double(statement, 2, offset)
+        sqlite3_bind_text(statement, 3, title, -1, Self.transient)
+        sqlite3_bind_text(statement, 4, subtitle, -1, Self.transient)
+        sqlite3_bind_text(statement, 5, location.rawValue, -1, Self.transient)
+        if let distance {
+            sqlite3_bind_double(statement, 6, distance)
+        } else {
+            sqlite3_bind_null(statement, 6)
+        }
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
+    /// Rewrites one route-map label's fields.
+    func updateRouteMapLabel(
+        id: Int64, offset: Double, title: String, subtitle: String,
+        location: RouteMapLabel.Location, distance: Double?
+    ) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database,
+                """
+                UPDATE route_map_labels
+                SET offset = ?, title = ?, subtitle = ?, location = ?, distance = ?
+                WHERE id = ?
+                """,
+                -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_double(statement, 1, offset)
+        sqlite3_bind_text(statement, 2, title, -1, Self.transient)
+        sqlite3_bind_text(statement, 3, subtitle, -1, Self.transient)
+        sqlite3_bind_text(statement, 4, location.rawValue, -1, Self.transient)
+        if let distance {
+            sqlite3_bind_double(statement, 5, distance)
+        } else {
+            sqlite3_bind_null(statement, 5)
+        }
+        sqlite3_bind_int64(statement, 6, id)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
+    /// Removes one route-map label.
+    func deleteRouteMapLabel(id: Int64) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database, "DELETE FROM route_map_labels WHERE id = ?", -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, id)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
     /// Inserts one annotation banner for `journeyID`. `video` must be
     /// unique within the journey — it names the output movie — so a
     /// duplicate throws `duplicateAnnotation` rather than a raw SQLite

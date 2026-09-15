@@ -64,68 +64,6 @@ private func smallConfig(labels: [RouteMapConfig.Label] = []) -> RouteMapConfig 
     #expect(RouteMapRenderer.popScale(0.8) > 1)
 }
 
-@Test func configFileOverlaysDefaultsAndAllowsRelaxedJSON() throws {
-    let path = FileManager.default.temporaryDirectory
-        .appending(path: "routemap-test-\(UUID().uuidString).json")
-    // JSON5: comment and trailing commas, and only some keys given.
-    try Data(
-        """
-        {
-          // hand-edited config
-          "output": { "width": 1920, "height": 1080, },
-          "timing": { "animation": 30, },
-          "labels": [
-            { "offset": 60, "title": "A338", "subtitle": "Salisbury", "location": "left", },
-          ],
-        }
-        """.utf8
-    ).write(to: path)
-    defer { try? FileManager.default.removeItem(at: path) }
-
-    let config = try RouteMapConfig.load(path: path.path(percentEncoded: false))
-    #expect(config.width == 1920)
-    #expect(config.height == 1080)
-    #expect(config.framesPerSecond == 30)  // default kept
-    #expect(config.introSeconds == 2.5)  // default kept
-    #expect(config.animationSeconds == 30)
-    #expect(config.labels.count == 1)
-    #expect(config.labels[0].location == .left)
-    #expect(config.labels[0].distance == nil)
-
-    let defaults = try RouteMapConfig.load(path: nil)
-    #expect(defaults.width == 3840)
-    #expect(defaults.labels.isEmpty)
-}
-
-@Test func configResolvesFromTheJourneySourceDirectory() throws {
-    let directory = FileManager.default.temporaryDirectory
-        .appending(path: "routemap-journey-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    try Data(
-        """
-        { "labels": [ { "offset": 0, "title": "A338", "subtitle": "Start" } ] }
-        """.utf8
-    ).write(to: directory.appending(path: "route_map.json"))
-
-    let options = try RouteMapOptions.parse([])
-    let journeyPath = directory.path(percentEncoded: false)
-
-    // The conventional file beside the footage is picked up automatically.
-    #expect(try options.loadConfig(journeyDirectory: journeyPath).labels.count == 1)
-    // Without a journey directory (or without the file), defaults apply.
-    #expect(try options.loadConfig(journeyDirectory: nil).labels.isEmpty)
-    #expect(
-        try options.loadConfig(journeyDirectory: "/nonexistent-\(UUID().uuidString)").labels.isEmpty)
-
-    // An explicit path always wins over the convention, and must exist.
-    let explicit = try RouteMapOptions.parse(
-        ["--route-config", "/nonexistent-\(UUID().uuidString).json"])
-    #expect(throws: (any Error).self) {
-        try explicit.loadConfig(journeyDirectory: journeyPath)
-    }
-}
-
 @Test func mapBBoxMatchesTheOutputAspect() {
     let renderer = RouteMapRenderer(
         records: testRecords(), tileRenderer: WhiteTileRenderer(), config: smallConfig())
