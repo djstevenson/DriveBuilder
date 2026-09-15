@@ -249,12 +249,12 @@ package struct JourneyRenderer: Sendable {
         }
     }
 
-    /// The combined telemetry video: `output/telemetry/dials.mov`.
+    /// The combined telemetry video: `output/dials.mov`.
     @concurrent
     package func renderDials(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
         let records = try records()
-        let journeyDirectory = try journeyDirectory()
+        let outputDirectory = try makeOutputDirectory()
         var tileRenderer = MaprenderTileRenderer(directory: URL(filePath: mapDirectory))
         tileRenderer.scaleFactor =
             Double(Self.defaultMapPixelSize) / ProgressMapRenderer.designPixelSize
@@ -264,19 +264,19 @@ package struct JourneyRenderer: Sendable {
             dialPixelSize: Self.defaultDialPixelSize,
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)
-        let url = try Self.telemetryOutputURL(named: "dials", journeyDirectory: journeyDirectory)
+        let url = outputDirectory.appending(path: "dials.mov")
         return try await write(url) {
             try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
         }
     }
 
-    /// The route overview map: `output/telemetry/route_map.mov`. The labels
-    /// popping in along the track come from the database's
-    /// `route_map_labels` table.
+    /// The route overview map: `output/route_map.mov`. The labels popping
+    /// in along the track come from the database's `route_map_labels`
+    /// table.
     @concurrent
     package func renderRouteMap(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
-        let journeyDirectory = try journeyDirectory()
+        let outputDirectory = try makeOutputDirectory()
         var config = RouteMapConfig()
         config.labels = try store.routeMapLabels(journeyID: journeyID).map { label in
             RouteMapConfig.Label(
@@ -297,8 +297,7 @@ package struct JourneyRenderer: Sendable {
             records: try records(),
             tileRenderer: tileRenderer,
             config: config)
-        let url = try Self.telemetryOutputURL(
-            named: "route_map", journeyDirectory: journeyDirectory)
+        let url = outputDirectory.appending(path: "route_map.mov")
         return try await write(url) {
             try await renderer.writeMovie(
                 nationalTileRenderer: nationalTileRenderer,
@@ -365,8 +364,8 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// The assembled final video: `output/final.mov`. Requires intro.mov,
-    /// telemetry/route_map.mov, telemetry/dials.mov, outro.mov, and every
-    /// annotation banner to have been rendered already.
+    /// route_map.mov, dials.mov, outro.mov, and every annotation banner to
+    /// have been rendered already.
     ///
     /// `driveSegmentSeconds` caps the drive segment for a quick sync check,
     /// like the CLI's --length; the intro and outro still play in full.
@@ -380,8 +379,8 @@ package struct JourneyRenderer: Sendable {
 
         var composer = FinalVideoComposer(
             introURL: outputDirectory.appending(path: "intro.mov"),
-            routeMapURL: outputDirectory.appending(path: "telemetry/route_map.mov"),
-            dialsURL: outputDirectory.appending(path: "telemetry/dials.mov"),
+            routeMapURL: outputDirectory.appending(path: "route_map.mov"),
+            dialsURL: outputDirectory.appending(path: "dials.mov"),
             frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
@@ -444,17 +443,17 @@ package struct JourneyRenderer: Sendable {
 
     // MARK: - Shared paths
 
-    /// Destination for a named clip under the journey's `output/telemetry`
+    /// Destination for a named clip under the journey's plain `output`
     /// directory. Creates that directory if it doesn't exist yet, and
     /// removes any existing movie of the same name so the render always
     /// starts from a clean slate.
-    static func telemetryOutputURL(named name: String, journeyDirectory: String) throws -> URL {
+    static func namedOutputURL(named name: String, journeyDirectory: String) throws -> URL {
         let outputDirectory = URL(filePath: journeyDirectory).appending(path: "output")
-        let directory = outputDirectory.appending(path: "telemetry")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: outputDirectory, withIntermediateDirectories: true)
         try FileManager.default.excludeFromBackup(outputDirectory)
 
-        let url = directory.appending(path: "\(name).mov")
+        let url = outputDirectory.appending(path: "\(name).mov")
         if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             try FileManager.default.removeItem(at: url)
         }
