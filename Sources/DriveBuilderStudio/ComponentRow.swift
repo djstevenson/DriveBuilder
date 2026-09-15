@@ -20,7 +20,7 @@ struct ComponentRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(component.name)
                 Text(status.summary)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(status.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
             }
             Spacer()

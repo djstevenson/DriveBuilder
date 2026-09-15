@@ -19,6 +19,7 @@ struct JourneyDetailView: View {
     @State private var editingAnnotation: Annotation?
     @State private var annotationToDelete: Annotation?
     @State private var deleteError: String?
+    @State private var editingOffsetSource: StartOffsetSource?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -50,6 +51,39 @@ struct JourneyDetailView: View {
                 } header: {
                     annotationsHeader
                 }
+                Section("Source Video and Telemetry") {
+                    SourceVideoRow(
+                        name: "Front camera",
+                        url: URL(filePath: journey.directory).appending(path: "video/front.mov"),
+                        offset: journey.frontOffset
+                    ) {
+                        editingOffsetSource = .front
+                    }
+                    SourceVideoRow(
+                        name: "Rear camera",
+                        url: URL(filePath: journey.directory).appending(path: "video/rear.mov"),
+                        offset: journey.rearOffset
+                    ) {
+                        editingOffsetSource = .rear
+                    }
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Telemetry")
+                            Text(
+                                "\(telemetryLength ?? "No telemetry") \u{00B7} "
+                                    + SourceVideoRow.offsetText(journey.telemetryOffset))
+                                .font(.appCaption)
+                                .foregroundStyle(
+                                    telemetryLength != nil
+                                        ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                        }
+                        Spacer()
+                        Button("Edit", systemImage: "pencil") {
+                            editingOffsetSource = .telemetry
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
             }
             if let active = model.activeRender, active.journeyID == journey.id {
                 Divider()
@@ -63,6 +97,11 @@ struct JourneyDetailView: View {
         .sheet(isPresented: $addingAnnotation) {
             AnnotationForm(journey: journey, databasePath: model.databasePath) {
                 Task { await loadAnnotations() }
+            }
+        }
+        .sheet(item: $editingOffsetSource) { source in
+            OffsetForm(journey: journey, databasePath: model.databasePath, source: source) {
+                Task { await model.reload() }
             }
         }
         .sheet(item: $editingAnnotation) { annotation in
@@ -161,17 +200,17 @@ struct JourneyDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(journey.title)
-                    .font(.title2.bold())
+                    .font(.appTitle2.bold())
                 Text(journey.roadName)
-                    .font(.headline)
+                    .font(.appHeadline)
                     .foregroundStyle(.secondary)
             }
             Text(summaryLine)
-                .font(.callout)
+                .font(.appCallout)
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 Text(journey.directory)
-                    .font(.caption.monospaced())
+                    .font(.appCaption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -180,9 +219,17 @@ struct JourneyDetailView: View {
                         [URL(filePath: journey.directory)])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(.appCaption)
             }
         }
+    }
+
+    /// The span of the journey's telemetry samples, from the database's
+    /// start/end timestamps, in the same format as the video lengths.
+    private var telemetryLength: String? {
+        guard let start = journey.start, let end = journey.end else { return nil }
+        return Duration.seconds(end.timeIntervalSince(start))
+            .formatted(.time(pattern: .hourMinuteSecond))
     }
 
     private var summaryLine: String {

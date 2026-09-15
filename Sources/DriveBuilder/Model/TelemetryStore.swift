@@ -265,6 +265,21 @@ struct TelemetryStore {
         }
     }
 
+    /// The journey's per-source synchronisation offsets, as recorded in
+    /// `journeys.front_offset`/`rear_offset`/`telemetry_offset`, for the
+    /// final composition to line up the separately started recordings.
+    func journeyStartOffsets(journeyID: Int64) throws -> StartOffsets? {
+        try fetchJourneyRow(
+            journeyID: journeyID,
+            sql: "SELECT front_offset, rear_offset, telemetry_offset FROM journeys WHERE id = ?"
+        ) { statement in
+            StartOffsets(
+                front: Self.double(statement, column: 0) ?? 0,
+                rear: Self.double(statement, column: 1) ?? 0,
+                telemetry: Self.double(statement, column: 2) ?? 0)
+        }
+    }
+
     /// The journey's road, as recorded by the capture pipeline in
     /// `journeys.road_type`/`journeys.road_number`, e.g. ("A", 338); nil if
     /// either column is missing, rather than letting SQLite's NULL-as-zero
@@ -292,7 +307,8 @@ struct TelemetryStore {
         let sql = """
             SELECT j.id, j.title, j.road_type, j.road_number, j.source,
                    COUNT(t.id), MIN(t.timestamp), MAX(t.timestamp),
-                   MAX(t.odometer) - MIN(t.odometer)
+                   MAX(t.odometer) - MIN(t.odometer),
+                   j.front_offset, j.rear_offset, j.telemetry_offset
             FROM journeys j
             LEFT JOIN telemetry t ON t.journey_id = j.id
             GROUP BY j.id
@@ -322,7 +338,10 @@ struct TelemetryStore {
                     sampleCount: Self.integer(statement, column: 5) ?? 0,
                     start: try Self.date(statement, column: 6),
                     end: try Self.date(statement, column: 7),
-                    distanceMetres: Self.double(statement, column: 8) ?? 0))
+                    distanceMetres: Self.double(statement, column: 8) ?? 0,
+                    frontOffset: Self.double(statement, column: 9) ?? 0,
+                    rearOffset: Self.double(statement, column: 10) ?? 0,
+                    telemetryOffset: Self.double(statement, column: 11) ?? 0))
         }
         return journeys
     }
@@ -336,6 +355,35 @@ struct TelemetryStore {
     }
 
     // MARK: - Writing
+
+    /// Sets one of the journey's synchronisation offsets, in seconds. The
+    /// column name comes from the enum's fixed raw values, never from user
+    /// input, so interpolating it into the SQL is safe.
+    func updateStartOffset(
+        journeyID: Int64, source: StartOffsetSource, offset: Double
+    ) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database,
+                "UPDATE journeys SET \(source.rawValue) = ? WHERE id = ?",
+                -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_double(statement, 1, offset)
+        sqlite3_bind_int64(statement, 2, journeyID)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
 
     /// The id of the journey whose source directory is `source`, if any.
     func journeyID(source: String) throws -> Int64? {

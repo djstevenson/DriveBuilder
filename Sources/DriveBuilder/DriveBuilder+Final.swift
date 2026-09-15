@@ -11,7 +11,7 @@ extension DriveBuilder {
                 + "directory) with the rear-view camera (video/rear.mov) inset near the "
                 + "top-left and the dial column (dials.mov) composited on top, right-"
                 + "aligned, and that into the outro. Per-component start offsets from the "
-                + "journey's main.json bring the separately started recordings into sync, "
+                + "journey's database row bring the separately started recordings into sync, "
                 + "and the drive segment runs for whichever of the three is shortest "
                 + "after its offset. Annotation banners (the database's \"annotations\" "
                 + "table, already rendered by the annotations command) composite over the "

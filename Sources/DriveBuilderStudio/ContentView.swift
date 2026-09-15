@@ -65,17 +65,17 @@ struct JourneyRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(journey.title)
-                .font(.headline)
+                .font(.appHeadline)
                 .lineLimit(1)
             HStack(spacing: 6) {
                 Text(journey.roadName)
-                    .font(.caption.bold())
+                    .font(.appCaption.bold())
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
                 if let start = journey.start {
                     Text(start, format: .dateTime.day().month().year())
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
             }

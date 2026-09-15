@@ -43,7 +43,7 @@ struct AnnotationForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(annotation == nil ? "New Annotation" : "Edit Annotation")
-                .font(.headline)
+                .font(.appHeadline)
             Form {
                 TextField("Video name", text: $video, prompt: Text("e.g. A27 On"))
                     .help("Names the output movie: output/<name>.mov")
@@ -57,7 +57,7 @@ struct AnnotationForm: View {
             }
             if let saveError {
                 Text(saveError)
-                    .font(.callout)
+                    .font(.appCallout)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }

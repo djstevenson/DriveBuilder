@@ -25,8 +25,33 @@ package struct JourneySummary: Identifiable, Sendable {
     package let start: Date?
     package let end: Date?
     package let distanceMetres: Double
+    /// Synchronisation offsets, in seconds, for lining up the separately
+    /// captured sources. Display-only for now: the render pipeline does
+    /// not read these yet.
+    package let frontOffset: Double
+    package let rearOffset: Double
+    package let telemetryOffset: Double
 
     package var roadName: String { "\(roadType)\(roadNumber)" }
+
+    /// The stored offset for one synchronisation source.
+    package func startOffset(_ source: StartOffsetSource) -> Double {
+        switch source {
+        case .front: frontOffset
+        case .rear: rearOffset
+        case .telemetry: telemetryOffset
+        }
+    }
+}
+
+/// One of the journey's three synchronisation-offset columns; the raw value
+/// is the `journeys` column that stores it.
+package enum StartOffsetSource: String, Sendable, Identifiable {
+    case front = "front_offset"
+    case rear = "rear_offset"
+    case telemetry = "telemetry_offset"
+
+    package var id: String { rawValue }
 }
 
 /// Read access to the journeys a front end can list.
@@ -86,10 +111,19 @@ package struct JourneyLibrary: Sendable {
     package func deleteAnnotation(id: Int64) async throws {
         try TelemetryStore(path: databasePath).deleteAnnotation(id: id)
     }
+
+    /// Sets one of the journey's synchronisation offsets, in seconds.
+    @concurrent
+    package func updateStartOffset(
+        journeyID: Int64, source: StartOffsetSource, offset: Double
+    ) async throws {
+        try TelemetryStore(path: databasePath).updateStartOffset(
+            journeyID: journeyID, source: source, offset: offset)
+    }
 }
 
-/// Something needed by a render is missing or malformed (a journey column,
-/// a main.json field); the render never started.
+/// Something needed by a render is missing or malformed (e.g. a journey
+/// column); the render never started.
 package struct RenderSetupError: Error, CustomStringConvertible {
     package let message: String
     package var description: String { message }
@@ -311,7 +345,7 @@ package struct JourneyRenderer: Sendable {
             frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
-        composer.startOffsets = try MainConfig.load(journeyDirectory: journeyDirectory).startOffsets
+        composer.startOffsets = try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets()
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
         composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
             FinalVideoComposer.AnnotationClip(
