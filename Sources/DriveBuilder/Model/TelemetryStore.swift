@@ -8,6 +8,7 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
     case journeyNotFound(journeyID: Int64)
     case telemetryNotFound(journeyID: Int64)
     case duplicateAnnotation(video: String)
+    case duplicateJourney(source: String)
 
     var description: String {
         switch self {
@@ -23,6 +24,8 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
             "Telemetry not found: journey \(journeyID) exists but has no telemetry data"
         case .duplicateAnnotation(let video):
             "An annotation named \"\(video)\" already exists for this journey"
+        case .duplicateJourney(let source):
+            "A journey with source directory \"\(source)\" already exists"
         }
     }
 }
@@ -572,6 +575,93 @@ struct TelemetryStore {
         return sqlite3_column_int64(statement, 0)
     }
 
+    /// Inserts a journey row with no telemetry yet, returning its id. The
+    /// synchronisation offsets keep their 0.0 defaults; the offset editor
+    /// fills them in later.
+    func insertJourney(
+        source: String, roadType: String, roadNumber: Int, title: String
+    ) throws -> Int64 {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        return try insertJourneyRow(
+            database, source: source, roadType: roadType, roadNumber: roadNumber, title: title)
+    }
+
+    /// Rewrites a journey's descriptive fields, leaving the
+    /// synchronisation offsets alone. Like inserting, the new `source`
+    /// must stay unique, so a clash throws `duplicateJourney`.
+    func updateJourney(
+        id: Int64, source: String, roadType: String, roadNumber: Int, title: String
+    ) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database,
+                "UPDATE journeys SET source = ?, road_type = ?, road_number = ?, title = ? "
+                    + "WHERE id = ?",
+                -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, source, -1, Self.transient)
+        sqlite3_bind_text(statement, 2, roadType, -1, Self.transient)
+        sqlite3_bind_int64(statement, 3, Int64(roadNumber))
+        sqlite3_bind_text(statement, 4, title, -1, Self.transient)
+        sqlite3_bind_int64(statement, 5, id)
+
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_DONE else {
+            if result == SQLITE_CONSTRAINT {
+                throw TelemetryStoreError.duplicateJourney(source: source)
+            }
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
+    /// Removes a journey and its telemetry, annotations, and route-map
+    /// labels in one transaction. The deletes are explicit rather than
+    /// relying on the schema's cascades: foreign keys aren't enforced
+    /// without PRAGMA foreign_keys, and route_map_labels has no cascade
+    /// anyway. Rendered output on disk stays put.
+    func deleteJourney(id: Int64) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        try execute(database, "BEGIN IMMEDIATE")
+        do {
+            for sql in [
+                "DELETE FROM route_map_labels WHERE journey_id = ?",
+                "DELETE FROM annotations WHERE journey_id = ?",
+                "DELETE FROM telemetry WHERE journey_id = ?",
+                "DELETE FROM journeys WHERE id = ?",
+            ] {
+                var statement: OpaquePointer?
+                guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                    throw TelemetryStoreError.queryFailed(
+                        message: Self.lastErrorMessage(database))
+                }
+                defer { sqlite3_finalize(statement) }
+
+                sqlite3_bind_int64(statement, 1, id)
+                guard sqlite3_step(statement) == SQLITE_DONE else {
+                    throw TelemetryStoreError.queryFailed(
+                        message: Self.lastErrorMessage(database))
+                }
+            }
+            try execute(database, "COMMIT")
+        } catch {
+            try? execute(database, "ROLLBACK")
+            throw error
+        }
+    }
+
     /// Inserts a journey and all its telemetry in one transaction,
     /// returning the new journey's id.
     func insertJourney(
@@ -616,7 +706,13 @@ struct TelemetryStore {
         sqlite3_bind_int64(statement, 3, Int64(roadNumber))
         sqlite3_bind_text(statement, 4, title, -1, Self.transient)
 
-        guard sqlite3_step(statement) == SQLITE_DONE else {
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_DONE else {
+            // The only constraint reachable here is UNIQUE (source):
+            // every other column is bound non-null.
+            if result == SQLITE_CONSTRAINT {
+                throw TelemetryStoreError.duplicateJourney(source: source)
+            }
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
         }
         return sqlite3_last_insert_rowid(database)

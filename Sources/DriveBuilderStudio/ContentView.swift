@@ -4,6 +4,8 @@ import SwiftUI
 struct ContentView: View {
     @Environment(StudioModel.self) private var model
 
+    @State private var showingNewJourney = false
+
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
@@ -11,6 +13,23 @@ struct ContentView: View {
                 JourneyRow(journey: journey)
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 280)
+            // In the sidebar column so these land in the sidebar section
+            // of the window toolbar: they act on the journeys list, not
+            // the selected journey.
+            .toolbar {
+                ToolbarItem {
+                    Button("New journey", systemImage: "plus") {
+                        showingNewJourney = true
+                    }
+                    .help("Add a journey to the database.")
+                }
+                ToolbarItem {
+                    Button("Reload", systemImage: "arrow.clockwise") {
+                        Task { await model.reload() }
+                    }
+                    .help("Re-read the journeys database and the output files on disk.")
+                }
+            }
             .overlay {
                 if let loadError = model.loadError {
                     ContentUnavailableView(
@@ -37,14 +56,16 @@ struct ContentView: View {
                         "Render only the first 300 frames of a clip (and a 30-second "
                             + "drive segment for the final video), for a quick check.")
             }
-            ToolbarItem {
-                Button("Reload", systemImage: "arrow.clockwise") {
-                    Task { await model.reload() }
-                }
-                .help("Re-read the journeys database and the output files on disk.")
-            }
         }
         .task { await model.reload() }
+        .sheet(isPresented: $showingNewJourney) {
+            JourneyForm(databasePath: model.databasePath) { journeyID in
+                Task {
+                    await model.reload()
+                    model.selectedJourneyID = journeyID
+                }
+            }
+        }
         .alert(
             "Render failed",
             isPresented: Binding(
