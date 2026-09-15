@@ -29,6 +29,8 @@ struct JourneyDetailView: View {
     @State private var annotationToDelete: Annotation?
     @State private var deleteError: String?
     @State private var editingOffsetSource: StartOffsetSource?
+    @State private var editingJourney = false
+    @State private var confirmingJourneyDelete = false
     @State private var routeMapLabels: [RouteMapLabel] = []
     @State private var addingLabel = false
     @State private var editingLabel: RouteMapLabel?
@@ -175,6 +177,22 @@ struct JourneyDetailView: View {
                 Task { await loadAnnotations() }
             }
         }
+        .sheet(isPresented: $editingJourney) {
+            JourneyForm(databasePath: model.databasePath, journey: journey) { _ in
+                Task { await model.reload() }
+            }
+        }
+        .alert("Delete journey?", isPresented: $confirmingJourneyDelete) {
+            Button("Delete", role: .destructive) {
+                Task { await deleteJourney() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "\u{201C}\(journey.title)\u{201D} and its telemetry, annotations, and "
+                    + "route map labels will be removed from the database. Source videos "
+                    + "and rendered output on disk stay put.")
+        }
         .sheet(item: $editingOffsetSource) { source in
             OffsetForm(journey: journey, databasePath: model.databasePath, source: source) {
                 Task { await model.reload() }
@@ -204,7 +222,7 @@ struct JourneyDetailView: View {
                     + "Its rendered movie, if any, stays on disk.")
         }
         .alert(
-            "Could not delete annotation",
+            "Could not delete",
             isPresented: Binding(
                 get: { deleteError != nil },
                 set: { if !$0 { deleteError = nil } }),
@@ -213,6 +231,18 @@ struct JourneyDetailView: View {
             Button("OK", role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+    }
+
+    private func deleteJourney() async {
+        do {
+            try await JourneyLibrary(databasePath: model.databasePath)
+                .deleteJourney(id: journey.id)
+            // Reload moves the sidebar selection to the newest remaining
+            // journey, since this one's id is gone.
+            await model.reload()
+        } catch {
+            deleteError = String(describing: error)
         }
     }
 
@@ -266,6 +296,15 @@ struct JourneyDetailView: View {
         HStack(alignment: .top) {
             journeySummaryHeader
             Spacer()
+            Button("Edit", systemImage: "pencil") {
+                editingJourney = true
+            }
+            .help("Edit the journey's source directory, road, and title.")
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                confirmingJourneyDelete = true
+            }
+            .help("Delete the journey from the database.")
+            .disabled(model.isRendering)
             if isRendering(.project) {
                 ProgressView()
                     .controlSize(.small)

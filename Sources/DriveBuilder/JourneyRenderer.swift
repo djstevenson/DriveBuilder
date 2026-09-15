@@ -156,6 +156,38 @@ package struct JourneyLibrary: Sendable {
     package func deleteRouteMapLabel(id: Int64) async throws {
         try TelemetryStore(path: databasePath).deleteRouteMapLabel(id: id)
     }
+
+    /// Adds a journey row with no telemetry yet, returning its id. The
+    /// synchronisation offsets keep their 0.0 defaults. Throws
+    /// `TelemetryStoreError.duplicateJourney` if `source` already names a
+    /// journey.
+    @concurrent
+    package func addJourney(
+        source: String, roadType: String, roadNumber: Int, title: String
+    ) async throws -> Int64 {
+        try TelemetryStore(path: databasePath).insertJourney(
+            source: source, roadType: roadType, roadNumber: roadNumber, title: title)
+    }
+
+    /// Rewrites a journey's descriptive fields, leaving the
+    /// synchronisation offsets alone. Throws
+    /// `TelemetryStoreError.duplicateJourney` if the new `source` clashes
+    /// with another journey.
+    @concurrent
+    package func updateJourney(
+        id: Int64, source: String, roadType: String, roadNumber: Int, title: String
+    ) async throws {
+        try TelemetryStore(path: databasePath).updateJourney(
+            id: id, source: source, roadType: roadType, roadNumber: roadNumber, title: title)
+    }
+
+    /// Removes a journey and its telemetry, annotations, and route-map
+    /// labels in one transaction. Rendered output and source videos on
+    /// disk stay put.
+    @concurrent
+    package func deleteJourney(id: Int64) async throws {
+        try TelemetryStore(path: databasePath).deleteJourney(id: id)
+    }
 }
 
 /// Something needed by a render is missing or malformed (e.g. a journey
