@@ -356,6 +356,35 @@ struct TelemetryStore {
 
     // MARK: - Writing
 
+    /// Sets one of the journey's synchronisation offsets, in seconds. The
+    /// column name comes from the enum's fixed raw values, never from user
+    /// input, so interpolating it into the SQL is safe.
+    func updateStartOffset(
+        journeyID: Int64, source: StartOffsetSource, offset: Double
+    ) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database,
+                "UPDATE journeys SET \(source.rawValue) = ? WHERE id = ?",
+                -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_double(statement, 1, offset)
+        sqlite3_bind_int64(statement, 2, journeyID)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
     /// The id of the journey whose source directory is `source`, if any.
     func journeyID(source: String) throws -> Int64? {
         let database = try open(flags: SQLITE_OPEN_READONLY)

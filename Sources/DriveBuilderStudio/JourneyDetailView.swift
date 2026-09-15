@@ -19,6 +19,7 @@ struct JourneyDetailView: View {
     @State private var editingAnnotation: Annotation?
     @State private var annotationToDelete: Annotation?
     @State private var deleteError: String?
+    @State private var editingOffsetSource: StartOffsetSource?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -54,20 +55,32 @@ struct JourneyDetailView: View {
                     SourceVideoRow(
                         name: "Front camera",
                         url: URL(filePath: journey.directory).appending(path: "video/front.mov"),
-                        offset: journey.frontOffset)
+                        offset: journey.frontOffset
+                    ) {
+                        editingOffsetSource = .front
+                    }
                     SourceVideoRow(
                         name: "Rear camera",
                         url: URL(filePath: journey.directory).appending(path: "video/rear.mov"),
-                        offset: journey.rearOffset)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Telemetry")
-                        Text(
-                            "\(telemetryLength ?? "No telemetry") \u{00B7} "
-                                + SourceVideoRow.offsetText(journey.telemetryOffset))
-                            .font(.appCaption)
-                            .foregroundStyle(
-                                telemetryLength != nil
-                                    ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                        offset: journey.rearOffset
+                    ) {
+                        editingOffsetSource = .rear
+                    }
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Telemetry")
+                            Text(
+                                "\(telemetryLength ?? "No telemetry") \u{00B7} "
+                                    + SourceVideoRow.offsetText(journey.telemetryOffset))
+                                .font(.appCaption)
+                                .foregroundStyle(
+                                    telemetryLength != nil
+                                        ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                        }
+                        Spacer()
+                        Button("Edit", systemImage: "pencil") {
+                            editingOffsetSource = .telemetry
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -84,6 +97,11 @@ struct JourneyDetailView: View {
         .sheet(isPresented: $addingAnnotation) {
             AnnotationForm(journey: journey, databasePath: model.databasePath) {
                 Task { await loadAnnotations() }
+            }
+        }
+        .sheet(item: $editingOffsetSource) { source in
+            OffsetForm(journey: journey, databasePath: model.databasePath, source: source) {
+                Task { await model.reload() }
             }
         }
         .sheet(item: $editingAnnotation) { annotation in

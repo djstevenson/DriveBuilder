@@ -20,6 +20,8 @@ struct SourceVideoRow: View {
     let url: URL
     /// The journey's synchronisation offset for this source, in seconds.
     let offset: Double
+    /// Opens the offset-editing sheet for this source.
+    let onEditOffset: () -> Void
 
     @State private var details: String?
 
@@ -27,12 +29,18 @@ struct SourceVideoRow: View {
         let status = FileStatus(url: url)
         let fileDetails = status.exists ? (details ?? "Loading\u{2026}") : "Missing"
 
-        VStack(alignment: .leading, spacing: 2) {
-            Text(name)
-            Text("\(fileDetails) \u{00B7} \(Self.offsetText(offset))")
-                .font(.appCaption)
-                .foregroundStyle(
-                    status.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                Text("\(fileDetails) \u{00B7} \(Self.offsetText(offset))")
+                    .font(.appCaption)
+                    .foregroundStyle(
+                        status.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+            }
+            Spacer()
+            Button("Edit", systemImage: "pencil") {
+                onEditOffset()
+            }
         }
         .padding(.vertical, 4)
         .task(id: SourceVideoLoadKey(url: url, outputsVersion: model.outputsVersion)) {

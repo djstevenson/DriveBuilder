@@ -84,6 +84,34 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(records[1].odometer == 12.3)
 }
 
+@Test func updatesEachStartOffsetIndependently() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    var offsets = try #require(try store.journeyStartOffsets(journeyID: 1))
+    #expect(offsets.front == 0)
+    #expect(offsets.rear == 0)
+    #expect(offsets.telemetry == 0)
+
+    try store.updateStartOffset(journeyID: 1, source: .front, offset: 34.0)
+    try store.updateStartOffset(journeyID: 1, source: .rear, offset: 34.5)
+    try store.updateStartOffset(journeyID: 1, source: .telemetry, offset: 62.0)
+
+    offsets = try #require(try store.journeyStartOffsets(journeyID: 1))
+    #expect(offsets.front == 34.0)
+    #expect(offsets.rear == 34.5)
+    #expect(offsets.telemetry == 62.0)
+}
+
 @Test func cachesAndReadsBackARoadsEndpoints() throws {
     // Copy the fixture database rather than mutating the checked-in fixture.
     let tempDirectory = FileManager.default.temporaryDirectory
