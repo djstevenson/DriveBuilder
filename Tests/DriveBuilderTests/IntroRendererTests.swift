@@ -9,9 +9,12 @@ private func colour(_ frame: NSBitmapImageRep, _ x: Int, _ y: Int) -> NSColor? {
     frame.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
 }
 
-private func isTransparent(_ colour: NSColor?) -> Bool {
+/// True if `colour` is fully opaque but not one of the sign's own colours -
+/// i.e. a pixel of the full-bleed background image (dark backdrop or pale
+/// line-art stroke) showing where the sign isn't drawn.
+private func isBackground(_ colour: NSColor?) -> Bool {
     guard let colour else { return false }
-    return colour.alphaComponent < 0.01
+    return colour.alphaComponent > 0.99 && !isGreen(colour) && !isWhite(colour)
 }
 
 private func isGreen(_ colour: NSColor?, alpha: Double = 1) -> Bool {
@@ -103,7 +106,7 @@ private func hasInk(
     let frame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
 
     // y=1052 is 4x the design sign's vertical centre (263).
-    #expect(isTransparent(colour(frame, 40, 1052)))
+    #expect(isBackground(colour(frame, 40, 1052)))
     #expect(isGreen(colour(frame, 108, 1052)))
     #expect(isGreen(colour(frame, 1680, 1052)))
 }
@@ -134,22 +137,36 @@ private func hasInk(
     }
 }
 
-@Test func firstFadeInFrameIsFullyTransparent() throws {
+@Test func firstFadeInFrameShowsOnlyTheBackgroundImage() throws {
     let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     let artwork = try renderer.makeArtwork()
     let frame = try renderer.frame(at: 0, artwork: artwork)
 
-    #expect(isTransparent(colour(frame, 420, 160)))
-    #expect(isTransparent(colour(frame, 27, 160)))
+    // The sign is at alpha 0, so both these points - one where its green
+    // interior will be, one where its outer green ring will be - show the
+    // opaque background image instead.
+    #expect(isBackground(colour(frame, 420, 160)))
+    #expect(isBackground(colour(frame, 27, 160)))
 }
 
-@Test func midFadeInFrameIsPartiallyTransparent() throws {
+@Test func midFadeInFrameBlendsTheBadgeOverTheBackground() throws {
     let renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
     let artwork = try renderer.makeArtwork()
-    // Frame 5 of 10 fade-in frames: fraction 5/9.
-    let frame = try renderer.frame(at: 5, artwork: artwork)
+    // Frame 5 of 10 fade-in frames: the badge at alpha 5/9 over the opaque
+    // background, so the frame stays fully opaque and the colour lands 5/9
+    // of the way from the background pixel (sampled from frame 0, where the
+    // badge is still at alpha 0) to the badge's green.
+    let background = try #require(colour(renderer.frame(at: 0, artwork: artwork), 420, 160))
+    let blended = try #require(colour(renderer.frame(at: 5, artwork: artwork), 420, 160))
 
-    #expect(isGreen(colour(frame, 420, 160), alpha: 5.0 / 9.0))
+    let fraction = 5.0 / 9.0
+    #expect(abs(blended.alphaComponent - 1) < 0.02)
+    #expect(abs(blended.redComponent - background.redComponent * (1 - fraction)) < 0.05)
+    #expect(
+        abs(
+            blended.greenComponent
+                - (background.greenComponent * (1 - fraction) + 0.502 * fraction)) < 0.05)
+    #expect(abs(blended.blueComponent - background.blueComponent * (1 - fraction)) < 0.05)
 }
 
 @Test func openBadgeShowsNestedGreenWhiteGreenBands() throws {
@@ -158,13 +175,13 @@ private func hasInk(
     // Last fade-in frame: fully opaque badge, no text yet.
     let frame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
 
-    #expect(isTransparent(colour(frame, 10, 160)))
+    #expect(isBackground(colour(frame, 10, 160)))
     #expect(isGreen(colour(frame, 27, 160)))
     #expect(isWhite(colour(frame, 35, 160)))
     #expect(isGreen(colour(frame, 420, 160)))
     #expect(isWhite(colour(frame, 805, 160)))
     #expect(isGreen(colour(frame, 813, 160)))
-    #expect(isTransparent(colour(frame, 830, 160)))
+    #expect(isBackground(colour(frame, 830, 160)))
 }
 
 @Test func openBadgeShowsNeitherTheDestinationsNorTheCreditLine() throws {
@@ -249,10 +266,10 @@ private func hasInk(
 
     // The visible sign's outer edge sits 30px in from the canvas edge on
     // both the top and the bottom, since it's centred rather than pinned
-    // near the top.
-    #expect(isTransparent(colour(frame, 420, 20)))
+    // near the top; the background image shows in the margins.
+    #expect(isBackground(colour(frame, 420, 20)))
     #expect(isGreen(colour(frame, 420, 32)))
-    #expect(isTransparent(colour(frame, 420, 506)))
+    #expect(isBackground(colour(frame, 420, 506)))
     #expect(isGreen(colour(frame, 420, 494)))
 }
 

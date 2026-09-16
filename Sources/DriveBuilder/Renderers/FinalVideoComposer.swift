@@ -276,8 +276,13 @@ struct FinalVideoComposer {
 
         // Core Animation supplies a transparent synthetic track containing a
         // soft shadow shaped to the rear inset. The footage is composited
-        // immediately above it.
+        // immediately above it. The layer mutations run inside an explicit
+        // CATransaction: this method runs off the main thread, where an
+        // implicit transaction would be left uncommitted when the thread
+        // exits (and aborts outright under
+        // CA_ASSERT_MAIN_THREAD_TRANSACTIONS).
         let rearShadowTrackID: CMPersistentTrackID = 0x53484457
+        CATransaction.begin()
         let shadowCanvas = CALayer()
         shadowCanvas.frame = CGRect(origin: .zero, size: renderSize)
         let rearShadow = CALayer()
@@ -292,6 +297,7 @@ struct FinalVideoComposer {
         rearShadow.shadowOffset = CGSize(width: 12, height: -12)
         rearShadow.shadowPath = CGPath(rect: rearShadow.bounds, transform: nil)
         shadowCanvas.addSublayer(rearShadow)
+        CATransaction.commit()
         let shadowAnimationTool = AVVideoCompositionCoreAnimationTool(
             additionalLayer: shadowCanvas, asTrackID: rearShadowTrackID)
 

@@ -31,6 +31,8 @@ let package = Package(
             resources: [
                 // .copy preserves the per-dial folder structure; .process would flatten it.
                 .copy("Resources/SVG"),
+                // Bitmap artwork, e.g. the intro/outro background image.
+                .copy("Resources/Images"),
                 // The one telemetry database for every journey, checked into the
                 // repo rather than passed in on the command line.
                 .copy("Resources/telemetry.sqlite3"),

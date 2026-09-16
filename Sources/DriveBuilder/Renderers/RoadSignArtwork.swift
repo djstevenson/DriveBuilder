@@ -141,6 +141,27 @@ struct RoadSignArtwork {
     private var fontSize: Double { Self.designFontSize * scale }
     private var font: NSFont { NSFont.transport(size: fontSize) }
 
+    /// The bundled image drawn behind the sign by both the intro and the
+    /// outro, filling the whole canvas.
+    static let backgroundImageName = "gr-yaris-line-art"
+
+    /// Draws `image` scaled to fill the whole canvas - preserving its aspect
+    /// ratio and cropping the overflow equally on both sides - behind
+    /// everything else, so every frame is fully opaque.
+    func drawBackground(_ image: CGImage, into context: CGContext) {
+        let canvasWidth = Double(width)
+        let canvasHeight = Double(height)
+        let fillScale = max(
+            canvasWidth / Double(image.width), canvasHeight / Double(image.height))
+        let fillWidth = Double(image.width) * fillScale
+        let fillHeight = Double(image.height) * fillScale
+        context.draw(
+            image,
+            in: CGRect(
+                x: (canvasWidth - fillWidth) / 2, y: (canvasHeight - fillHeight) / 2,
+                width: fillWidth, height: fillHeight))
+    }
+
     /// The three nested rounded rects that reproduce the SVG template's
     /// two-stroke-plus-fill look: a green ring, a white ring inset from it,
     /// then the green fill on top, all filled rather than stroked so their
