@@ -10,6 +10,9 @@ struct JourneyForm: View {
     let databasePath: String
     /// The journey being edited; nil means the form creates a new one.
     let journey: JourneySummary?
+    /// Pre-fills the source field when creating a new journey, e.g. from
+    /// a folder dropped on the sidebar. Ignored when editing.
+    let initialSource: String
     /// Runs after a successful save with the saved journey's id, so the
     /// sidebar can reload and select it.
     let onSave: (Int64) -> Void
@@ -24,13 +27,14 @@ struct JourneyForm: View {
     private static let roadTypes = ["M", "A", "B"]
 
     init(
-        databasePath: String, journey: JourneySummary? = nil,
+        databasePath: String, journey: JourneySummary? = nil, initialSource: String = "",
         onSave: @escaping (Int64) -> Void
     ) {
         self.databasePath = databasePath
         self.journey = journey
+        self.initialSource = initialSource
         self.onSave = onSave
-        _source = State(initialValue: journey?.directory ?? "")
+        _source = State(initialValue: journey?.directory ?? initialSource)
         _roadType = State(initialValue: journey?.roadType ?? "A")
         _roadNumberText = State(initialValue: journey.map { String($0.roadNumber) } ?? "")
         _title = State(initialValue: journey?.title ?? "")
