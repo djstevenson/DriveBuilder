@@ -12,7 +12,9 @@ import Foundation
 /// destination lines (split from the journey's "X to Y" title) fade in with
 /// the spin, and a credit line fades in below those a little after the
 /// final road is revealed. The whole sign is centred both horizontally and
-/// vertically on the canvas; the area outside it stays transparent.
+/// vertically on the canvas, over a full-bleed background image (the bundled
+/// car line art, aspect-filled to cover the whole canvas), so every frame is
+/// fully opaque.
 ///
 /// The badge's shape, bands, fonts, and colours live in `RoadSignArtwork`,
 /// shared with `OutroRenderer` so the outro's starting frame matches this
@@ -95,14 +97,16 @@ struct IntroRenderer {
         RoadSignArtwork.splitTitle(title)
     }
 
-    /// Precomputed once and reused across frames: the bare badge with no
-    /// credit line, road number, or destinations (used while fading in, and
-    /// as the base for every spin frame, since the number and destinations
-    /// there change every frame), and the sign with the real road number and
-    /// destinations added on top but the credit line still absent (used
-    /// unchanged for the reveal, until the credit line fades in on top of it
-    /// part-way through and stays for the rest of the clip).
+    /// Precomputed once and reused across frames: the full-bleed background
+    /// image drawn behind everything, the bare badge with no credit line,
+    /// road number, or destinations (used while fading in, and as the base
+    /// for every spin frame, since the number and destinations there change
+    /// every frame), and the sign with the real road number and destinations
+    /// added on top but the credit line still absent (used unchanged for the
+    /// reveal, until the credit line fades in on top of it part-way through
+    /// and stays for the rest of the clip).
     struct Artwork {
+        let background: CGImage
         let blankBadge: CGImage
         let revealed: CGImage
         /// One entry per spin frame, picked from `spinEntries`; empty if
@@ -112,6 +116,8 @@ struct IntroRenderer {
 
     func makeArtwork() throws -> Artwork {
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+
+        let background = try BundledArtwork.image(RoadSignArtwork.backgroundImageName)
 
         let blankBadgeContext = try LayerCompositor.bitmapContext(width: width, height: height)
         sign.drawBadge(into: blankBadgeContext)
@@ -129,14 +135,17 @@ struct IntroRenderer {
 
         let spinSequence = (0..<Self.spinFrames).compactMap { _ in spinEntries.randomElement() }
 
-        return Artwork(blankBadge: blankBadge, revealed: revealed, spinSequence: spinSequence)
+        return Artwork(
+            background: background, blankBadge: blankBadge, revealed: revealed,
+            spinSequence: spinSequence)
     }
 
     // MARK: - Drawing
 
-    /// Draws frame `index` into `context`: the sign fading in, the spin,
-    /// then the reveal - held for the rest of the clip, with the credit
-    /// line fading in on top of it partway through.
+    /// Draws frame `index` into `context`: the background image, then the
+    /// sign fading in over it, the spin, then the reveal - held for the rest
+    /// of the clip, with the credit line fading in on top of it partway
+    /// through.
     ///
     /// The spin's digits (and, when `artwork.spinSequence` isn't empty, its
     /// destinations) are drawn fresh for every frame, directly into
@@ -149,6 +158,8 @@ struct IntroRenderer {
     func draw(frameIndex: Int, into context: CGContext, artwork: Artwork) {
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+
+        sign.drawBackground(artwork.background, into: context)
 
         if frameIndex < Self.fadeInFrames {
             let fraction = Double(frameIndex) / Double(Self.fadeInFrames - 1)

@@ -9,7 +9,10 @@ import Foundation
 /// holds for a few seconds before the road number and both destination
 /// lines cross-fade to "Bye...", "Thanks for", and "Watching". The credit
 /// line then fades out on its own, and the sign holds like that (no credit,
-/// the sign-off text in place) for the rest of the clip.
+/// the sign-off text in place) for the rest of the clip. The sign sits over
+/// the same full-bleed background image (the bundled car line art,
+/// aspect-filled to cover the whole canvas) as the intro's, so every frame
+/// is fully opaque.
 ///
 /// The badge's shape, bands, fonts, and colours live in `RoadSignArtwork`,
 /// shared with `IntroRenderer` so this starting frame matches that one's
@@ -58,18 +61,21 @@ struct OutroRenderer {
     /// `roadType` followed by `roadNumber`, e.g. "A" and `3088` -> "A3088".
     var roadText: String { "\(roadType)\(roadNumber)" }
 
-    /// Precomputed once and reused across frames: the badge with the real
-    /// road number and destinations (as `IntroRenderer` ends on), and the
-    /// badge with the sign-off text instead - both without the credit line,
-    /// which every frame draws separately on top so it can fade out on its
-    /// own.
+    /// Precomputed once and reused across frames: the full-bleed background
+    /// image drawn behind everything, the badge with the real road number
+    /// and destinations (as `IntroRenderer` ends on), and the badge with the
+    /// sign-off text instead - both without the credit line, which every
+    /// frame draws separately on top so it can fade out on its own.
     struct Artwork {
+        let background: CGImage
         let original: CGImage
         let signOff: CGImage
     }
 
     func makeArtwork() throws -> Artwork {
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+
+        let background = try BundledArtwork.image(RoadSignArtwork.backgroundImageName)
 
         let badgeContext = try LayerCompositor.bitmapContext(width: width, height: height)
         sign.drawBadge(into: badgeContext)
@@ -93,14 +99,14 @@ struct OutroRenderer {
             throw SVGRasterizerError.contextUnavailable
         }
 
-        return Artwork(original: original, signOff: signOff)
+        return Artwork(background: background, original: original, signOff: signOff)
     }
 
     // MARK: - Drawing
 
-    /// Draws frame `index` into `context`: the real reveal held, then
-    /// cross-fading to the sign-off text, then the credit line fading out,
-    /// then a final hold.
+    /// Draws frame `index` into `context`: the background image, then the
+    /// real reveal held over it, then cross-fading to the sign-off text,
+    /// then the credit line fading out, then a final hold.
     ///
     /// The road number and destinations cross-fade by drawing both fully
     /// opaque images on top of one another at complementary alpha, the same
@@ -111,6 +117,8 @@ struct OutroRenderer {
     func draw(frameIndex: Int, into context: CGContext, artwork: Artwork) {
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+
+        sign.drawBackground(artwork.background, into: context)
 
         let textChangeStart = Self.initialHoldFrames
         let textChangeEnd = textChangeStart + Self.textChangeFrames
