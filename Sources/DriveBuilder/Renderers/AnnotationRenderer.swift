@@ -3,18 +3,16 @@ import CoreGraphics
 import CoreText
 import Foundation
 
-/// Builds one annotation banner: two green lines rise together from below
-/// the frame's bottom edge, the lower one stopping just above it while the
-/// upper one continues to the top of the band, revealing a translucent dark
-/// band between them; text scrolls across right to left, and the whole thing
-/// reverses back down once the text has fully scrolled off. Everything
-/// outside the band is transparent. With `showsBorderLines` off, the band
-/// alone rises and falls, without the green lines.
+/// Builds one annotation banner: a translucent dark band rises up from the
+/// frame's bottom edge, text scrolls across it right to left, and the band
+/// sinks back down once the text has fully scrolled off. Everything outside
+/// the band is transparent.
 ///
 /// A port of the Perl pipeline's `DriveBuilder::Video::Annotation`, with the
-/// text colour changed from white to yellow and the open/close animation
-/// re-anchored to rise from the bottom edge (the Perl opened from the
-/// centre).
+/// text colour changed from white to yellow, the green boundary lines
+/// dropped, the background made translucent to match the telemetry dials,
+/// and the open/close animation re-anchored to rise from the bottom edge
+/// (the Perl opened from the centre).
 struct AnnotationRenderer {
     static let dialName = "Annotation"
 
@@ -22,44 +20,25 @@ struct AnnotationRenderer {
 
     var width = 3840
 
-    /// Height of the fully open band, including both boundary lines.
-    var bandHeight = 160
-
-    /// Transparent rows kept below the band: the resting gap between the
-    /// anchored bottom line and the video's bottom edge, which the lines
-    /// rise through on their way in. Without the lines there's nothing to
-    /// rise through, so the band sits on the bottom edge. The final
-    /// composition places the clip flush with the video's bottom edge, so
-    /// the clip's own bottom row is the video's.
-    var bottomInset: Int { showsBorderLines ? 10 : 0 }
-
-    /// The movie frame height: the band plus the inset it rises through.
-    var height: Int { bandHeight + bottomInset }
+    /// Height of the fully open band, which is also the movie frame height.
+    /// The final composition places the clip flush with the video's bottom
+    /// edge, so the band sits on it.
+    var height = 160
 
     var framesPerSecond: Int32 = 30
 
-    /// Whether to draw the green lines along the band's top and bottom.
-    /// When off, the band's background fills the rows they would occupy.
-    var showsBorderLines = false
-
-    /// Seconds for the lines to open before, and close after, the scroll.
+    /// Seconds for the band to open before, and close after, the scroll.
     static let openSeconds = 0.7
     static let closeSeconds = 0.7
 
     /// How fast the text scrolls, in pixels per second.
     static let scrollSpeed = 540.0
 
-    /// Thickness of each green boundary line: 4 rows at 4K, so the lines
-    /// survive as a clear 1 px when the video is watched at 1080p.
-    static let lineHeight = 4
-
     /// Horizontal padding either side of the text's ink.
     static let textPadding = 24.0
 
     static let fontSize = 92.0
 
-    static let borderColour = CGColor(
-        srgbRed: 0.0, green: 0x99 / 255, blue: 0.0, alpha: 1)
     /// Matches the telemetry dials' background, so a hint of the main video
     /// shows through the band.
     static let backgroundColour = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
@@ -100,8 +79,8 @@ struct AnnotationRenderer {
         Double(width + Self.textWidth(of: textLine)) / Self.scrollSpeed
     }
 
-    /// One extra frame is intentional: after the two green lines meet at the
-    /// end, it gives a fully transparent frame before the movie ends.
+    /// One extra frame is intentional: after the band closes at the end, it
+    /// gives a fully transparent frame before the movie ends.
     var frameCount: Int {
         let duration = Self.openSeconds + scrollSeconds + Self.closeSeconds
         return Int((duration * Double(framesPerSecond)).rounded(.up)) + 1
@@ -113,13 +92,13 @@ struct AnnotationRenderer {
         let line = textLine
         let textWidth = Self.textWidth(of: line)
 
-        let context = try LayerCompositor.bitmapContext(width: textWidth, height: bandHeight)
+        let context = try LayerCompositor.bitmapContext(width: textWidth, height: height)
 
         // Centre the glyphs' actual ink vertically in the band, rather
         // than the font's ascent/descent metrics - for some fonts (e.g.
         // Transport) those don't match where the glyphs are actually drawn.
         let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
-        let baselineY = (Double(bandHeight) - ink.height) / 2 - ink.minY
+        let baselineY = (Double(height) - ink.height) / 2 - ink.minY
 
         context.textPosition = CGPoint(
             x: Self.textPadding - min(ink.minX, 0), y: baselineY)
@@ -133,8 +112,8 @@ struct AnnotationRenderer {
 
     // MARK: - Drawing
 
-    /// Draws frame `index` into `context`: opening lines, then the scroll
-    /// with the banner fully open, then closing lines, then one fully
+    /// Draws frame `index` into `context`: opening band, then the scroll
+    /// with the band fully open, then closing band, then one fully
     /// transparent frame.
     func draw(frameIndex: Int, into context: CGContext, artwork: Artwork) {
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
@@ -143,79 +122,34 @@ struct AnnotationRenderer {
         let scrollSeconds = Double(width + artwork.textWidth) / Self.scrollSpeed
 
         if t < Self.openSeconds {
-            drawBanner(progress: t / Self.openSeconds, into: context)
+            drawBand(progress: t / Self.openSeconds, into: context)
         } else if t < Self.openSeconds + scrollSeconds {
-            drawBanner(progress: 1, into: context)
+            drawBand(progress: 1, into: context)
             let x = Double(width) - (t - Self.openSeconds) * Self.scrollSpeed
-            drawText(artwork, x: x, into: context)
+            context.draw(
+                artwork.textImage,
+                in: CGRect(
+                    x: x, y: 0, width: Double(artwork.textWidth), height: Double(height)))
         } else if t < Self.openSeconds + scrollSeconds + Self.closeSeconds {
             let closeT = t - Self.openSeconds - scrollSeconds
-            drawBanner(progress: max(0, 1 - closeT / Self.closeSeconds), into: context)
+            drawBand(progress: max(0, 1 - closeT / Self.closeSeconds), into: context)
         }
         // else: leave the final frame completely transparent.
     }
 
-    /// The banner `progress` of the way open. Both lines rise together at
-    /// one constant speed from just below the frame's bottom edge (0): the
-    /// bottom line stops when it reaches its resting row above the inset,
-    /// while the top line carries on to the top of the band (1), with the
-    /// background filling the gap once they separate. Closing runs the same path in
-    /// reverse: the top line descends, collects the bottom line, and both
-    /// sink back off the bottom edge.
+    /// The band `progress` of the way open: its top edge rises at constant
+    /// speed from the frame's bottom edge (0) to the top of the frame (1),
+    /// and closing runs the same path in reverse.
     ///
-    /// Positions are integer pixels: at 30 fps the lines move several pixels
-    /// per frame anyway, and integer boundaries avoid partially transparent
-    /// antialiased rows at the edge of the alpha banner.
-    private func drawBanner(progress: Double, into context: CGContext) {
+    /// The top edge is an integer row: at 30 fps it moves several pixels per
+    /// frame anyway, and an integer boundary avoids a partially transparent
+    /// antialiased row at the edge of the alpha banner.
+    private func drawBand(progress: Double, into context: CGContext) {
         let progress = min(1, max(0, progress))
-        let lineHeight = Self.lineHeight
-
-        // Top-left-origin rows. At progress 0 the top line's first row is
-        // `height` — one past the canvas's last row, so entirely below the
-        // video's bottom edge and invisible.
-        let topLineY = Int((Double(height) * (1 - progress)).rounded())
-        let bottomLineRest = height - bottomInset - lineHeight
-        let bottomLineY = max(topLineY, bottomLineRest)
-
-        // The background appears only between the two lines - or, without
-        // them, across the rows they would have covered too.
-        let backgroundY = showsBorderLines ? topLineY + lineHeight : topLineY
-        let backgroundEnd = showsBorderLines ? bottomLineY : bottomLineY + lineHeight
-        if backgroundEnd > backgroundY {
-            context.setFillColor(Self.backgroundColour)
-            context.fill(rect(top: backgroundY, height: backgroundEnd - backgroundY))
-        }
-
-        guard showsBorderLines else { return }
-        context.setFillColor(Self.borderColour)
-        context.fill(rect(top: topLineY, height: lineHeight))
-        // While the lines rise together they occupy the same pixels, so the
-        // second rectangle is harmless and keeps opening and closing
-        // symmetrical.
-        context.fill(rect(top: bottomLineY, height: lineHeight))
-    }
-
-    /// The cached text image at horizontal offset `x`, clipped to the band
-    /// so the scroll never paints over the green boundary lines.
-    private func drawText(_ artwork: Artwork, x: Double, into context: CGContext) {
-        context.saveGState()
-        // The band's interior: between the top line and the bottom line's
-        // resting position, both `lineHeight` tall - or the whole band
-        // without them.
-        let lineRows = showsBorderLines ? Self.lineHeight : 0
-        context.clip(to: rect(top: lineRows, height: bandHeight - 2 * lineRows))
-        context.draw(
-            artwork.textImage,
-            in: CGRect(
-                x: x, y: Double(bottomInset),
-                width: Double(artwork.textWidth), height: Double(bandHeight)))
-        context.restoreGState()
-    }
-
-    /// A full-width band `rowCount` rows tall whose top edge is `top` rows
-    /// below the banner's top, converted to the context's bottom-left origin.
-    private func rect(top: Int, height rowCount: Int) -> CGRect {
-        CGRect(x: 0, y: height - top - rowCount, width: width, height: rowCount)
+        let bandHeight = Int((Double(height) * progress).rounded())
+        guard bandHeight > 0 else { return }
+        context.setFillColor(Self.backgroundColour)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: bandHeight))
     }
 
     // MARK: - Movie
