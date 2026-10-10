@@ -5,10 +5,11 @@ import Foundation
 
 /// Builds one annotation banner: two green lines rise together from below
 /// the frame's bottom edge, the lower one stopping just above it while the
-/// upper one continues to the top of the band, revealing a black band
-/// between them; text scrolls across right to left, and the whole thing
+/// upper one continues to the top of the band, revealing a translucent dark
+/// band between them; text scrolls across right to left, and the whole thing
 /// reverses back down once the text has fully scrolled off. Everything
-/// outside the band is transparent.
+/// outside the band is transparent. With `showsBorderLines` off, the band
+/// alone rises and falls, without the green lines.
 ///
 /// A port of the Perl pipeline's `DriveBuilder::Video::Annotation`, with the
 /// text colour changed from white to yellow and the open/close animation
@@ -26,15 +27,20 @@ struct AnnotationRenderer {
 
     /// Transparent rows kept below the band: the resting gap between the
     /// anchored bottom line and the video's bottom edge, which the lines
-    /// rise through on their way in. The final composition places the clip
-    /// flush with the video's bottom edge, so the clip's own bottom row is
-    /// the video's.
-    static let bottomInset = 10
+    /// rise through on their way in. Without the lines there's nothing to
+    /// rise through, so the band sits on the bottom edge. The final
+    /// composition places the clip flush with the video's bottom edge, so
+    /// the clip's own bottom row is the video's.
+    var bottomInset: Int { showsBorderLines ? 10 : 0 }
 
     /// The movie frame height: the band plus the inset it rises through.
-    var height: Int { bandHeight + Self.bottomInset }
+    var height: Int { bandHeight + bottomInset }
 
     var framesPerSecond: Int32 = 30
+
+    /// Whether to draw the green lines along the band's top and bottom.
+    /// When off, the band's background fills the rows they would occupy.
+    var showsBorderLines = false
 
     /// Seconds for the lines to open before, and close after, the scroll.
     static let openSeconds = 0.7
@@ -54,7 +60,9 @@ struct AnnotationRenderer {
 
     static let borderColour = CGColor(
         srgbRed: 0.0, green: 0x99 / 255, blue: 0.0, alpha: 1)
-    static let backgroundColour = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+    /// Matches the telemetry dials' background, so a hint of the main video
+    /// shows through the band.
+    static let backgroundColour = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
     static let textColour = CGColor(srgbRed: 1, green: 1, blue: 0, alpha: 1)
 
     static var font: NSFont { NSFont.transport(size: fontSize) }
@@ -150,8 +158,8 @@ struct AnnotationRenderer {
     /// The banner `progress` of the way open. Both lines rise together at
     /// one constant speed from just below the frame's bottom edge (0): the
     /// bottom line stops when it reaches its resting row above the inset,
-    /// while the top line carries on to the top of the band (1), with black
-    /// filling the gap once they separate. Closing runs the same path in
+    /// while the top line carries on to the top of the band (1), with the
+    /// background filling the gap once they separate. Closing runs the same path in
     /// reverse: the top line descends, collects the bottom line, and both
     /// sink back off the bottom edge.
     ///
@@ -166,17 +174,19 @@ struct AnnotationRenderer {
         // `height` — one past the canvas's last row, so entirely below the
         // video's bottom edge and invisible.
         let topLineY = Int((Double(height) * (1 - progress)).rounded())
-        let bottomLineRest = height - Self.bottomInset - lineHeight
+        let bottomLineRest = height - bottomInset - lineHeight
         let bottomLineY = max(topLineY, bottomLineRest)
 
-        // Black appears only between the two green lines.
-        let blackY = topLineY + lineHeight
-        let blackHeight = bottomLineY - blackY
-        if blackHeight > 0 {
+        // The background appears only between the two lines - or, without
+        // them, across the rows they would have covered too.
+        let backgroundY = showsBorderLines ? topLineY + lineHeight : topLineY
+        let backgroundEnd = showsBorderLines ? bottomLineY : bottomLineY + lineHeight
+        if backgroundEnd > backgroundY {
             context.setFillColor(Self.backgroundColour)
-            context.fill(rect(top: blackY, height: blackHeight))
+            context.fill(rect(top: backgroundY, height: backgroundEnd - backgroundY))
         }
 
+        guard showsBorderLines else { return }
         context.setFillColor(Self.borderColour)
         context.fill(rect(top: topLineY, height: lineHeight))
         // While the lines rise together they occupy the same pixels, so the
@@ -185,18 +195,19 @@ struct AnnotationRenderer {
         context.fill(rect(top: bottomLineY, height: lineHeight))
     }
 
-    /// The cached text image at horizontal offset `x`, clipped so the scroll
-    /// never paints over the green boundary lines.
+    /// The cached text image at horizontal offset `x`, clipped to the band
+    /// so the scroll never paints over the green boundary lines.
     private func drawText(_ artwork: Artwork, x: Double, into context: CGContext) {
         context.saveGState()
         // The band's interior: between the top line and the bottom line's
-        // resting position, both `lineHeight` tall.
-        context.clip(
-            to: rect(top: Self.lineHeight, height: bandHeight - 2 * Self.lineHeight))
+        // resting position, both `lineHeight` tall - or the whole band
+        // without them.
+        let lineRows = showsBorderLines ? Self.lineHeight : 0
+        context.clip(to: rect(top: lineRows, height: bandHeight - 2 * lineRows))
         context.draw(
             artwork.textImage,
             in: CGRect(
-                x: x, y: Double(Self.bottomInset),
+                x: x, y: Double(bottomInset),
                 width: Double(artwork.textWidth), height: Double(bandHeight)))
         context.restoreGState()
     }
