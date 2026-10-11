@@ -3,26 +3,34 @@ import CoreGraphics
 import CoreText
 import Foundation
 
-/// Builds one annotation banner: a translucent dark band rises up from the
-/// frame's bottom edge, text scrolls across it right to left, and the band
-/// sinks back down once the text has fully scrolled off. Everything outside
-/// the band is transparent.
+/// Builds one annotation banner: a translucent dark band widens leftwards
+/// out of its right edge, text scrolls across it right to left, and once
+/// the text has fully scrolled off the band's right edge sweeps leftwards
+/// too, collapsing it into its left edge - so every movement runs right to
+/// left. Everything outside the band is transparent.
+///
+/// The movie is exactly the fully open band, which the final composition
+/// places in the bottom-left corner, flush with the main footage's left
+/// edge and `rightMargin` short of the dial column, as if on the column's
+/// grid.
 ///
 /// A port of the Perl pipeline's `DriveBuilder::Video::Annotation`, with the
 /// text colour changed from white to yellow, the green boundary lines
 /// dropped, the background made translucent to match the telemetry dials,
-/// and the open/close animation re-anchored to rise from the bottom edge
-/// (the Perl opened from the centre).
+/// and the banner opening sideways rather than vertically.
 struct AnnotationRenderer {
     static let dialName = "Annotation"
 
     let text: String
 
-    var width = 3840
+    /// The dial column's grid gap: the band's distance from the dial column.
+    static let rightMargin = TelemetryVideoRenderer.defaultGap
 
-    /// Height of the fully open band, which is also the movie frame height.
-    /// The final composition places the clip flush with the video's bottom
-    /// edge, so the band sits on it.
+    /// Width of the fully open band, which is also the movie frame width:
+    /// the 3840 px final frame less the dial column and the margin before it.
+    var width = 3840 - TelemetryVideoRenderer.defaultMapPixelSize - rightMargin
+
+    /// Height of the band, which is also the movie frame height.
     var height = 160
 
     var framesPerSecond: Int32 = 30
@@ -122,34 +130,44 @@ struct AnnotationRenderer {
         let scrollSeconds = Double(width + artwork.textWidth) / Self.scrollSpeed
 
         if t < Self.openSeconds {
-            drawBand(progress: t / Self.openSeconds, into: context)
+            // The left edge sweeps in from the right.
+            let left = width - column(at: t / Self.openSeconds)
+            drawBand(from: left, to: width, into: context)
         } else if t < Self.openSeconds + scrollSeconds {
-            drawBand(progress: 1, into: context)
+            drawBand(from: 0, to: width, into: context)
             let x = Double(width) - (t - Self.openSeconds) * Self.scrollSpeed
             context.draw(
                 artwork.textImage,
                 in: CGRect(
                     x: x, y: 0, width: Double(artwork.textWidth), height: Double(height)))
         } else if t < Self.openSeconds + scrollSeconds + Self.closeSeconds {
+            // The right edge follows it out to the left.
             let closeT = t - Self.openSeconds - scrollSeconds
-            drawBand(progress: max(0, 1 - closeT / Self.closeSeconds), into: context)
+            let right = width - column(at: closeT / Self.closeSeconds)
+            drawBand(from: 0, to: right, into: context)
         }
         // else: leave the final frame completely transparent.
     }
 
-    /// The band `progress` of the way open: its top edge rises at constant
-    /// speed from the frame's bottom edge (0) to the top of the frame (1),
-    /// and closing runs the same path in reverse.
+    /// How far a moving edge has travelled, in whole columns, `progress`
+    /// (clamped to 0...1) of the way through its animation. Eased in and
+    /// out with smoothstep, so each edge starts slowly, speeds up, and
+    /// settles into place rather than stopping dead.
     ///
-    /// The top edge is an integer row: at 30 fps it moves several pixels per
-    /// frame anyway, and an integer boundary avoids a partially transparent
-    /// antialiased row at the edge of the alpha banner.
-    private func drawBand(progress: Double, into context: CGContext) {
-        let progress = min(1, max(0, progress))
-        let bandHeight = Int((Double(height) * progress).rounded())
-        guard bandHeight > 0 else { return }
+    /// The edges are integer columns: mid-animation they move many pixels
+    /// per frame anyway, and integer boundaries avoid partially transparent
+    /// antialiased columns at the edges of the alpha banner.
+    private func column(at progress: Double) -> Int {
+        let p = min(1, max(0, progress))
+        let eased = p * p * (3 - 2 * p)
+        return Int((Double(width) * eased).rounded())
+    }
+
+    /// The band, full height, across columns `left..<right`.
+    private func drawBand(from left: Int, to right: Int, into context: CGContext) {
+        guard right > left else { return }
         context.setFillColor(Self.backgroundColour)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: bandHeight))
+        context.fill(CGRect(x: left, y: 0, width: right - left, height: height))
     }
 
     // MARK: - Movie

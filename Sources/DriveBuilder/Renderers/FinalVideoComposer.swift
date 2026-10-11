@@ -57,8 +57,8 @@ struct FinalVideoComposer {
         let rawEndOffsetSeconds: Double
     }
 
-    /// Annotations to composite over the drive segment, bottom-aligned,
-    /// each ending at its own `rawEndOffsetSeconds`.
+    /// Annotations to composite over the drive segment, in the frame's
+    /// bottom-left corner, each ending at its own `rawEndOffsetSeconds`.
     var annotationClips: [AnnotationClip] = []
 
     var framesPerSecond: Int32 = 30
@@ -89,10 +89,9 @@ struct FinalVideoComposer {
         case fill
         /// Native size, its top-left corner at the given frame offset.
         case pinned(x: Double, y: Double)
-        /// Scaled to match the frame's width (keeping aspect), flush with
-        /// the bottom edge — for the annotation banners, whose canvases
-        /// carry their own bottom inset and rise-from-below animation.
-        case fitWidthBottom
+        /// Native size, in the frame's bottom-left corner — for the
+        /// annotation banners.
+        case pinnedBottomLeading
     }
 
     /// One instruction still under construction: a time range and its
@@ -312,12 +311,9 @@ struct FinalVideoComposer {
             switch placement {
             case .pinned(let x, let y):
                 placementTransform = CGAffineTransform(translationX: x, y: y)
-            case .fitWidthBottom:
-                let scale = renderSize.width / clip.naturalSize.width
-                let scaledHeight = clip.naturalSize.height * scale
+            case .pinnedBottomLeading:
                 placementTransform = CGAffineTransform(
-                    translationX: 0, y: renderSize.height - scaledHeight
-                ).scaledBy(x: scale, y: scale)
+                    translationX: 0, y: renderSize.height - clip.naturalSize.height)
             case .fitCentred, .fitTrailing, .fill:
                 let scale: Double
                 if case .fill = placement {
@@ -491,7 +487,9 @@ struct FinalVideoComposer {
             phases = result
         }
 
-        // Annotations composite over the drive segment, bottom-aligned, each
+        // Annotations composite over the drive segment, in the bottom-left
+        // corner (the banner's own width stops it a grid gap short of the
+        // dial column, whose bottom map also finishes on the bottom edge), each
         // ending at its own offset (from the annotations table, adjusted here from
         // "since the start of raw front.mov" to the synced drive-segment
         // timeline) and playing through its own built-in
@@ -518,7 +516,7 @@ struct FinalVideoComposer {
             try annotationTrack.insertTimeRange(
                 CMTimeRange(start: .zero, duration: clip.duration), of: clip.track, at: start)
             insertOverlay(
-                layerInstruction(track: annotationTrack, clip: clip, placement: .fitWidthBottom),
+                layerInstruction(track: annotationTrack, clip: clip, placement: .pinnedBottomLeading),
                 over: CMTimeRange(start: start, end: end))
         }
 
