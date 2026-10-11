@@ -48,15 +48,21 @@ private func isTransparent(_ colour: NSColor?) -> Bool {
         #expect(isTransparent(colour(first, x, y)))
     }
 
-    // Partway open (frame 10, progress 10/21): the band is 3114 * 10/21,
-    // rounded: 1483 px wide, anchored right at columns 1631-3113, full
-    // height.
+    // Partway open (frame 10, progress p = 10/21, eased to
+    // p² (3 - 2p) ≈ 0.4643): the band is 3114 * 0.4643, rounded: 1446 px
+    // wide, anchored right at columns 1668-3113, full height.
     let opening = try renderer.frame(at: 10, artwork: artwork)
     for y in [0, 80, 159] {
-        #expect(isTransparent(colour(opening, 1630, y)))
-        #expect(isBackground(colour(opening, 1631, y)))
+        #expect(isTransparent(colour(opening, 1667, y)))
+        #expect(isBackground(colour(opening, 1668, y)))
         #expect(isBackground(colour(opening, 3113, y)))
     }
+
+    // Eased: the second frame has moved the edge only a few columns
+    // (3114 * smoothstep(1/21) ≈ 21), where constant speed would be 148.
+    let second = try renderer.frame(at: 1, artwork: artwork)
+    #expect(isBackground(colour(second, 3113 - 15, 80)))
+    #expect(isTransparent(colour(second, 3113 - 30, 80)))
 }
 
 @Test func bandCollapsesIntoItsLeftEdge() throws {

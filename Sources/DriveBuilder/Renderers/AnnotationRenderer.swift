@@ -150,13 +150,17 @@ struct AnnotationRenderer {
     }
 
     /// How far a moving edge has travelled, in whole columns, `progress`
-    /// (clamped to 0...1) of the way across the frame at constant speed.
+    /// (clamped to 0...1) of the way through its animation. Eased in and
+    /// out with smoothstep, so each edge starts slowly, speeds up, and
+    /// settles into place rather than stopping dead.
     ///
-    /// The edges are integer columns: at 30 fps they move many pixels per
-    /// frame anyway, and integer boundaries avoid partially transparent
+    /// The edges are integer columns: mid-animation they move many pixels
+    /// per frame anyway, and integer boundaries avoid partially transparent
     /// antialiased columns at the edges of the alpha banner.
     private func column(at progress: Double) -> Int {
-        Int((Double(width) * min(1, max(0, progress))).rounded())
+        let p = min(1, max(0, progress))
+        let eased = p * p * (3 - 2 * p)
+        return Int((Double(width) * eased).rounded())
     }
 
     /// The band, full height, across columns `left..<right`.
