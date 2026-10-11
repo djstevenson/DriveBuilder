@@ -44,10 +44,17 @@ struct TelemetryVideoRenderer {
     /// with the un-expanded records.
     var progressMapZoomed: ProgressMapZoomedRenderer
 
+    static let defaultDialPixelSize = 345
+    static let defaultMapPixelSize = 708
+
+    /// `gap` at the default sizes, for layouts elsewhere (the annotation
+    /// banners) that line up with the dial column's grid.
+    static let defaultGap = defaultMapPixelSize - 2 * defaultDialPixelSize
+
     init(
         records: [TelemetryRecord],
-        dialPixelSize: Int = 345,
-        mapPixelSize: Int = 708,
+        dialPixelSize: Int = defaultDialPixelSize,
+        mapPixelSize: Int = defaultMapPixelSize,
         tileRenderer: any MapTileRenderer
     ) {
         self.records = records
