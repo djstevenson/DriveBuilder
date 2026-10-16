@@ -112,6 +112,29 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(offsets.telemetry == 62.0)
 }
 
+@Test func setsAndClearsJourneyLength() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    #expect(try store.journeyLength(journeyID: 1) == nil)
+
+    try store.updateLength(journeyID: 1, length: 2400.5)
+    #expect(try store.journeyLength(journeyID: 1) == 2400.5)
+    #expect(try store.allJourneys().first { $0.id == 1 }?.length == 2400.5)
+
+    try store.updateLength(journeyID: 1, length: nil)
+    #expect(try store.journeyLength(journeyID: 1) == nil)
+}
+
 @Test func insertsUpdatesAndDeletesRouteMapLabels() throws {
     // Copy the fixture database rather than mutating the checked-in fixture.
     let tempDirectory = FileManager.default.temporaryDirectory

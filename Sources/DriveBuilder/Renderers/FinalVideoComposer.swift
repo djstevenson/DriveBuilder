@@ -40,6 +40,13 @@ struct FinalVideoComposer {
     /// sync; the telemetry offset applies to the dials clip rendered from it.
     var startOffsets = StartOffsets()
 
+    /// The drive segment's length in seconds (the journey's `length`
+    /// column), measured from the synced start. Every drive-segment source
+    /// must have at least this much left after its start offset, or the
+    /// composition fails. `nil` runs the drive segment for whichever source
+    /// is shortest, truncating the others to match.
+    var driveSegmentLength: Double?
+
     /// Caps the drive segment (dials/footage/rear-view) to at most this many
     /// seconds, for a quick test render while checking sync — e.g. the first
     /// 30 seconds — rather than the whole journey. The intro and outro
@@ -176,7 +183,18 @@ struct FinalVideoComposer {
                 message: "The journey's start offset for \(empty.0) skips the whole clip.")
         }
         var dialsSegmentDuration = driveClips.map(\.1).min()!
-        if driveClips.contains(where: { $0.1 != dialsSegmentDuration }) {
+        if let driveSegmentLength {
+            let length = CMTime(seconds: driveSegmentLength, preferredTimescale: timescale)
+            if let short = driveClips.first(where: { $0.1 < length }) {
+                throw CompositionError(
+                    message: String(
+                        format: "The journey's length is %.1fs, but %@ only has %.1fs "
+                            + "after its start offset.",
+                        driveSegmentLength, short.0, short.1.seconds))
+            }
+            print(String(format: "final: drive segment length set to %.1fs.", driveSegmentLength))
+            dialsSegmentDuration = length
+        } else if driveClips.contains(where: { $0.1 != dialsSegmentDuration }) {
             let shortest = driveClips.min { $0.1 < $1.1 }!.0
             print(
                 "final: \(shortest) is the shortest of dials.mov/front.mov/rear.mov "

@@ -29,6 +29,7 @@ struct JourneyDetailView: View {
     @State private var annotationToDelete: Annotation?
     @State private var deleteError: String?
     @State private var editingOffsetSource: StartOffsetSource?
+    @State private var editingLength = false
     @State private var editingJourney = false
     @State private var confirmingJourneyDelete = false
     @State private var routeMapLabels: [RouteMapLabel] = []
@@ -136,6 +137,19 @@ struct JourneyDetailView: View {
                         }
                     }
                     .padding(.vertical, 4)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Drive segment length")
+                            Text(driveSegmentLength)
+                                .font(.appCaption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Edit", systemImage: "pencil") {
+                            editingLength = true
+                        }
+                    }
+                    .padding(.vertical, 4)
                 }
             }
             if let active = model.activeRender, active.journeyID == journey.id {
@@ -195,6 +209,11 @@ struct JourneyDetailView: View {
         }
         .sheet(item: $editingOffsetSource) { source in
             OffsetForm(journey: journey, databasePath: model.databasePath, source: source) {
+                Task { await model.reload() }
+            }
+        }
+        .sheet(isPresented: $editingLength) {
+            LengthForm(journey: journey, databasePath: model.databasePath) {
                 Task { await model.reload() }
             }
         }
@@ -375,6 +394,13 @@ struct JourneyDetailView: View {
         guard let start = journey.start, let end = journey.end else { return nil }
         return Duration.seconds(end.timeIntervalSince(start))
             .formatted(.time(pattern: .hourMinuteSecond))
+    }
+
+    /// The drive-segment length row's caption, in the same format as the
+    /// video lengths.
+    private var driveSegmentLength: String {
+        guard let length = journey.length else { return "Shortest source" }
+        return Duration.seconds(length).formatted(.time(pattern: .hourMinuteSecond))
     }
 
     private var summaryLine: String {
