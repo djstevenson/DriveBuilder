@@ -27,8 +27,12 @@ struct AnnotationRenderer {
     static let rightMargin = TelemetryVideoRenderer.defaultGap
 
     /// Width of the fully open band, which is also the movie frame width:
-    /// the 3840 px final frame less the dial column and the margin before it.
-    var width = 3840 - TelemetryVideoRenderer.defaultMapPixelSize - rightMargin
+    /// the 3840 px final frame less the edge inset on the left (the band's
+    /// own) and right (the dial column's), the dial column, and the margin
+    /// before it.
+    var width =
+        3840 - 2 * Int(FinalVideoComposer.defaultEdgeInset)
+        - TelemetryVideoRenderer.defaultMapPixelSize - rightMargin
 
     /// Height of the band, which is also the movie frame height.
     var height = 160

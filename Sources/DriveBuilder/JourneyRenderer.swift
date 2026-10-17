@@ -212,10 +212,10 @@ package struct RenderSetupError: Error, CustomStringConvertible {
 /// the URL of the movie it wrote.
 package struct JourneyRenderer: Sendable {
     /// Frame size for the telemetry dials (speedo, compass, altitude, g-force).
-    package static let defaultDialPixelSize = 345
+    package static let defaultDialPixelSize = TelemetryVideoRenderer.defaultDialPixelSize
     /// Frame size for the progress maps: the footprint of a 2x2 dial grid,
-    /// two 345px dials plus a 18px gap.
-    package static let defaultMapPixelSize = 708
+    /// two 340px dials plus a 16px gap.
+    package static let defaultMapPixelSize = TelemetryVideoRenderer.defaultMapPixelSize
     /// Directory containing maprender.py, map.xml, and the OSM data
     /// (see MapOptions).
     package static let defaultMapDirectory = "/Users/davids/src/perl/drive-builder"

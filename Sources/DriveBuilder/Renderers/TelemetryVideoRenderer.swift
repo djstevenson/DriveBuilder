@@ -9,7 +9,10 @@ import Foundation
 /// The layout matches that ffmpeg filter graph: a 2x2 grid of dials up top
 /// (speedo, g-force / compass, altitude), the zoomed progress map below it,
 /// and the overview progress map at the bottom, all over a transparent
-/// background. At the default sizes that is a 708x2160 canvas.
+/// background. At the default sizes that is a 696x2120 canvas: once
+/// composited, the column sits `FinalVideoComposer.defaultEdgeInset` (20 px)
+/// in from the top, bottom, and right of the 2160 px frame, matching the
+/// rear-view inset's gap at the top-left.
 ///
 /// Everything renders at the zoomed map's 30 fps rate, sharing one clock:
 /// telemetry sampled at 10 Hz is expanded to 30 fps by interpolating two
@@ -44,8 +47,10 @@ struct TelemetryVideoRenderer {
     /// with the un-expanded records.
     var progressMapZoomed: ProgressMapZoomedRenderer
 
-    static let defaultDialPixelSize = 345
-    static let defaultMapPixelSize = 708
+    /// 6 dials + 5 gaps make the column's height (see `height`), so 340 px
+    /// dials and 16 px gaps fill 2160 - 2 x 20 = 2120 px exactly.
+    static let defaultDialPixelSize = 340
+    static let defaultMapPixelSize = 696
 
     /// `gap` at the default sizes, for layouts elsewhere (the annotation
     /// banners) that line up with the dial column's grid.
@@ -99,8 +104,9 @@ struct TelemetryVideoRenderer {
 
     var width: Int { mapPixelSize }
 
-    /// Dial grid, zoomed map, overview map, with a gap between each. 2160
-    /// at the default sizes, matching a native-4K frame height.
+    /// Dial grid, zoomed map, overview map, with a gap between each. 2120
+    /// at the default sizes: a native-4K frame height less the 20 px edge
+    /// inset above and below.
     var height: Int { 2 * gridStep + 2 * mapPixelSize + gap }
 
     /// Top-left corners of each cell, in top-left-origin canvas coordinates,
