@@ -301,8 +301,12 @@ package struct JourneyRenderer: Sendable {
         tileRenderer.scaleFactor =
             Double(Self.defaultMapPixelSize) / ProgressMapRenderer.designPixelSize
 
+        // dials.mov keeps the full raw timeline (the final composition skips
+        // the telemetry offset itself), but the overview map shows only the
+        // stretch of track the final video plays.
         let renderer = TelemetryVideoRenderer(
             records: records,
+            progressMapRecords: try syncedRecords(from: records),
             dialPixelSize: Self.defaultDialPixelSize,
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)
@@ -320,37 +324,12 @@ package struct JourneyRenderer: Sendable {
         progress?(.preparing)
         let outputDirectory = try makeOutputDirectory()
 
-        // The final video skips the first `telemetry_offset` seconds of the
-        // dials to sync them with the footage, and (when the journey has a
-        // `length`) stops that many seconds later, so the route map draws
-        // only that stretch of track. Label offsets stay in raw telemetry
-        // seconds in the database (like annotation offsets) and are shifted
-        // onto the trimmed track here.
+        // Only the stretch of track the final video shows. Label offsets
+        // stay in raw telemetry seconds in the database (like annotation
+        // offsets) and are shifted onto the trimmed track here.
+        let records = try syncedRecords(from: try self.records())
         let telemetryOffset =
             try store.journeyStartOffsets(journeyID: journeyID)?.telemetry ?? 0
-        let length = try store.journeyLength(journeyID: journeyID)
-        var records = try self.records()
-        if let first = records.first, let last = records.last {
-            let syncStart = first.timestamp.addingTimeInterval(telemetryOffset)
-            records.removeAll { $0.timestamp < syncStart }
-            if let length {
-                // The dials clip holds each sample for one sample interval,
-                // so the telemetry covers up to that much past its last
-                // timestamp.
-                let available =
-                    last.timestamp.timeIntervalSince(syncStart)
-                    + TelemetryRecord.sampleInterval
-                guard available >= length else {
-                    throw RenderSetupError(
-                        message: String(
-                            format: "Journey %lld's length is %.1fs, but its telemetry only "
-                                + "has %.1fs after the %.1fs telemetry offset.",
-                            journeyID, length, available, telemetryOffset))
-                }
-                let syncEnd = syncStart.addingTimeInterval(length)
-                records.removeAll { $0.timestamp > syncEnd }
-            }
-        }
 
         var config = RouteMapConfig()
         config.labels = try store.routeMapLabels(journeyID: journeyID).map { label in
@@ -542,6 +521,35 @@ package struct JourneyRenderer: Sendable {
 
     private func records() throws -> [TelemetryRecord] {
         try store.records(journeyID: journeyID)
+    }
+
+    /// The part of `records` the final video shows: the final composition
+    /// skips the first `telemetry_offset` seconds of the dials to sync them
+    /// with the footage and, when the journey has a `length`, stops that
+    /// many seconds later. Throws if the telemetry is shorter than `length`.
+    private func syncedRecords(from records: [TelemetryRecord]) throws -> [TelemetryRecord] {
+        guard let first = records.first, let last = records.last else { return records }
+        let telemetryOffset =
+            try store.journeyStartOffsets(journeyID: journeyID)?.telemetry ?? 0
+        let syncStart = first.timestamp.addingTimeInterval(telemetryOffset)
+        var synced = records.filter { $0.timestamp >= syncStart }
+
+        if let length = try store.journeyLength(journeyID: journeyID) {
+            // The dials clip holds each sample for one sample interval, so
+            // the telemetry covers up to that much past its last timestamp.
+            let available =
+                last.timestamp.timeIntervalSince(syncStart) + TelemetryRecord.sampleInterval
+            guard available >= length else {
+                throw RenderSetupError(
+                    message: String(
+                        format: "Journey %lld's length is %.1fs, but its telemetry only "
+                            + "has %.1fs after the %.1fs telemetry offset.",
+                        journeyID, length, available, telemetryOffset))
+            }
+            let syncEnd = syncStart.addingTimeInterval(length)
+            synced.removeAll { $0.timestamp > syncEnd }
+        }
+        return synced
     }
 
     private func journeyDirectory() throws -> String {
