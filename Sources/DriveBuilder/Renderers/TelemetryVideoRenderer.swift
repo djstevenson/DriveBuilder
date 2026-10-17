@@ -51,12 +51,14 @@ struct TelemetryVideoRenderer {
     /// banners) that line up with the dial column's grid.
     static let defaultGap = defaultMapPixelSize - 2 * defaultDialPixelSize
 
-    /// `progressMapRecords` limits the overview progress map's route (its
-    /// bounding box and track) to that stretch of `records`, e.g. just the
-    /// part the final video shows; `nil` maps the whole of `records`.
+    /// `syncedRecords` is the stretch of `records` the final video shows
+    /// (after the journey's telemetry offset, up to its length): it limits
+    /// the overview progress map's route (bounding box and track), and the
+    /// altitude dial's elapsed-time and distance rows count from its first
+    /// record. `nil` uses the whole of `records`.
     init(
         records: [TelemetryRecord],
-        progressMapRecords: [TelemetryRecord]? = nil,
+        syncedRecords: [TelemetryRecord]? = nil,
         dialPixelSize: Int = defaultDialPixelSize,
         mapPixelSize: Int = defaultMapPixelSize,
         tileRenderer: any MapTileRenderer
@@ -69,12 +71,14 @@ struct TelemetryVideoRenderer {
         speedo = SpeedoRenderer(records: expandedRecords, pixelSize: dialPixelSize)
         gforce = GForceRenderer(records: expandedRecords, pixelSize: dialPixelSize)
         compass = CompassRenderer(records: expandedRecords, pixelSize: dialPixelSize)
-        altitude = AltitudeRenderer(records: expandedRecords, pixelSize: dialPixelSize)
+        var altitude = AltitudeRenderer(records: expandedRecords, pixelSize: dialPixelSize)
+        altitude.origin = syncedRecords?.first
+        self.altitude = altitude
         // The map's travelled track is looked up by timestamp, so frames
         // before the stretch draw no track and frames after it the whole
         // stretch.
         let progressMapRecords =
-            progressMapRecords.map {
+            syncedRecords.map {
                 TelemetryRecord.subframeSequence(
                     $0, subframesPerRecord: ProgressMapZoomedRenderer.subframesPerRecord)
             } ?? expandedRecords

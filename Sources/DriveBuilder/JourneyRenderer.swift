@@ -303,10 +303,11 @@ package struct JourneyRenderer: Sendable {
 
         // dials.mov keeps the full raw timeline (the final composition skips
         // the telemetry offset itself), but the overview map shows only the
-        // stretch of track the final video plays.
+        // stretch of track the final video plays, and elapsed time and
+        // distance count from its start.
         let renderer = TelemetryVideoRenderer(
             records: records,
-            progressMapRecords: try syncedRecords(from: records),
+            syncedRecords: try syncedRecords(from: records),
             dialPixelSize: Self.defaultDialPixelSize,
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)

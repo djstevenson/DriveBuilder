@@ -343,8 +343,8 @@ struct RouteMapRenderer {
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -point.x, y: -point.y)
 
-        let titleFont = NSFont.transport(size: Self.labelTitleSize)
-        let subtitleFont = NSFont.transport(size: Self.labelSubtitleSize)
+        let titleFont = NSFont.helveticaBold(size: Self.labelTitleSize)
+        let subtitleFont = NSFont.helveticaBold(size: Self.labelSubtitleSize)
         let title = Self.textLine(placed.label.title, font: titleFont)
         let subtitle = Self.textLine(placed.label.subtitle, font: subtitleFont)
         Self.resetTextMatrix(in: context)
@@ -398,21 +398,17 @@ struct RouteMapRenderer {
             transform: nil)
         fillAndStroke(box, strokeWidth: Self.labelBorderWidth, into: context)
 
-        // Transport's glyphs sit about a font-size's eighth higher above
-        // the baseline than the sans-serif these offsets were tuned for,
-        // so nudge each baseline down by that much to keep the ink in
-        // place.
         let boxCentreX = boxX + boxWidth / 2
         Self.drawText(
             title, bounds: titleBounds, colour: Self.labelTitleColour,
             centredOn: boxCentreX,
-            baselineY: boxY + Self.labelTopGap + Self.labelTitleSize + Self.labelTitleSize / 8,
+            baselineY: boxY + Self.labelTopGap + Self.labelTitleSize,
             into: context)
         Self.drawText(
             subtitle, bounds: subtitleBounds, colour: Self.labelTextColour,
             centredOn: boxCentreX,
             baselineY: boxY + Self.labelTopGap + Self.labelTitleSize
-                + Self.labelLineGap + Self.labelSubtitleSize + Self.labelSubtitleSize / 8,
+                + Self.labelLineGap + Self.labelSubtitleSize,
             into: context)
 
         context.restoreGState()
