@@ -31,6 +31,9 @@ package struct JourneySummary: Identifiable, Sendable {
     package let frontOffset: Double
     package let rearOffset: Double
     package let telemetryOffset: Double
+    /// The drive segment's length in seconds, measured from the synced
+    /// start; nil means it runs for the shortest of the synced sources.
+    package let length: Double?
 
     package var roadName: String { "\(roadType)\(roadNumber)" }
 
@@ -119,6 +122,13 @@ package struct JourneyLibrary: Sendable {
     ) async throws {
         try TelemetryStore(path: databasePath).updateStartOffset(
             journeyID: journeyID, source: source, offset: offset)
+    }
+
+    /// Sets the journey's drive-segment length in seconds; nil means the
+    /// shortest synced source decides.
+    @concurrent
+    package func updateLength(journeyID: Int64, length: Double?) async throws {
+        try TelemetryStore(path: databasePath).updateLength(journeyID: journeyID, length: length)
     }
 
     /// A journey's route-map labels, in the order the animated track
@@ -291,8 +301,12 @@ package struct JourneyRenderer: Sendable {
         tileRenderer.scaleFactor =
             Double(Self.defaultMapPixelSize) / ProgressMapRenderer.designPixelSize
 
+        // dials.mov keeps the full raw timeline (the final composition skips
+        // the telemetry offset itself), but the overview map shows only the
+        // stretch of track the final video plays.
         let renderer = TelemetryVideoRenderer(
             records: records,
+            progressMapRecords: try syncedRecords(from: records),
             dialPixelSize: Self.defaultDialPixelSize,
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)
@@ -309,11 +323,19 @@ package struct JourneyRenderer: Sendable {
     package func renderRouteMap(progress: RenderProgressHandler? = nil) async throws -> URL {
         progress?(.preparing)
         let outputDirectory = try makeOutputDirectory()
+
+        // Only the stretch of track the final video shows. Label offsets
+        // stay in raw telemetry seconds in the database (like annotation
+        // offsets) and are shifted onto the trimmed track here.
+        let records = try syncedRecords(from: try self.records())
+        let telemetryOffset =
+            try store.journeyStartOffsets(journeyID: journeyID)?.telemetry ?? 0
+
         var config = RouteMapConfig()
         config.labels = try store.routeMapLabels(journeyID: journeyID).map { label in
             RouteMapConfig.Label(
-                offset: label.offset, title: label.title, subtitle: label.subtitle,
-                location: label.location, distance: label.distance)
+                offset: label.offset - telemetryOffset, title: label.title,
+                subtitle: label.subtitle, location: label.location, distance: label.distance)
         }
 
         var tileRenderer = MaprenderTileRenderer(directory: URL(filePath: mapDirectory))
@@ -326,7 +348,7 @@ package struct JourneyRenderer: Sendable {
             Double(config.width) / RouteMapRenderer.mapXMLDesignWidth
 
         let renderer = RouteMapRenderer(
-            records: try records(),
+            records: records,
             tileRenderer: tileRenderer,
             config: config)
         let url = outputDirectory.appending(path: "route_map.mov")
@@ -417,6 +439,7 @@ package struct JourneyRenderer: Sendable {
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
         composer.startOffsets = try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets()
+        composer.driveSegmentLength = try store.journeyLength(journeyID: journeyID)
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
         composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
             FinalVideoComposer.AnnotationClip(
@@ -498,6 +521,35 @@ package struct JourneyRenderer: Sendable {
 
     private func records() throws -> [TelemetryRecord] {
         try store.records(journeyID: journeyID)
+    }
+
+    /// The part of `records` the final video shows: the final composition
+    /// skips the first `telemetry_offset` seconds of the dials to sync them
+    /// with the footage and, when the journey has a `length`, stops that
+    /// many seconds later. Throws if the telemetry is shorter than `length`.
+    private func syncedRecords(from records: [TelemetryRecord]) throws -> [TelemetryRecord] {
+        guard let first = records.first, let last = records.last else { return records }
+        let telemetryOffset =
+            try store.journeyStartOffsets(journeyID: journeyID)?.telemetry ?? 0
+        let syncStart = first.timestamp.addingTimeInterval(telemetryOffset)
+        var synced = records.filter { $0.timestamp >= syncStart }
+
+        if let length = try store.journeyLength(journeyID: journeyID) {
+            // The dials clip holds each sample for one sample interval, so
+            // the telemetry covers up to that much past its last timestamp.
+            let available =
+                last.timestamp.timeIntervalSince(syncStart) + TelemetryRecord.sampleInterval
+            guard available >= length else {
+                throw RenderSetupError(
+                    message: String(
+                        format: "Journey %lld's length is %.1fs, but its telemetry only "
+                            + "has %.1fs after the %.1fs telemetry offset.",
+                        journeyID, length, available, telemetryOffset))
+            }
+            let syncEnd = syncStart.addingTimeInterval(length)
+            synced.removeAll { $0.timestamp > syncEnd }
+        }
+        return synced
     }
 
     private func journeyDirectory() throws -> String {

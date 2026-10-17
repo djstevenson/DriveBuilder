@@ -2,6 +2,9 @@ import Foundation
 
 /// A single row of the `telemetry` table: one sampled instant of a journey.
 struct TelemetryRecord: Sendable, Identifiable {
+    /// Seconds between consecutive samples: telemetry is sampled at 10 Hz.
+    static let sampleInterval = 0.1
+
     let id: Int64
     let journeyID: Int64
     let timestamp: Date

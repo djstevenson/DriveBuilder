@@ -51,8 +51,12 @@ struct TelemetryVideoRenderer {
     /// banners) that line up with the dial column's grid.
     static let defaultGap = defaultMapPixelSize - 2 * defaultDialPixelSize
 
+    /// `progressMapRecords` limits the overview progress map's route (its
+    /// bounding box and track) to that stretch of `records`, e.g. just the
+    /// part the final video shows; `nil` maps the whole of `records`.
     init(
         records: [TelemetryRecord],
+        progressMapRecords: [TelemetryRecord]? = nil,
         dialPixelSize: Int = defaultDialPixelSize,
         mapPixelSize: Int = defaultMapPixelSize,
         tileRenderer: any MapTileRenderer
@@ -66,8 +70,16 @@ struct TelemetryVideoRenderer {
         gforce = GForceRenderer(records: expandedRecords, pixelSize: dialPixelSize)
         compass = CompassRenderer(records: expandedRecords, pixelSize: dialPixelSize)
         altitude = AltitudeRenderer(records: expandedRecords, pixelSize: dialPixelSize)
+        // The map's travelled track is looked up by timestamp, so frames
+        // before the stretch draw no track and frames after it the whole
+        // stretch.
+        let progressMapRecords =
+            progressMapRecords.map {
+                TelemetryRecord.subframeSequence(
+                    $0, subframesPerRecord: ProgressMapZoomedRenderer.subframesPerRecord)
+            } ?? expandedRecords
         progressMap = ProgressMapRenderer(
-            records: expandedRecords, pixelSize: mapPixelSize, tileRenderer: tileRenderer)
+            records: progressMapRecords, pixelSize: mapPixelSize, tileRenderer: tileRenderer)
         progressMapZoomed = ProgressMapZoomedRenderer(
             records: records, pixelSize: mapPixelSize, tileRenderer: tileRenderer)
     }

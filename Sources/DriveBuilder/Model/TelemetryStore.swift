@@ -428,6 +428,18 @@ struct TelemetryStore {
         }
     }
 
+    /// The journey's drive-segment length in seconds, from
+    /// `journeys.length`; nil (NULL) means the drive segment runs for the
+    /// shortest of the synced sources.
+    func journeyLength(journeyID: Int64) throws -> Double? {
+        let length: Double?? = try fetchJourneyRow(
+            journeyID: journeyID, sql: "SELECT length FROM journeys WHERE id = ?"
+        ) {
+            .some(Self.double($0, column: 0))
+        }
+        return length ?? nil
+    }
+
     /// The journey's road, as recorded by the capture pipeline in
     /// `journeys.road_type`/`journeys.road_number`, e.g. ("A", 338); nil if
     /// either column is missing, rather than letting SQLite's NULL-as-zero
@@ -456,7 +468,7 @@ struct TelemetryStore {
             SELECT j.id, j.title, j.road_type, j.road_number, j.source,
                    COUNT(t.id), MIN(t.timestamp), MAX(t.timestamp),
                    MAX(t.odometer) - MIN(t.odometer),
-                   j.front_offset, j.rear_offset, j.telemetry_offset
+                   j.front_offset, j.rear_offset, j.telemetry_offset, j.length
             FROM journeys j
             LEFT JOIN telemetry t ON t.journey_id = j.id
             GROUP BY j.id
@@ -489,7 +501,8 @@ struct TelemetryStore {
                     distanceMetres: Self.double(statement, column: 8) ?? 0,
                     frontOffset: Self.double(statement, column: 9) ?? 0,
                     rearOffset: Self.double(statement, column: 10) ?? 0,
-                    telemetryOffset: Self.double(statement, column: 11) ?? 0))
+                    telemetryOffset: Self.double(statement, column: 11) ?? 0,
+                    length: Self.double(statement, column: 12)))
         }
         return journeys
     }
@@ -526,6 +539,34 @@ struct TelemetryStore {
         defer { sqlite3_finalize(statement) }
 
         sqlite3_bind_double(statement, 1, offset)
+        sqlite3_bind_int64(statement, 2, journeyID)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
+    /// Sets the journey's drive-segment length in seconds; nil stores NULL,
+    /// meaning the shortest synced source decides.
+    func updateLength(journeyID: Int64, length: Double?) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database, "UPDATE journeys SET length = ? WHERE id = ?", -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        if let length {
+            sqlite3_bind_double(statement, 1, length)
+        } else {
+            sqlite3_bind_null(statement, 1)
+        }
         sqlite3_bind_int64(statement, 2, journeyID)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {

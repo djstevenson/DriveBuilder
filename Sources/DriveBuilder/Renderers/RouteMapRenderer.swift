@@ -21,7 +21,8 @@ struct RouteMapConfig: Sendable {
     var labels: [Label] = []
 
     /// A road-sign placard revealed as the track reaches its `offset`
-    /// (seconds from the start of the telemetry) and left up thereafter.
+    /// (seconds from the start of the records given to the renderer, i.e.
+    /// after the journey's telemetry offset) and left up thereafter.
     /// `location`/`distance` position it relative to that point; omitted
     /// means right, at the default gap.
     struct Label: Sendable {
@@ -195,7 +196,11 @@ struct RouteMapRenderer {
 
         return config.labels
             .map { label in
-                let fraction = totalSeconds > 0 ? label.offset / totalSeconds : 0
+                // Clamped so a label offset before the track's (synced)
+                // start, or past its end, pops in at that end rather than
+                // already up or never.
+                let fraction =
+                    totalSeconds > 0 ? min(max(label.offset / totalSeconds, 0), 1) : 0
                 let index = max(
                     0,
                     min(
