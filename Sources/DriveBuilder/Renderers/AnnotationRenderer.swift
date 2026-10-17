@@ -52,7 +52,7 @@ struct AnnotationRenderer {
     static let backgroundColour = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
     static let textColour = CGColor(srgbRed: 1, green: 1, blue: 0, alpha: 1)
 
-    static var font: NSFont { NSFont.transport(size: fontSize) }
+    static var font: NSFont { NSFont.helvetica(size: fontSize) }
 
     /// The text rendered once; every frame composites it at a different x.
     struct Artwork {

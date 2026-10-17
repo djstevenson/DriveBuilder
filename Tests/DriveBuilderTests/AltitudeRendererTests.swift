@@ -71,6 +71,23 @@ private func record(
     #expect(texts[4] == "01:02:05")
 }
 
+@Test func elapsedAndDistanceCountFromTheOriginAndReadZeroBeforeIt() {
+    let start = Date(timeIntervalSinceReferenceDate: 0)
+    let after = AltitudeRenderer.rowTexts(
+        for: record(odometerMetres: 16_093.44 + 1_000, timestamp: start.addingTimeInterval(3725)),
+        startTimestamp: start.addingTimeInterval(5), startOdometer: 1_000)
+    #expect(after[3] == "10.0 mi")
+    #expect(after[4] == "01:02:00")
+
+    // Before the origin (a frame the final video skips) clamps to zero
+    // rather than going negative.
+    let before = AltitudeRenderer.rowTexts(
+        for: record(odometerMetres: 0, timestamp: start),
+        startTimestamp: start.addingTimeInterval(5), startOdometer: 1_000)
+    #expect(before[3] == "0.0 mi")
+    #expect(before[4] == "00:00:00")
+}
+
 /// Box geometry is fixed regardless of content - the same margin either
 /// side of the frame every time - so it's the font that has to adapt.
 @Test func boxGeometryIsFixedRegardlessOfContent() {

@@ -25,6 +25,11 @@ struct AltitudeRenderer: DialRenderer {
     /// Edge length of the rendered frame, in pixels.
     var pixelSize = 345
 
+    /// The record the elapsed-time and distance rows count from: the
+    /// moment the final video's drive segment starts, after the journey's
+    /// telemetry offset. `nil` counts from the first record.
+    var origin: TelemetryRecord?
+
     /// Colour and opacity of the square backdrop drawn behind the dial,
     /// matching the speedo, g-force, and compass dials.
     static let backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.6)
@@ -152,8 +157,9 @@ struct AltitudeRenderer: DialRenderer {
         altitudeText(feet: altitudeFeet(for: record))
     }
 
-    static func odometerText(_ record: TelemetryRecord) -> String {
-        odometerText(miles: record.odometer / metresPerMile)
+    /// Distance since `startOdometer` (metres); records before it read 0.
+    static func odometerText(_ record: TelemetryRecord, since startOdometer: Double) -> String {
+        odometerText(miles: max(0, record.odometer - startOdometer) / metresPerMile)
     }
 
     /// No fractional seconds: at 10 Hz telemetry, tenths would just show a
@@ -163,17 +169,20 @@ struct AltitudeRenderer: DialRenderer {
         return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
     }
 
+    /// Time since `startTimestamp`; records before it read 00:00:00.
     static func elapsedText(_ record: TelemetryRecord, since startTimestamp: Date) -> String {
-        elapsedText(seconds: record.timestamp.timeIntervalSince(startTimestamp))
+        elapsedText(seconds: max(0, record.timestamp.timeIntervalSince(startTimestamp)))
     }
 
-    /// The five rows drawn for a record, top to bottom. `startTimestamp` is
-    /// the journey's first record's timestamp, i.e. where the elapsed-time
-    /// row counts from.
-    static func rowTexts(for record: TelemetryRecord, startTimestamp: Date) -> [String] {
+    /// The five rows drawn for a record, top to bottom. `startTimestamp`
+    /// and `startOdometer` (metres) are where the elapsed-time and distance
+    /// rows count from - the origin record's.
+    static func rowTexts(
+        for record: TelemetryRecord, startTimestamp: Date, startOdometer: Double = 0
+    ) -> [String] {
         [
             latitudeText(record), longitudeText(record), altitudeText(record),
-            odometerText(record), elapsedText(record, since: startTimestamp),
+            odometerText(record, since: startOdometer), elapsedText(record, since: startTimestamp),
         ]
     }
 
@@ -190,7 +199,7 @@ struct AltitudeRenderer: DialRenderer {
     struct Artwork {
         let font: NSFont
 
-        init(records: [TelemetryRecord]) {
+        init(records: [TelemetryRecord], origin: TelemetryRecord? = nil) {
             func inkWidth(_ text: String, font: NSFont) -> Double {
                 let line = CTLineCreateWithAttributedString(
                     NSAttributedString(string: text, attributes: [.font: font]))
@@ -206,15 +215,18 @@ struct AltitudeRenderer: DialRenderer {
             let (latMin, latMax) = extremes(records.map(\.latitude))
             let (lonMin, lonMax) = extremes(records.map(\.longitude))
             let feet = records.map(AltitudeRenderer.altitudeFeet(for:))
+            // Distance and elapsed time count from the origin, as drawn.
+            let startOdometer = (origin ?? records.first)?.odometer ?? 0
             let (milesMin, milesMax) = extremes(
-                records.map { $0.odometer / AltitudeRenderer.metresPerMile })
+                records.map { max(0, $0.odometer - startOdometer) / AltitudeRenderer.metresPerMile })
             // Elapsed time only grows over the journey, so the widest label
             // is always the last record - but measuring both endpoints
             // costs nothing and doesn't assume the records are sorted.
             let elapsedSeconds: (min: Double, max: Double) = {
-                guard let start = records.first?.timestamp, let end = records.last?.timestamp
+                guard let start = (origin ?? records.first)?.timestamp,
+                    let end = records.last?.timestamp
                 else { return (0, 0) }
-                return extremes([0, end.timeIntervalSince(start)])
+                return extremes([0, max(0, end.timeIntervalSince(start))])
             }()
 
             let candidates = [
@@ -233,7 +245,7 @@ struct AltitudeRenderer: DialRenderer {
                 AltitudeRenderer.altitudeText(feet: feet.max() ?? 0),
             ]
 
-            let ceilingFont = NSFont.transport(size: AltitudeRenderer.fontSize)
+            let ceilingFont = NSFont.helveticaBold(size: AltitudeRenderer.fontSize)
             let mountainLeadingWidth =
                 AltitudeRenderer.fontSize * AltitudeRenderer.mountainLeadingRatio
             let widest =
@@ -250,13 +262,13 @@ struct AltitudeRenderer: DialRenderer {
                 widest > availableWidth && widest > 0
                 ? AltitudeRenderer.fontSize * availableWidth / widest
                 : AltitudeRenderer.fontSize
-            font = NSFont.transport(
+            font = NSFont.helveticaBold(
                 size: max(AltitudeRenderer.minFontSize, fittedSize * AltitudeRenderer.textScale))
         }
     }
 
     func makeArtwork() throws -> Artwork {
-        Artwork(records: records)
+        Artwork(records: records, origin: origin)
     }
 
     /// Draws one frame into `context`: three opaque rounded boxes, one per
@@ -273,10 +285,11 @@ struct AltitudeRenderer: DialRenderer {
         // scaled up to the actual frame size like the box geometry is -
         // otherwise it draws at its literal (tiny) point size regardless of
         // `pixelSize`.
-        let drawFont = NSFont.transport(size: artwork.font.pointSize * scale)
-        let startTimestamp = records.first?.timestamp ?? record.timestamp
-        for (index, text) in Self.rowTexts(for: record, startTimestamp: startTimestamp).enumerated()
-        {
+        let drawFont = NSFont.helveticaBold(size: artwork.font.pointSize * scale)
+        let start = origin ?? records.first ?? record
+        let texts = Self.rowTexts(
+            for: record, startTimestamp: start.timestamp, startOdometer: start.odometer)
+        for (index, text) in texts.enumerated() {
             drawRow(
                 text, bottom: Self.rowBottom(index), scale: scale, font: drawFont,
                 showsMountainIcon: index == Self.altitudeRowIndex, into: context)
@@ -285,8 +298,8 @@ struct AltitudeRenderer: DialRenderer {
 
     /// Matches the source SVG text conventions elsewhere: positioned by the
     /// glyphs' actual ink rather than the advance width and font metrics,
-    /// since Transport's side bearings aren't symmetric and its glyphs don't
-    /// sit where the metrics imply.
+    /// since side bearings aren't symmetric and glyphs don't always sit
+    /// where the metrics imply.
     private func drawRow(
         _ text: String, bottom: Double, scale: CGFloat, font: NSFont, showsMountainIcon: Bool,
         into context: CGContext

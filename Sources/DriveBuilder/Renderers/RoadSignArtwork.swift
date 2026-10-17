@@ -121,9 +121,9 @@ struct RoadSignArtwork {
     private var destinationFontSize: Double { Self.designDestinationFontSize * scale }
     private var creditFontSize: Double { Self.designCreditFontSize * scale }
 
-    private var destinationFont: NSFont { NSFont.transport(size: destinationFontSize) }
+    private var destinationFont: NSFont { NSFont.helveticaBold(size: destinationFontSize) }
 
-    private var creditFont: NSFont { NSFont.transport(size: creditFontSize) }
+    private var creditFont: NSFont { NSFont.helveticaBold(size: creditFontSize) }
 
     /// Half-widths of the template's two strokes (green 30, white 20), which
     /// is how far each extends outward from the badge rect's edge.
@@ -139,7 +139,7 @@ struct RoadSignArtwork {
 
     static let designFontSize = 200.0
     private var fontSize: Double { Self.designFontSize * scale }
-    private var font: NSFont { NSFont.transport(size: fontSize) }
+    private var font: NSFont { NSFont.helveticaBold(size: fontSize) }
 
     /// The bundled image drawn behind the sign by both the intro and the
     /// outro, filling the whole canvas.

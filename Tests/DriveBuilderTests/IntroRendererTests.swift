@@ -319,7 +319,8 @@ private func hasInk(
     let artwork = try renderer.makeArtwork()
     let last = try renderer.frame(at: renderer.frameCount - 1, artwork: artwork)
 
-    #expect(isGreen(colour(last, 420, 160)))
+    // Between the road number and the title, clear of any glyph.
+    #expect(isGreen(colour(last, 420, 300)))
     #expect(isGreen(colour(last, 27, 160)))
 }
 

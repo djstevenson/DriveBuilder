@@ -78,7 +78,7 @@ private func testRenderer() -> TelemetryVideoRenderer {
     let records = testRecords()
     let renderer = TelemetryVideoRenderer(
         records: records,
-        progressMapRecords: Array(records.dropFirst()),
+        syncedRecords: Array(records.dropFirst()),
         dialPixelSize: 60,
         mapPixelSize: 138,
         tileRenderer: WhiteTileRenderer())
@@ -87,6 +87,8 @@ private func testRenderer() -> TelemetryVideoRenderer {
     // ...but the overview map spans only the last two records, expanded.
     #expect(renderer.progressMap.records.count == 4)
     #expect(renderer.progressMap.records.first?.timestamp == records[1].timestamp)
+    // ...and the altitude dial's elapsed time and distance count from there.
+    #expect(renderer.altitude.origin?.timestamp == records[1].timestamp)
 }
 
 @Test func expandedRecordsInterpolateToThirtyFps() {
