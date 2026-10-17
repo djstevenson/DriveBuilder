@@ -12,6 +12,7 @@ enum AlphaMovieWriterError: Error, CustomStringConvertible {
     case contextCreationFailed
     case appendFailed(frameIndex: Int, reason: String)
     case finishFailed(String)
+    case joinFailed(String)
 
     var description: String {
         switch self {
@@ -29,6 +30,8 @@ enum AlphaMovieWriterError: Error, CustomStringConvertible {
             "Failed to append frame \(frameIndex): \(reason)"
         case .finishFailed(let reason):
             "Could not finish writing the movie: \(reason)"
+        case .joinFailed(let reason):
+            "Could not join the movie's segments: \(reason)"
         }
     }
 }
@@ -47,32 +50,171 @@ private struct FrameBatch: @unchecked Sendable {
 ///
 /// The AVFoundation equivalent of piping raw BGRA into `ffmpeg -c:v prores_ks
 /// -profile:v 4 -pix_fmt yuva444p10le`.
+///
+/// A single writer session is the bottleneck: drawing runs ~4x faster than
+/// one hardware ProRes encoder takes frames, and the M1 Ultra has four
+/// ProRes engines. So long movies are cut into `framesPerChunk`-frame
+/// chunks, encoded `writerCount` at a time by separate writers into
+/// temporary files on the internal disk. Meanwhile a joiner copies each
+/// finished chunk's compressed samples, in order and without re-encoding,
+/// into `url`, deleting the chunk once it's been copied. Joining overlaps
+/// encoding, so the destination disk is written while the encoders work
+/// rather than in one long copy at the end.
 struct AlphaMovieWriter {
     let url: URL
     let width: Int
     let height: Int
     let framesPerSecond: Int32
 
-    /// How many frames to composite at once. Compositing dominates the runtime
-    /// and frames are independent, so this is the main throughput lever.
+    /// How many frames to composite at once, shared across the writers.
+    /// Compositing and encoding are pipelined, so this keeps every core busy
+    /// while the encoders drain the previous batch.
     var concurrency: Int = ProcessInfo.processInfo.activeProcessorCount
+
+    /// How many writers encode concurrently. Measured on the M1 Ultra
+    /// (2026-10-17) rendering real dials frames: 1 writer ~415 fps, 4
+    /// writers ~785 fps.
+    var writerCount = 4
+
+    /// Frames per chunk: 30 s at 30 fps, about 1 GB of 708x2160 dials.
+    /// Movies no longer than one chunk are written directly by a single
+    /// writer, with no temporary files.
+    var framesPerChunk = 900
 
     /// Renders `frameCount` frames into the movie.
     ///
     /// `drawFrame` is handed a frame index and a cleared context to draw into,
     /// and is called concurrently from several threads with a distinct context
-    /// each. It must not touch shared mutable state. Frames are still appended
-    /// in index order.
+    /// each. It must not touch shared mutable state. `progress` is called with
+    /// the number of frames encoded so far, one call at a time, though not
+    /// necessarily from the same thread.
     func write(
         frameCount: Int,
-        progress: (Int) -> Void = { _ in },
-        drawFrame: (Int, CGContext) -> Void
+        progress: @escaping (Int) -> Void = { _ in },
+        drawFrame: @escaping (Int, CGContext) -> Void
     ) async throws {
         if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             try FileManager.default.removeItem(at: url)
         }
 
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let chunks = chunkRanges(frameCount: frameCount)
+        let writers = min(writerCount, chunks.count)
+
+        // `drawFrame` and `progress` aren't Sendable, but drawing's contract
+        // (above) requires tolerating concurrent calls with distinct
+        // contexts, and progress calls are serialised by the lock below.
+        nonisolated(unsafe) let draw = drawFrame
+        nonisolated(unsafe) let report = progress
+        let framesDone = Mutex(0)
+        let frameEncoded: @Sendable () -> Void = {
+            framesDone.withLock { done in
+                done += 1
+                report(done)
+            }
+        }
+        // The writers share the batch width, so memory use (two batches of
+        // buffers in flight per writer) stays as it is with a single writer.
+        let batchSize = max(1, concurrency / max(1, writers))
+
+        guard chunks.count > 1 else {
+            try await writeSegment(
+                frames: 0..<frameCount, to: url, batchSize: batchSize,
+                drawFrame: draw, frameEncoded: frameEncoded)
+            return
+        }
+
+        let chunkDirectory = FileManager.default.temporaryDirectory
+            .appending(path: "AlphaMovieWriter-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: chunkDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: chunkDirectory) }
+        let chunkURLs = chunks.indices.map { chunkDirectory.appending(path: "chunk-\($0).mov") }
+
+        // Writers take chunks in index order, so the joiner is never waiting
+        // on a chunk nobody has started.
+        let nextChunk = Mutex(0)
+        let (finishedChunks, chunkFinished) = AsyncStream.makeStream(of: Int.self)
+
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    // Ends the stream however the writers finish, so the
+                    // joiner can't wait forever on a chunk that failed.
+                    defer { chunkFinished.finish() }
+                    try await withThrowingTaskGroup(of: Void.self) { writerGroup in
+                        for _ in 0..<writers {
+                            writerGroup.addTask {
+                                while true {
+                                    let index = nextChunk.withLock { next in
+                                        defer { next += 1 }
+                                        return next
+                                    }
+                                    guard index < chunks.count else { return }
+                                    try await writeSegment(
+                                        frames: chunks[index], to: chunkURLs[index],
+                                        batchSize: batchSize, drawFrame: draw,
+                                        frameEncoded: frameEncoded)
+                                    chunkFinished.yield(index)
+                                }
+                            }
+                        }
+                        try await writerGroup.waitForAll()
+                    }
+                }
+                group.addTask {
+                    var joiner: ChunkJoiner?
+                    var ready = Set<Int>()
+                    var nextToJoin = 0
+                    for await index in finishedChunks {
+                        ready.insert(index)
+                        while ready.remove(nextToJoin) != nil {
+                            let chunkURL = chunkURLs[nextToJoin]
+                            if joiner == nil {
+                                joiner = try await ChunkJoiner(
+                                    url: url, firstChunk: chunkURL,
+                                    framesPerSecond: framesPerSecond)
+                            }
+                            try await joiner?.append(chunkURL)
+                            try? FileManager.default.removeItem(at: chunkURL)
+                            nextToJoin += 1
+                        }
+                    }
+                    // The stream also ends when a writer fails; only a
+                    // complete set of chunks makes a finished movie.
+                    guard nextToJoin == chunks.count else {
+                        try Task.checkCancellation()
+                        throw AlphaMovieWriterError.joinFailed(
+                            "only \(nextToJoin) of \(chunks.count) chunks were written")
+                    }
+                    try await joiner?.finish()
+                }
+                try await group.waitForAll()
+            }
+        } catch {
+            // Don't leave a truncated movie where a finished one is expected.
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+    }
+
+    /// Consecutive `framesPerChunk`-frame ranges covering `0..<frameCount`;
+    /// the last takes whatever remains.
+    func chunkRanges(frameCount: Int) -> [Range<Int>] {
+        let size = max(1, framesPerChunk)
+        guard frameCount > size else { return [0..<frameCount] }
+        return stride(from: 0, to: frameCount, by: size).map {
+            $0..<min($0 + size, frameCount)
+        }
+    }
+
+    /// Draws and encodes `frames` into its own movie at `segmentURL`, timed
+    /// from zero: a chunk, or the whole movie when it's a single chunk.
+    private func writeSegment(
+        frames: Range<Int>, to segmentURL: URL, batchSize: Int,
+        drawFrame draw: @escaping (Int, CGContext) -> Void,
+        frameEncoded: @Sendable () -> Void
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: segmentURL, fileType: .mov)
         let input = AVAssetWriterInput(
             mediaType: .video,
             outputSettings: [
@@ -110,8 +252,6 @@ struct AlphaMovieWriter {
             throw AlphaMovieWriterError.pixelBufferPoolUnavailable
         }
 
-        let batchSize = max(1, concurrency)
-
         // Composites the batch of frames starting at `first` into freshly
         // allocated buffers, in parallel. Each iteration writes only to its
         // own buffer and `concurrentPerform` joins before returning, so the
@@ -120,10 +260,10 @@ struct AlphaMovieWriter {
         // buffer is touched by exactly one iteration, and `drawFrame`'s
         // contract (documented above) requires it to tolerate concurrent
         // calls with distinct contexts.
-        nonisolated(unsafe) let draw = drawFrame
+        nonisolated(unsafe) let draw = draw
         nonisolated(unsafe) let bufferPool = pool
         @Sendable func renderBatch(from first: Int) throws -> FrameBatch {
-            let count = min(batchSize, frameCount - first)
+            let count = min(batchSize, frames.upperBound - first)
 
             // Allocate the whole batch up front so each worker owns one buffer.
             var batch: [CVPixelBuffer] = []
@@ -155,27 +295,28 @@ struct AlphaMovieWriter {
         // Compositing and appending are pipelined: while one batch feeds the
         // (mostly encoder-bound) append loop, the next is already being
         // drawn, at the cost of keeping two batches of buffers alive.
-        var current = frameCount > 0 ? try renderBatch(from: 0) : nil
+        var current = frames.isEmpty ? nil : try renderBatch(from: frames.lowerBound)
         while let batch = current {
             // Let a front end's Cancel button take effect between batches.
             try Task.checkCancellation()
             let nextIndex = batch.firstIndex + batch.buffers.count
             async let next: FrameBatch? =
-                nextIndex < frameCount ? try renderBatch(from: nextIndex) : nil
+                nextIndex < frames.upperBound ? try renderBatch(from: nextIndex) : nil
 
-            // Append in order.
+            // Append in order, timed from the segment's own start.
             for (slot, buffer) in batch.buffers.enumerated() {
                 while !input.isReadyForMoreMediaData {
                     try await Task.sleep(for: .milliseconds(2))
                 }
                 let time = CMTime(
-                    value: CMTimeValue(batch.firstIndex + slot), timescale: framesPerSecond)
+                    value: CMTimeValue(batch.firstIndex + slot - frames.lowerBound),
+                    timescale: framesPerSecond)
                 guard adaptor.append(buffer, withPresentationTime: time) else {
                     throw AlphaMovieWriterError.appendFailed(
                         frameIndex: batch.firstIndex + slot,
                         reason: writer.error?.localizedDescription ?? "unknown error")
                 }
-                progress(batch.firstIndex + slot + 1)
+                frameEncoded()
             }
 
             current = try await next
@@ -215,5 +356,94 @@ struct AlphaMovieWriter {
             throw AlphaMovieWriterError.contextCreationFailed
         }
         body(context)
+    }
+}
+
+/// Concatenates chunk movies into one by copying their compressed samples,
+/// retimed to run on one after another. Nothing is re-encoded, and the
+/// first chunk's format description (which carries the premultiplied-alpha
+/// tag) describes the whole track. Used from a single task at a time.
+private final class ChunkJoiner {
+    private let writer: AVAssetWriter
+    private let input: AVAssetWriterInput
+    private let frameDuration: CMTime
+    private var frameIndex: CMTimeValue = 0
+
+    init(url: URL, firstChunk: URL, framesPerSecond: Int32) async throws {
+        let firstTrack = try await Self.videoTrack(of: AVURLAsset(url: firstChunk))
+        guard let format = try await firstTrack.load(.formatDescriptions).first else {
+            throw AlphaMovieWriterError.joinFailed("the first chunk has no format description")
+        }
+        writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        input = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: format)
+        input.expectsMediaDataInRealTime = false
+        frameDuration = CMTime(value: 1, timescale: framesPerSecond)
+        guard writer.canAdd(input) else { throw AlphaMovieWriterError.cannotAddInput }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw AlphaMovieWriterError.startFailed(
+                writer.error?.localizedDescription ?? "unknown error")
+        }
+        writer.startSession(atSourceTime: .zero)
+    }
+
+    /// Copies every frame of `chunk` onto the end of the movie.
+    func append(_ chunk: URL) async throws {
+        // The reader and its track output must share one asset instance.
+        let asset = AVURLAsset(url: chunk)
+        let track = try await Self.videoTrack(of: asset)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        output.alwaysCopiesSampleData = false
+        reader.add(output)
+        guard reader.startReading() else {
+            throw AlphaMovieWriterError.joinFailed(
+                reader.error?.localizedDescription ?? "could not read \(chunk.lastPathComponent)")
+        }
+
+        while let sample = output.copyNextSampleBuffer() {
+            // Every sample is one whole frame (ProRes is intra-only).
+            guard CMSampleBufferGetNumSamples(sample) > 0 else { continue }
+            var timing = CMSampleTimingInfo(
+                duration: frameDuration,
+                presentationTimeStamp: CMTime(value: frameIndex, timescale: frameDuration.timescale),
+                decodeTimeStamp: .invalid)
+            var retimed: CMSampleBuffer?
+            let status = CMSampleBufferCreateCopyWithNewTiming(
+                allocator: nil, sampleBuffer: sample, sampleTimingEntryCount: 1,
+                sampleTimingArray: &timing, sampleBufferOut: &retimed)
+            guard status == noErr, let retimed else {
+                throw AlphaMovieWriterError.joinFailed("could not retime frame \(frameIndex)")
+            }
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            guard input.append(retimed) else {
+                throw AlphaMovieWriterError.appendFailed(
+                    frameIndex: Int(frameIndex),
+                    reason: writer.error?.localizedDescription ?? "unknown error")
+            }
+            frameIndex += 1
+        }
+        if reader.status == .failed {
+            throw AlphaMovieWriterError.joinFailed(
+                reader.error?.localizedDescription ?? "reading \(chunk.lastPathComponent) failed")
+        }
+    }
+
+    func finish() async throws {
+        input.markAsFinished()
+        await writer.finishWriting()
+        if writer.status != .completed {
+            throw AlphaMovieWriterError.finishFailed(
+                writer.error?.localizedDescription ?? "status \(writer.status.rawValue)")
+        }
+    }
+
+    private static func videoTrack(of asset: AVURLAsset) async throws -> AVAssetTrack {
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw AlphaMovieWriterError.joinFailed("no video track in \(asset.url.lastPathComponent)")
+        }
+        return track
     }
 }
