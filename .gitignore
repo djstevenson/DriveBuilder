@@ -10,3 +10,6 @@ DerivedData/
 # Don't include OS data
 Sources/DriveBuilder/Resources/opname_gb.gpkg
 Sources/DriveBuilder/Resources/oproad_gb.gpkg
+
+¢ And don't include my database
+Sources/DriveBuilder/Resources/telemetry.sqlite3
