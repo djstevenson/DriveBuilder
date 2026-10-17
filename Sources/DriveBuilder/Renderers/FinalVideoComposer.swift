@@ -32,8 +32,15 @@ struct FinalVideoComposer {
     /// Length of each cross-fade between clips.
     var crossFadeSeconds: Double = 1.0
 
-    /// Gap between the frame's top-left corner and the rear-view inset.
-    var rearFootageInset: Double = 20.0
+    /// The gap the overlays keep from the frame's edges: the rear-view inset
+    /// sits this far from the top and left, the dial column this far from
+    /// the top, bottom, and right, and the annotation banners this far from
+    /// the left and bottom.
+    static let defaultEdgeInset = 20.0
+
+    /// Gap between the frame's edges and the rear-view inset, dial column,
+    /// and annotation banners (see `defaultEdgeInset`).
+    var edgeInset = defaultEdgeInset
 
     /// Seconds skipped at the start of each drive-segment source (from the
     /// journey's database row) so the separately started recordings play in
@@ -90,15 +97,19 @@ struct FinalVideoComposer {
     private enum Placement {
         /// Scaled to fit entirely within the frame, centred.
         case fitCentred
-        /// Scaled to fit entirely within the frame, flush with the right edge.
-        case fitTrailing
+        /// Scaled to fit within the frame less `inset` on the top, bottom,
+        /// and right (never enlarged), vertically centred, `inset` from the
+        /// right edge — for the dial column. A column rendered at the
+        /// default size fits exactly at native size.
+        case fitTrailing(inset: Double)
         /// Scaled to fill the frame, centred, cropping any overflow.
         case fill
         /// Native size, its top-left corner at the given frame offset.
         case pinned(x: Double, y: Double)
-        /// Native size, in the frame's bottom-left corner — for the
-        /// annotation banners.
-        case pinnedBottomLeading
+        /// Native size, `inset` from the frame's left and bottom edges — for
+        /// the annotation banners, so they share the dial column's bottom
+        /// edge and the rear-view inset's left edge.
+        case pinnedBottomLeading(inset: Double)
     }
 
     /// One instruction still under construction: a time range and its
@@ -304,8 +315,8 @@ struct FinalVideoComposer {
         shadowCanvas.frame = CGRect(origin: .zero, size: renderSize)
         let rearShadow = CALayer()
         rearShadow.frame = CGRect(
-            x: rearFootageInset,
-            y: renderSize.height - rearFootageInset - rearFootage.naturalSize.height,
+            x: edgeInset,
+            y: renderSize.height - edgeInset - rearFootage.naturalSize.height,
             width: rearFootage.naturalSize.width,
             height: rearFootage.naturalSize.height)
         rearShadow.shadowColor = CGColor(gray: 0, alpha: 1)
@@ -329,24 +340,32 @@ struct FinalVideoComposer {
             switch placement {
             case .pinned(let x, let y):
                 placementTransform = CGAffineTransform(translationX: x, y: y)
-            case .pinnedBottomLeading:
+            case .pinnedBottomLeading(let inset):
                 placementTransform = CGAffineTransform(
-                    translationX: 0, y: renderSize.height - clip.naturalSize.height)
+                    translationX: inset, y: renderSize.height - inset - clip.naturalSize.height)
             case .fitCentred, .fitTrailing, .fill:
                 let scale: Double
-                if case .fill = placement {
+                switch placement {
+                case .fill:
                     scale = max(
                         renderSize.width / clip.naturalSize.width,
                         renderSize.height / clip.naturalSize.height)
-                } else {
+                case .fitTrailing(let inset):
+                    // Never enlarged, so a column that already fits keeps
+                    // its native pixels; an older, taller render shrinks.
+                    scale = min(
+                        1,
+                        (renderSize.width - 2 * inset) / clip.naturalSize.width,
+                        (renderSize.height - 2 * inset) / clip.naturalSize.height)
+                default:
                     scale = min(
                         renderSize.width / clip.naturalSize.width,
                         renderSize.height / clip.naturalSize.height)
                 }
                 let scaledWidth = clip.naturalSize.width * scale
                 let x =
-                    if case .fitTrailing = placement {
-                        renderSize.width - scaledWidth
+                    if case .fitTrailing(let inset) = placement {
+                        renderSize.width - inset - scaledWidth
                     } else {
                         (renderSize.width - scaledWidth) / 2
                     }
@@ -407,7 +426,8 @@ struct FinalVideoComposer {
             from: introEnd, to: dialsStart,
             layers: [layerInstruction(track: trackB, clip: routeMap)])
 
-        let rearPlacement = Placement.pinned(x: rearFootageInset, y: rearFootageInset)
+        let rearPlacement = Placement.pinned(x: edgeInset, y: edgeInset)
+        let dialsPlacement = Placement.fitTrailing(inset: edgeInset)
 
         // Route map fades out over the drive footage, rear-view inset, and
         // dial column.
@@ -419,7 +439,7 @@ struct FinalVideoComposer {
                     opacityRamp: .init(
                         timeRange: CMTimeRange(start: dialsStart, end: routeEnd),
                         start: 1, end: 0)),
-                layerInstruction(track: trackA, clip: dials, placement: .fitTrailing),
+                layerInstruction(track: trackA, clip: dials, placement: dialsPlacement),
                 layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
                 shadowLayerInstruction(),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
@@ -429,7 +449,7 @@ struct FinalVideoComposer {
         addInstruction(
             from: routeEnd, to: outroStart,
             layers: [
-                layerInstruction(track: trackA, clip: dials, placement: .fitTrailing),
+                layerInstruction(track: trackA, clip: dials, placement: dialsPlacement),
                 layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
                 shadowLayerInstruction(),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
@@ -446,7 +466,7 @@ struct FinalVideoComposer {
                         timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
                         start: 0, end: 1)),
                 layerInstruction(
-                    track: trackA, clip: dials, placement: .fitTrailing,
+                    track: trackA, clip: dials, placement: dialsPlacement,
                     opacityRamp: .init(
                         timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
                         start: 1, end: 0)),
@@ -534,7 +554,7 @@ struct FinalVideoComposer {
             try annotationTrack.insertTimeRange(
                 CMTimeRange(start: .zero, duration: clip.duration), of: clip.track, at: start)
             insertOverlay(
-                layerInstruction(track: annotationTrack, clip: clip, placement: .pinnedBottomLeading),
+                layerInstruction(track: annotationTrack, clip: clip, placement: .pinnedBottomLeading(inset: edgeInset)),
                 over: CMTimeRange(start: start, end: end))
         }
 

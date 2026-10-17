@@ -62,9 +62,10 @@ private func testRenderer() -> TelemetryVideoRenderer {
 
 @Test func layoutMatchesTheFFmpegGraphAtDefaultSizes() {
     let renderer = TelemetryVideoRenderer(records: [], tileRenderer: WhiteTileRenderer())
-    #expect(renderer.gap == 18)
-    #expect(renderer.width == 708)
-    #expect(renderer.height == 2160)
+    #expect(renderer.gap == 16)
+    #expect(renderer.width == 696)
+    // A 2160 px frame less the 20 px edge inset above and below.
+    #expect(renderer.height == 2160 - 2 * Int(FinalVideoComposer.defaultEdgeInset))
 }
 
 @Test func layoutDerivesTheGapFromTheTwoEdgeLengths() {

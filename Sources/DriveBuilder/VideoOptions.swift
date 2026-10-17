@@ -21,14 +21,14 @@ struct FrameLimitOptions: ParsableArguments {
 struct VideoOptions: ParsableArguments {
     @Option(
         name: .customLong("size"),
-        help: "Edge length of the square frame, in pixels. Defaults to 345 for the telemetry dials and 708 for the progress maps.")
+        help: "Edge length of the square frame, in pixels. Defaults to 340 for the telemetry dials and 696 for the progress maps.")
     var pixelSize: Int?
 
     /// Frame size for the telemetry dials (speedo, compass, altitude, g-force).
     var dialPixelSize: Int { pixelSize ?? JourneyRenderer.defaultDialPixelSize }
 
     /// Frame size for the progress maps: the footprint of a 2x2 dial grid,
-    /// two 345px dials plus a 18px gap.
+    /// two 340px dials plus a 16px gap.
     var mapPixelSize: Int { pixelSize ?? JourneyRenderer.defaultMapPixelSize }
 
     @Option(name: .customLong("fps"), help: "Frame rate. Telemetry is sampled at 10 Hz.")
