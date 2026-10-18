@@ -82,8 +82,9 @@ private func isClose(_ pixel: [Int], to expected: [Int]) -> Bool {
 
 private func override(
     _ camera: CameraOverride.Camera, _ start: Double, _ end: Double, label: String? = nil
-) -> CameraOverride {
-    CameraOverride(id: 0, journeyID: 1, camera: camera, start: start, end: end, label: label)
+) -> FinalVideoComposer.PlacedCameraOverride {
+    FinalVideoComposer.PlacedCameraOverride(
+        camera: camera, start: start, end: end, label: label ?? camera.defaultLabel)
 }
 
 // The slot is the rear view's frame: 960x540 at (20, 20). Its middle is
@@ -141,7 +142,7 @@ func cameraOverridesPushIntoTheSlotInSyncWithLabels() async throws {
     composer.startOffsets.right = 0
     composer.leftFootageURL = directory.appending(path: "left.mov")
     composer.rightFootageURL = directory.appending(path: "right.mov")
-    // Raw front.mov times; +1 s gives final-video times: left 1.6...4.2 s,
+    // Drive seconds; +1 s gives final-video times: left 1.6...4.2 s,
     // right 4.6...7.3 s. Each push takes 1 s; a label pops in over 0.35 s
     // once its push has landed.
     composer.cameraOverrides = [
@@ -226,7 +227,9 @@ func invalidCameraOverridesFailTheRender() async throws {
         directory.appending(path: "left.mov"), width: 960, height: 540, seconds: 2
     ) { _ in green }
 
-    func failure(_ overrides: [CameraOverride], left: Bool = true) async -> String {
+    func failure(
+        _ overrides: [FinalVideoComposer.PlacedCameraOverride], left: Bool = true
+    ) async -> String {
         var composer = composer(in: directory)
         if left {
             composer.startOffsets.left = 0

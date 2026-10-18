@@ -2,9 +2,9 @@ import DriveBuilder
 import SwiftUI
 
 /// The sheet for authoring an annotation banner: the output movie's name,
-/// the text that scrolls across it, and the offset in seconds into the raw
-/// front footage where the banner should finish. Creates a new annotation,
-/// or edits `annotation` when one is passed.
+/// the text that scrolls across it, and the location the journey should
+/// reach as the banner finishes. Creates a new annotation, or edits
+/// `annotation` when one is passed.
 struct AnnotationForm: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -12,32 +12,36 @@ struct AnnotationForm: View {
     let databasePath: String
     /// The annotation being edited; nil means the form creates a new one.
     let annotation: Annotation?
+    /// The journey's track, to show when the banner finishes; nil while
+    /// loading.
+    let placement: JourneyPlacement?
     /// Runs after a successful save, so the annotations list re-reads the
     /// database.
     let onSave: () -> Void
 
     @State private var video: String
     @State private var text: String
-    @State private var offsetText: String
+    @State private var locationText: String
     @State private var isSaving = false
     @State private var saveError: String?
 
     init(
         journey: JourneySummary, databasePath: String, annotation: Annotation? = nil,
-        onSave: @escaping () -> Void
+        placement: JourneyPlacement?, onSave: @escaping () -> Void
     ) {
         self.journey = journey
         self.databasePath = databasePath
         self.annotation = annotation
+        self.placement = placement
         self.onSave = onSave
         _video = State(initialValue: annotation?.video ?? "")
         _text = State(initialValue: annotation?.text ?? "")
-        _offsetText = State(initialValue: annotation.map { String($0.offset) } ?? "")
+        _locationText = State(initialValue: annotation?.endLocation.text ?? "")
     }
 
-    /// The offset parsed as seconds; decimals are fine ("94.5").
-    private var offset: Double? {
-        Double(offsetText.trimmingCharacters(in: .whitespaces))
+    /// The end location, pasted ("51.0712, -1.7983") or as displayed.
+    private var endLocation: TrackLocation? {
+        TrackLocation(parsing: locationText)
     }
 
     var body: some View {
@@ -50,10 +54,11 @@ struct AnnotationForm: View {
                 TextField("Text", text: $text, axis: .vertical)
                     .lineLimit(3...6)
                     .help("What scrolls across the banner; line breaks become spaces")
-                TextField("Offset (seconds)", text: $offsetText, prompt: Text("e.g. 94.5"))
-                    .help(
-                        "Seconds from the start of the raw front footage at which "
-                            + "the banner should finish")
+                LocationField(
+                    title: "End location", text: $locationText,
+                    help: "Where the journey should be as the banner finishes: latitude, "
+                        + "longitude, as copied from a map",
+                    placement: placement, identifier: "annotation-end")
             }
             if let saveError {
                 Text(saveError)
@@ -74,22 +79,21 @@ struct AnnotationForm: View {
             }
         }
         .padding()
-        .frame(width: 440)
+        .frame(width: 520)
     }
 
     /// The video name becomes a file name, so it can't be empty or contain
-    /// a path separator; the text must have something to scroll; the offset
-    /// must parse as a non-negative number of seconds.
+    /// a path separator; the text must have something to scroll; the track
+    /// must pass the end location exactly once.
     private var isValid: Bool {
         let name = video.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, !name.contains("/") else { return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        guard let offset, offset >= 0 else { return false }
-        return true
+        return isPlaceable(locationText, on: placement)
     }
 
     private func save() {
-        guard let offset else { return }
+        guard let endLocation else { return }
         isSaving = true
         saveError = nil
         let name = video.trimmingCharacters(in: .whitespaces)
@@ -98,10 +102,10 @@ struct AnnotationForm: View {
                 let library = JourneyLibrary(databasePath: databasePath)
                 if let annotation {
                     try await library.updateAnnotation(
-                        id: annotation.id, video: name, text: text, offset: offset)
+                        id: annotation.id, video: name, text: text, endLocation: endLocation)
                 } else {
                     try await library.addAnnotation(
-                        journeyID: journey.id, video: name, text: text, offset: offset)
+                        journeyID: journey.id, video: name, text: text, endLocation: endLocation)
                 }
                 onSave()
                 dismiss()

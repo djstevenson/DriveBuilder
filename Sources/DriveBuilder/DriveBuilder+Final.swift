@@ -15,7 +15,9 @@ extension DriveBuilder {
                 + "and the drive segment runs for whichever of the three is shortest "
                 + "after its offset. Annotation banners (the database's \"annotations\" "
                 + "table, already rendered by the annotations command) composite over the "
-                + "bottom of the drive segment, each ending at its own offset. Requires "
+                + "bottom of the drive segment, each ending as the journey passes its end "
+                + "location; camera overrides likewise run between the locations bounding "
+                + "them. Requires "
                 + "intro.mov, route_map.mov, dials.mov, and outro.mov "
                 + "to have been rendered already.")
 

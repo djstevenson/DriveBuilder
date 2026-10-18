@@ -1,0 +1,278 @@
+import CoreMedia
+import Foundation
+import Testing
+
+@testable import DriveBuilder
+
+/// A journey directory containing a real telemetry.sqlite3, checked into the
+/// repo so these tests don't depend on anything outside it.
+private let fixtureDirectory = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appending(path: "Fixtures/A338 Northbound")
+
+private let metresPerDegree = 6_371_000.0 * .pi / 180
+private let originLatitude = 51.0
+private let originLongitude = -1.8
+private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+/// A location `north` and `east` metres from the synthetic tracks' origin.
+private func location(north: Double, east: Double = 0) -> TrackLocation {
+    TrackLocation(
+        latitude: originLatitude + north / metresPerDegree,
+        longitude: originLongitude
+            + east / (metresPerDegree * cos(originLatitude * .pi / 180)))
+}
+
+/// A 10 Hz track through `points` (north, east metres from the origin),
+/// with the odometer accumulated along it.
+private func track(_ points: [(north: Double, east: Double)]) -> [TelemetryRecord] {
+    var odometer = 0.0
+    return points.enumerated().map { index, point in
+        if index > 0 {
+            let previous = points[index - 1]
+            odometer += hypot(point.north - previous.north, point.east - previous.east)
+        }
+        let here = location(north: point.north, east: point.east)
+        return TelemetryRecord(
+            id: Int64(index), journeyID: 1,
+            timestamp: start.addingTimeInterval(Double(index) * TelemetryRecord.sampleInterval),
+            latitude: here.latitude, longitude: here.longitude, altitude: 0, speed: 0,
+            heading: 0, accelForward: nil, accelLateral: nil, speedLimit: nil, file: nil,
+            source: "test", odometer: odometer)
+    }
+}
+
+/// Heading due north at 70 mph (about 3.13 m per 10 Hz sample).
+private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
+    -> [TelemetryRecord]
+{
+    track((0..<samples).map { (Double($0) * 3.13, east($0)) })
+}
+
+// MARK: - TrackLocation
+
+@Test func trackLocationParsesPastedAndDisplayedCoordinates() {
+    let expected = TrackLocation(latitude: 51.0712, longitude: -1.7983)
+    #expect(TrackLocation(parsing: "51.0712, -1.7983") == expected)
+    #expect(TrackLocation(parsing: " 51.0712,-1.7983 ") == expected)
+    #expect(TrackLocation(parsing: "51.0712 -1.7983") == expected)
+    #expect(TrackLocation(parsing: "51.0712° N, 1.7983° W") == expected)
+    #expect(TrackLocation(parsing: "51.0712°N, 1.7983°W") == expected)
+    #expect(TrackLocation(parsing: "51.0712n 1.7983w") == expected)
+    #expect(
+        TrackLocation(parsing: "33.8° S, 151.2° E")
+            == TrackLocation(latitude: -33.8, longitude: 151.2))
+}
+
+@Test func trackLocationRejectsMalformedOrOutOfRangeCoordinates() {
+    #expect(TrackLocation(parsing: "") == nil)
+    #expect(TrackLocation(parsing: "51.0712") == nil)
+    #expect(TrackLocation(parsing: "51.0712, -1.7983, 4") == nil)
+    #expect(TrackLocation(parsing: "abc, def") == nil)
+    // A sign and a hemisphere together would be ambiguous.
+    #expect(TrackLocation(parsing: "51.0712° N, -1.7983° W") == nil)
+    // Hemispheres in the wrong order.
+    #expect(TrackLocation(parsing: "1.7983° W, 51.0712° N") == nil)
+    #expect(TrackLocation(parsing: "91, 0") == nil)
+    #expect(TrackLocation(parsing: "0, 181") == nil)
+}
+
+@Test func trackLocationTextRoundTrips() throws {
+    let location = TrackLocation(latitude: 51.071234, longitude: -1.798311)
+    #expect(location.text == "51.07123°N, 1.79831°W")
+    let parsed = try #require(TrackLocation(parsing: location.text))
+    #expect(abs(parsed.latitude - location.latitude) < 0.00001)
+    #expect(abs(parsed.longitude - location.longitude) < 0.00001)
+}
+
+// MARK: - TrackLocator
+
+@Test func locatorInterpolatesBetweenSamples() throws {
+    // Halfway between samples 100 and 101.
+    let fix = try TrackLocator(records: northbound()).locate(location(north: 100.5 * 3.13))
+    #expect(fix.sampleIndex == 100)
+    #expect(abs(fix.fraction - 0.5) < 1e-6)
+    #expect(abs(fix.telemetrySeconds - 10.05) < 1e-6)
+    #expect(abs(fix.odometerMetres - 100.5 * 3.13) < 1e-6)
+    #expect(fix.distanceMetres < 0.01)
+}
+
+@Test func locatorAcceptsAPinBesideTheTrack() throws {
+    let fix = try TrackLocator(records: northbound()).locate(location(north: 500, east: 20))
+    #expect(abs(fix.distanceMetres - 20) < 0.01)
+    #expect(abs(fix.telemetrySeconds - 500 / 3.13 / 10) < 1e-3)
+}
+
+@Test func locatorRejectsAPinTooFarFromTheTrack() {
+    #expect(throws: TrackLocatorError.self) {
+        try TrackLocator(records: northbound()).locate(location(north: 500, east: 50))
+    }
+    do {
+        _ = try TrackLocator(records: northbound()).locate(location(north: 500, east: 50))
+    } catch .tooFar(let nearest, let threshold) {
+        #expect(abs(nearest - 50) < 0.01)
+        #expect(threshold == TrackLocator.defaultThresholdMetres)
+    } catch {
+        Issue.record("expected tooFar, got \(error)")
+    }
+}
+
+@Test func locatorRejectsALocationPassedTwice() {
+    // Out 1 km and straight back.
+    let out = (0...320).map { (Double($0) * 3.13, 0.0) }
+    let records = track(out + out.reversed().dropFirst())
+    do {
+        _ = try TrackLocator(records: records).locate(location(north: 300))
+        Issue.record("expected the location to be ambiguous")
+    } catch .ambiguous(let seconds) {
+        #expect(seconds.count == 2)
+        #expect(abs(seconds[0] - 300 / 3.13 / 10) < 1e-3)
+        #expect(abs(seconds[1] - (64 - 300 / 3.13 / 10)) < 1e-3)
+    } catch {
+        Issue.record("expected ambiguous, got \(error)")
+    }
+}
+
+@Test func locatorTreatsGPSJitterNearThePinAsOnePass() throws {
+    // The track runs 25 m to one side, but one fix near the pin wanders out
+    // past the threshold, splitting the stretch within it in two.
+    let records = northbound { $0 == 160 ? 40 : 25 }
+    let fix = try TrackLocator(records: records).locate(location(north: 160 * 3.13))
+    #expect(fix.distanceMetres < 26)
+}
+
+@Test func locatorMarksArrivingWhenTheTrackLingersNearThePin() throws {
+    // Stopped 0.5 m short of the pin for ten seconds from sample 100, then
+    // driving on through it.
+    let approach: [(north: Double, east: Double)] = (0..<100).map { (Double($0) * 3.13, 0) }
+    let queue: [(north: Double, east: Double)] = Array(
+        repeating: (100 * 3.13 - 0.5, 0), count: 100)
+    let onwards: [(north: Double, east: Double)] = (100..<300).map { (Double($0) * 3.13, 0) }
+    let points = approach + queue + onwards
+    let fix = try TrackLocator(records: track(points)).locate(location(north: 100 * 3.13))
+    // Arriving at the queue (sample 99's segment ends there), not leaving it.
+    #expect(fix.telemetrySeconds < 10.01)
+}
+
+@Test func locatorRejectsAnEmptyTrack() {
+    #expect(throws: TrackLocatorError.emptyTrack) {
+        try TrackLocator(records: []).locate(location(north: 0))
+    }
+}
+
+@Test func locatorFindsTheFixtureJourneysOwnSamples() throws {
+    let records = try TelemetryStore(
+        path: fixtureDirectory.appending(path: "telemetry.sqlite3").path
+    ).records(journeyID: 1)
+    let locator = TrackLocator(records: records)
+    for index in [1_000, 20_000, 37_000] {
+        let sample = records[index]
+        let fix = try locator.locate(
+            TrackLocation(latitude: sample.latitude, longitude: sample.longitude))
+        let expected = sample.timestamp.timeIntervalSince(records[0].timestamp)
+        #expect(abs(fix.telemetrySeconds - expected) <= TelemetryRecord.sampleInterval)
+        #expect(fix.distanceMetres < 0.01)
+    }
+}
+
+// MARK: - JourneyTimeline
+
+@Test func timelineConvertsBetweenClocks() throws {
+    var offsets = StartOffsets()
+    offsets.front = 12
+    offsets.telemetry = 3.5
+    offsets.rear = 2
+    offsets.left = 7
+    offsets.right = 0.5
+    let timeline = JourneyTimeline(startOffsets: offsets, driveSegmentStart: 40)
+    #expect(timeline.driveSeconds(100, on: .front) == 88)
+    #expect(timeline.driveSeconds(100, on: .telemetry) == 96.5)
+    #expect(timeline.driveSeconds(128, on: .final) == 88)
+    #expect(timeline.driveSeconds(100, on: .left) == 93)
+    #expect(timeline.convert(100, from: .front, to: .final) == 128)
+    #expect(timeline.convert(100, from: .front, to: .telemetry) == 91.5)
+    #expect(timeline.convert(100, from: .front, to: .rear) == 90)
+    // Round trips through every clock.
+    for clock in JourneyTimeline.Clock.allCases {
+        let there = try #require(timeline.convert(250.25, from: .front, to: clock))
+        #expect(timeline.convert(there, from: clock, to: .front) == 250.25)
+    }
+}
+
+@Test func timelineHasNoFinalClockUntilTheDriveSegmentStartIsKnown() {
+    let timeline = JourneyTimeline(startOffsets: StartOffsets())
+    #expect(timeline.seconds(10, on: .final) == nil)
+    #expect(timeline.driveSeconds(10, on: .final) == nil)
+    #expect(timeline.convert(10, from: .front, to: .telemetry) == 10)
+    // Nor side-camera clocks for cameras the journey doesn't have.
+    #expect(timeline.seconds(10, on: .left) == nil)
+    #expect(timeline.convert(10, from: .right, to: .front) == nil)
+}
+
+// MARK: - JourneyPlacement
+
+/// The synthetic northbound track, with front 12 s and telemetry 3 s
+/// offsets and final.mov's drive segment starting 40 s in.
+private func placement(finalKnown: Bool = true) -> JourneyPlacement {
+    var offsets = StartOffsets()
+    offsets.front = 12
+    offsets.telemetry = 3
+    offsets.left = 5
+    return JourneyPlacement(
+        locator: TrackLocator(records: northbound()),
+        timeline: JourneyTimeline(startOffsets: offsets, driveSegmentStart: finalKnown ? 40 : nil))
+}
+
+@Test func placementOffersOnlyTheClocksTheJourneyHas() {
+    #expect(placement().clocks == [.final, .dials, .front, .rear, .left])
+    #expect(placement(finalKnown: false).clocks == [.dials, .front, .rear, .left])
+}
+
+@Test func placementReadsALocationOffEveryClock() throws {
+    let placement = placement()
+    // Sample 500 is 50 s into the telemetry, so 47 s into the drive.
+    let placed = try placement.place(location(north: 500 * 3.13)).get()
+    #expect(abs(placed.driveSeconds - 47) < 1e-6)
+    #expect(abs((placement.seconds(placed, on: .final) ?? 0) - 87) < 1e-6)
+    #expect(abs((placement.seconds(placed, on: .front) ?? 0) - 59) < 1e-6)
+    #expect(abs((placement.seconds(placed, on: .left) ?? 0) - 52) < 1e-6)
+    #expect(placement.seconds(placed, on: .right) == nil)
+    // Asking again gives the same (cached) answer.
+    #expect(try placement.place(location(north: 500 * 3.13)).get() == placed)
+
+    #expect(throws: TrackLocatorError.self) {
+        try placement.place(location(north: 500, east: 100)).get()
+    }
+}
+
+@Test func placementTurnsATimeOnAnyClockBackIntoALocation() throws {
+    let placement = placement()
+    // 87 s into final.mov and 59 s into front.mov are both sample 500.
+    for (seconds, clock) in [(87.0, JourneyPlacement.Clock.final), (59, .front), (47, .dials)] {
+        let found = try #require(placement.location(atSeconds: seconds, on: clock))
+        let placed = try placement.place(found).get()
+        #expect(abs(placed.driveSeconds - 47) < 1e-6, "\(clock)")
+    }
+    // Before the track starts, and on a camera the journey doesn't have.
+    #expect(placement.location(atSeconds: 0, on: .final) == nil)
+    #expect(placement.location(atSeconds: 59, on: .right) == nil)
+}
+
+@Test func placementSortsItemsByWhenTheTrackPassesThem() {
+    let placement = placement()
+    let items = [
+        ("third", location(north: 900 * 3.13)),
+        ("off the track", location(north: 100, east: 500)),
+        ("first", location(north: 100 * 3.13)),
+        ("second", location(north: 400 * 3.13)),
+    ]
+    #expect(
+        placement.sorted(items, by: \.1).map(\.0) == ["first", "second", "third", "off the track"])
+}
+
+@Test func driveSegmentStartsAfterTheIntroAndRouteMapLessTheirCrossFades() {
+    func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 600) }
+    let start = JourneyTimeline.driveSegmentStart(
+        introDuration: time(10), routeMapDuration: time(20), crossFade: time(1))
+    #expect(start == time(28))
+}

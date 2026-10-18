@@ -44,11 +44,21 @@ struct FinalVideoComposer {
 
     /// Windows during which the camera slot (where the rear view sits,
     /// top-left) shows another camera, or the rear view with its own label.
-    /// Times are in raw front.mov seconds, like annotation offsets. They
-    /// mustn't overlap. A side camera pushes into the slot from its own side
-    /// (and back out) over `cameraSlideSeconds`; the old label shrinks away
-    /// as it starts, and the new one pops in once it lands.
-    var cameraOverrides: [CameraOverride] = []
+    /// They mustn't overlap. A side camera pushes into the slot from its own
+    /// side (and back out) over `cameraSlideSeconds`; the old label shrinks
+    /// away as it starts, and the new one pops in once it lands.
+    var cameraOverrides: [PlacedCameraOverride] = []
+
+    /// A camera override placed on the drive segment: `start` and `end` are
+    /// drive seconds (into the synced drive segment), found from the
+    /// override's locations.
+    struct PlacedCameraOverride: Sendable, Equatable {
+        let camera: CameraOverride.Camera
+        let start: Double
+        let end: Double
+        /// The label actually shown.
+        let label: String
+    }
 
     /// The camera slot's transition timings (see `CameraOverride`).
     static let cameraSlideSeconds = CameraOverride.slideSeconds
@@ -63,7 +73,11 @@ struct FinalVideoComposer {
     static let cameraLabelPadding = 16.0
 
     /// Length of each cross-fade between clips.
-    var crossFadeSeconds: Double = 1.0
+    var crossFadeSeconds = defaultCrossFadeSeconds
+
+    /// The cross-fade `JourneyRenderer` renders with, which Studio also
+    /// assumes when working out where final.mov's drive segment starts.
+    static let defaultCrossFadeSeconds = 1.0
 
     /// The gap the overlays keep from the frame's edges: the rear-view inset
     /// sits this far from the top and left, the dial column this far from
@@ -97,15 +111,13 @@ struct FinalVideoComposer {
     /// the drive segment.
     struct AnnotationClip {
         let url: URL
-        /// Seconds from the start of the raw front.mov file — before that
-        /// file's own `startOffsets.front` is applied — at which the
-        /// annotation should finish. This is the annotation row's own
-        /// "offset", not yet adjusted to the synced drive-segment timeline.
-        let rawEndOffsetSeconds: Double
+        /// Drive seconds (into the synced drive segment) at which the
+        /// annotation should finish: when the track passes its end location.
+        let endSeconds: Double
     }
 
     /// Annotations to composite over the drive segment, in the frame's
-    /// bottom-left corner, each ending at its own `rawEndOffsetSeconds`.
+    /// bottom-left corner, each ending at its own `endSeconds`.
     var annotationClips: [AnnotationClip] = []
 
     var framesPerSecond: Int32 = 30
@@ -167,7 +179,7 @@ struct FinalVideoComposer {
 
     /// A camera override placed on the final timeline.
     private struct CameraWindow {
-        let override: CameraOverride
+        let override: PlacedCameraOverride
         let range: CMTimeRange
     }
 
@@ -265,7 +277,8 @@ struct FinalVideoComposer {
         let introEnd = intro.duration
         let routeStart = introEnd - fade
         let routeEnd = routeStart + routeMap.duration
-        let dialsStart = routeEnd - fade
+        let dialsStart = JourneyTimeline.driveSegmentStart(
+            introDuration: intro.duration, routeMapDuration: routeMap.duration, crossFade: fade)
         let driveClips =
             [
                 ("dials.mov", dials.duration - dialsSourceStart),
@@ -699,19 +712,18 @@ struct FinalVideoComposer {
         // Annotations composite over the drive segment, in the bottom-left
         // corner (the banner's own width stops it a grid gap short of the
         // dial column, whose bottom map also finishes on the bottom edge), each
-        // ending at its own offset (from the annotations table, adjusted here from
-        // "since the start of raw front.mov" to the synced drive-segment
-        // timeline) and playing through its own built-in
-        // opening/scrolling/closing animation, so no opacity ramp is needed.
+        // ending when the track passes its end location and playing through
+        // its own built-in opening/scrolling/closing animation, so no
+        // opacity ramp is needed.
         for annotationClip in annotationClips {
             let clip = try await loadClip(at: annotationClip.url)
-            let syncedEndSeconds = annotationClip.rawEndOffsetSeconds - startOffsets.front
-            let end = dialsStart + CMTime(seconds: syncedEndSeconds, preferredTimescale: timescale)
+            let end =
+                dialsStart + CMTime(seconds: annotationClip.endSeconds, preferredTimescale: timescale)
             let start = end - clip.duration
             guard start >= dialsStart, end <= dialsEnd else {
                 print(
                     String(
-                        format: "final: skipping %@ — its offset doesn't fall within the drive "
+                        format: "final: skipping %@ — it doesn't fall within the drive "
                             + "segment (%.1fs to %.1fs).",
                         annotationClip.url.lastPathComponent, dialsStart.seconds, dialsEnd.seconds))
                 continue
@@ -803,7 +815,7 @@ struct FinalVideoComposer {
     // MARK: - Camera slot
 
     /// Validates `cameraOverrides` and places them on the final timeline:
-    /// raw front.mov seconds become drive-segment time, clamped to
+    /// drive seconds become final-video time, clamped to
     /// `visibleRange` (after the route map, before the outro). Throws for a
     /// window that's empty, overlaps another, uses a camera the journey
     /// doesn't have, or runs past the end of that camera's video.
@@ -815,7 +827,7 @@ struct FinalVideoComposer {
             let total = max(0, seconds)
             return String(format: "%d:%04.1f", Int(total) / 60, total.truncatingRemainder(dividingBy: 60))
         }
-        func describe(_ override: CameraOverride) -> String {
+        func describe(_ override: PlacedCameraOverride) -> String {
             "The \(override.camera.rawValue) camera override at \(time(override.start))"
                 + "-\(time(override.end))"
         }
@@ -840,9 +852,8 @@ struct FinalVideoComposer {
                     message: "\(describe(override)) needs the journey's \(override.camera.rawValue) "
                         + "camera, but it has no \(override.camera.rawValue)_offset.")
             }
-            func finalTime(_ rawSeconds: Double) -> CMTime {
-                dialsStart
-                    + CMTime(seconds: rawSeconds - startOffsets.front, preferredTimescale: timescale)
+            func finalTime(_ driveSeconds: Double) -> CMTime {
+                dialsStart + CMTime(seconds: driveSeconds, preferredTimescale: timescale)
             }
             let start = max(finalTime(override.start), visibleRange.start)
             let end = min(finalTime(override.end), visibleRange.end)
@@ -958,7 +969,7 @@ struct FinalVideoComposer {
             let labelOut = end - (isSide ? cameraSlideSeconds : cameraLabelHideSeconds)
             canvas.addSublayer(
                 label(
-                    window.override.displayLabel,
+                    window.override.label,
                     scale: [(0, 0)] + pop(at: labelIn) + hide(at: labelOut) + [(totalSeconds, 0)]))
             hiddenSpans.append((start, end))
         }

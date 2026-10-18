@@ -90,8 +90,8 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).allJourneys()
     }
 
-    /// A journey's annotation banners, in the order they end in the video.
-    /// No rows just means none have been authored yet, not an error.
+    /// A journey's annotation banners, in the order they were added. No
+    /// rows just means none have been authored yet, not an error.
     ///
     /// `@concurrent` for the same reason as `journeys()`: keep the database
     /// read off the caller's (GUI main) actor.
@@ -105,10 +105,10 @@ package struct JourneyLibrary: Sendable {
     /// an annotation on that journey.
     @concurrent
     package func addAnnotation(
-        journeyID: Int64, video: String, text: String, offset: Double
+        journeyID: Int64, video: String, text: String, endLocation: TrackLocation
     ) async throws {
         try TelemetryStore(path: databasePath).insertAnnotation(
-            journeyID: journeyID, video: video, text: text, offset: offset)
+            journeyID: journeyID, video: video, text: text, endLocation: endLocation)
     }
 
     /// Rewrites one annotation's fields. Throws
@@ -116,10 +116,10 @@ package struct JourneyLibrary: Sendable {
     /// with another annotation on the same journey.
     @concurrent
     package func updateAnnotation(
-        id: Int64, video: String, text: String, offset: Double
+        id: Int64, video: String, text: String, endLocation: TrackLocation
     ) async throws {
         try TelemetryStore(path: databasePath).updateAnnotation(
-            id: id, video: video, text: text, offset: offset)
+            id: id, video: video, text: text, endLocation: endLocation)
     }
 
     /// Removes one annotation. The rendered movie, if any, stays on disk.
@@ -145,8 +145,8 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).updateLength(journeyID: journeyID, length: length)
     }
 
-    /// A journey's camera-slot overrides, in start order. No rows just
-    /// means the slot shows the rear view throughout.
+    /// A journey's camera-slot overrides, in the order they were added. No
+    /// rows just means the slot shows the rear view throughout.
     @concurrent
     package func cameraOverrides(journeyID: Int64) async throws -> [CameraOverride] {
         try TelemetryStore(path: databasePath).cameraOverrides(journeyID: journeyID)
@@ -156,8 +156,8 @@ package struct JourneyLibrary: Sendable {
     /// the camera's default.
     @concurrent
     package func addCameraOverride(
-        journeyID: Int64, camera: CameraOverride.Camera, start: Double, end: Double,
-        label: String?
+        journeyID: Int64, camera: CameraOverride.Camera, start: TrackLocation,
+        end: TrackLocation, label: String?
     ) async throws {
         try TelemetryStore(path: databasePath).insertCameraOverride(
             journeyID: journeyID, camera: camera, start: start, end: end, label: label)
@@ -166,7 +166,8 @@ package struct JourneyLibrary: Sendable {
     /// Rewrites one camera-slot override's fields.
     @concurrent
     package func updateCameraOverride(
-        id: Int64, camera: CameraOverride.Camera, start: Double, end: Double, label: String?
+        id: Int64, camera: CameraOverride.Camera, start: TrackLocation, end: TrackLocation,
+        label: String?
     ) async throws {
         try TelemetryStore(path: databasePath).updateCameraOverride(
             id: id, camera: camera, start: start, end: end, label: label)
@@ -178,8 +179,8 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).deleteCameraOverride(id: id)
     }
 
-    /// A journey's route-map labels, in the order the animated track
-    /// reveals them. No rows just means none have been authored yet.
+    /// A journey's route-map labels, in the order they were added. No rows
+    /// just means none have been authored yet.
     @concurrent
     package func routeMapLabels(journeyID: Int64) async throws -> [RouteMapLabel] {
         try TelemetryStore(path: databasePath).routeMapLabels(journeyID: journeyID)
@@ -189,22 +190,23 @@ package struct JourneyLibrary: Sendable {
     /// the renderer's default gap.
     @concurrent
     package func addRouteMapLabel(
-        journeyID: Int64, offset: Double, title: String, subtitle: String,
+        journeyID: Int64, revealLocation: TrackLocation, title: String, subtitle: String,
         location: RouteMapLabel.Location, distance: Double?
     ) async throws {
         try TelemetryStore(path: databasePath).insertRouteMapLabel(
-            journeyID: journeyID, offset: offset, title: title, subtitle: subtitle,
+            journeyID: journeyID, revealLocation: revealLocation, title: title,
+            subtitle: subtitle,
             location: location, distance: distance)
     }
 
     /// Rewrites one route-map label's fields.
     @concurrent
     package func updateRouteMapLabel(
-        id: Int64, offset: Double, title: String, subtitle: String,
+        id: Int64, revealLocation: TrackLocation, title: String, subtitle: String,
         location: RouteMapLabel.Location, distance: Double?
     ) async throws {
         try TelemetryStore(path: databasePath).updateRouteMapLabel(
-            id: id, offset: offset, title: title, subtitle: subtitle,
+            id: id, revealLocation: revealLocation, title: title, subtitle: subtitle,
             location: location, distance: distance)
     }
 
@@ -372,18 +374,19 @@ package struct JourneyRenderer: Sendable {
         progress?(.preparing)
         let outputDirectory = try makeOutputDirectory()
 
-        // Only the stretch of track the final video shows. Label offsets
-        // stay in raw telemetry seconds in the database (like annotation
-        // offsets) and are shifted onto the trimmed track here.
-        let records = try syncedRecords(from: try self.records())
-        let telemetryOffset =
-            try store.journeyStartOffsets(journeyID: journeyID)?.telemetry ?? 0
+        // Only the stretch of track the final video shows. Each label pops
+        // in when that track passes its reveal location.
+        let allRecords = try self.records()
+        let records = try syncedRecords(from: allRecords)
+        let placer = try ItemPlacer(store: store, journeyID: journeyID, records: allRecords)
 
         var config = RouteMapConfig()
         config.labels = try store.routeMapLabels(journeyID: journeyID).map { label in
             RouteMapConfig.Label(
-                offset: label.offset - telemetryOffset, title: label.title,
-                subtitle: label.subtitle, location: label.location, distance: label.distance)
+                offset: try placer.driveSeconds(
+                    at: label.revealLocation, for: "Route-map label \"\(label.title)\""),
+                title: label.title, subtitle: label.subtitle, location: label.location,
+                distance: label.distance)
         }
 
         var tileRenderer = MaprenderTileRenderer(directory: URL(filePath: mapDirectory))
@@ -487,7 +490,17 @@ package struct JourneyRenderer: Sendable {
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
         composer.startOffsets = try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets()
-        composer.cameraOverrides = try store.cameraOverrides(journeyID: journeyID)
+        // Overrides and annotations happen where the track passes their
+        // locations, found here as drive seconds.
+        let placer = try ItemPlacer(store: store, journeyID: journeyID, records: try records())
+        composer.cameraOverrides = try store.cameraOverrides(journeyID: journeyID).map { override in
+            let item = "The \(override.camera.rawValue) camera override"
+            return FinalVideoComposer.PlacedCameraOverride(
+                camera: override.camera,
+                start: try placer.driveSeconds(at: override.startLocation, for: "\(item)'s start"),
+                end: try placer.driveSeconds(at: override.endLocation, for: "\(item)'s end"),
+                label: override.displayLabel)
+        }
         // A side camera is available only when the journey has its offset;
         // an override that uses it then needs its video, like front.mov.
         let videoDirectory = URL(filePath: journeyDirectory).appending(path: "video")
@@ -502,7 +515,8 @@ package struct JourneyRenderer: Sendable {
         composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
             FinalVideoComposer.AnnotationClip(
                 url: outputDirectory.appending(path: "\(annotation.video).mov"),
-                rawEndOffsetSeconds: annotation.offset)
+                endSeconds: try placer.driveSeconds(
+                    at: annotation.endLocation, for: "Annotation \"\(annotation.video)\""))
         }
         if let progress {
             composer.progressHandler = { fraction in progress(.fraction(fraction)) }

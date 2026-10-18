@@ -10,6 +10,16 @@ private struct AnnotationsLoadKey: Equatable {
     let outputsVersion: Int
 }
 
+/// Keys the journey's placement to everything it depends on: the track
+/// (the journey), its sync offsets, and the rendered intro and route map
+/// (via the outputs version), which decide where final.mov's drive
+/// segment starts.
+private struct PlacementLoadKey: Equatable {
+    let journeyID: Int64
+    let outputsVersion: Int
+    let offsets: [Double?]
+}
+
 extension RouteMapLabel {
     /// Namespaced row identity for the journey pane's List. Labels and
     /// annotations both use their SQLite row ids, which overlap (both
@@ -36,6 +46,9 @@ struct JourneyDetailView: View {
     @State private var addingLabel = false
     @State private var editingLabel: RouteMapLabel?
     @State private var labelToDelete: RouteMapLabel?
+    /// The journey's track and timeline, for when items happen; nil while
+    /// loading or if the journey has no telemetry.
+    @State private var placement: JourneyPlacement?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,7 +69,7 @@ struct JourneyDetailView: View {
                         Text("No route map labels yet")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(routeMapLabels, id: \.listRowID) { label in
+                        ForEach(sortedRouteMapLabels, id: \.listRowID) { label in
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(label.title)
@@ -84,16 +97,17 @@ struct JourneyDetailView: View {
                         }
                     }
                 }
-                CameraOverridesSection(journey: journey)
+                CameraOverridesSection(journey: journey, placement: placement)
                 Section {
                     if annotations.isEmpty {
                         Text("No annotations yet")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(annotations) { annotation in
+                        ForEach(sortedAnnotations) { annotation in
                             HStack {
                                 ComponentRow(
-                                    component: .component(for: annotation), journey: journey)
+                                    component: .component(for: annotation), journey: journey,
+                                    detail: annotationDetail(annotation))
                                 Button("Edit", systemImage: "pencil") {
                                     editingAnnotation = annotation
                                 }
@@ -177,13 +191,29 @@ struct JourneyDetailView: View {
             await loadAnnotations()
             await loadRouteMapLabels()
         }
+        .task(
+            id: PlacementLoadKey(
+                journeyID: journey.id, outputsVersion: model.outputsVersion,
+                offsets: [
+                    journey.frontOffset, journey.rearOffset, journey.telemetryOffset,
+                    journey.leftOffset, journey.rightOffset,
+                ])
+        ) {
+            placement = try? await JourneyLibrary(databasePath: model.databasePath)
+                .placement(journeyID: journey.id)
+        }
         .sheet(isPresented: $addingLabel) {
-            RouteMapLabelForm(journey: journey, databasePath: model.databasePath) {
+            RouteMapLabelForm(
+                journey: journey, databasePath: model.databasePath, placement: placement
+            ) {
                 Task { await loadRouteMapLabels() }
             }
         }
         .sheet(item: $editingLabel) { label in
-            RouteMapLabelForm(journey: journey, databasePath: model.databasePath, label: label) {
+            RouteMapLabelForm(
+                journey: journey, databasePath: model.databasePath, label: label,
+                placement: placement
+            ) {
                 Task { await loadRouteMapLabels() }
             }
         }
@@ -202,7 +232,9 @@ struct JourneyDetailView: View {
             Text("\u{201C}\(label.title)\u{201D} will be removed from the database.")
         }
         .sheet(isPresented: $addingAnnotation) {
-            AnnotationForm(journey: journey, databasePath: model.databasePath) {
+            AnnotationForm(
+                journey: journey, databasePath: model.databasePath, placement: placement
+            ) {
                 Task { await loadAnnotations() }
             }
         }
@@ -234,7 +266,8 @@ struct JourneyDetailView: View {
         }
         .sheet(item: $editingAnnotation) { annotation in
             AnnotationForm(
-                journey: journey, databasePath: model.databasePath, annotation: annotation
+                journey: journey, databasePath: model.databasePath, annotation: annotation,
+                placement: placement
             ) {
                 Task { await loadAnnotations() }
             }
@@ -312,10 +345,34 @@ struct JourneyDetailView: View {
                 .routeMapLabels(journeyID: journey.id)) ?? []
     }
 
-    /// The label row's caption: when the sign appears, which side it sits
-    /// on, its gap from the track point when overridden, and the subtitle.
+    /// The annotations in the order they finish, once the track's loaded.
+    private var sortedAnnotations: [Annotation] {
+        placement?.sorted(annotations, by: \.endLocation) ?? annotations
+    }
+
+    /// The labels in the order the track reveals them, once it's loaded.
+    private var sortedRouteMapLabels: [RouteMapLabel] {
+        placement?.sorted(routeMapLabels, by: \.revealLocation) ?? routeMapLabels
+    }
+
+    /// The annotation row's extra caption: when the banner finishes (or
+    /// where, until the track loads), or why it can't be placed.
+    private func annotationDetail(_ annotation: Annotation) -> String {
+        guard let placement else { return "Finishes at \(annotation.endLocation.text)" }
+        return switch placement.place(annotation.endLocation) {
+        case .success(let placed): "Finishes at \(placement.timeText(placed))"
+        case .failure(let error): "Not placeable: \(error)"
+        }
+    }
+
+    /// The label row's caption: when the sign appears (or where, until the
+    /// track loads), which side it sits on, its gap from the track point
+    /// when overridden, and the subtitle.
     private func labelDetail(_ label: RouteMapLabel) -> String {
-        var parts = [SourceVideoRow.offsetText(label.offset), label.location.rawValue]
+        var parts = [
+            placement?.caption(for: label.revealLocation) ?? label.revealLocation.text,
+            label.location.rawValue,
+        ]
         if let distance = label.distance {
             parts.append(
                 "gap \(distance.formatted(.number.precision(.fractionLength(0...1))))")

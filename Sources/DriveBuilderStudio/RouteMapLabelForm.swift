@@ -2,7 +2,7 @@ import DriveBuilder
 import SwiftUI
 
 /// The sheet for authoring a route-map label: a road-sign placard revealed
-/// as the animated track reaches its offset. Creates a new label, or edits
+/// as the animated track reaches its location. Creates a new label, or edits
 /// `label` when one is passed.
 struct RouteMapLabelForm: View {
     @Environment(\.dismiss) private var dismiss
@@ -11,13 +11,16 @@ struct RouteMapLabelForm: View {
     let databasePath: String
     /// The label being edited; nil means the form creates a new one.
     let label: RouteMapLabel?
+    /// The journey's track, to show when the sign appears; nil while
+    /// loading.
+    let placement: JourneyPlacement?
     /// Runs after a successful save, so the labels list re-reads the
     /// database.
     let onSave: () -> Void
 
     @State private var title: String
     @State private var subtitle: String
-    @State private var offsetText: String
+    @State private var locationText: String
     @State private var location: RouteMapLabel.Location
     @State private var distanceText: String
     @State private var isSaving = false
@@ -25,22 +28,24 @@ struct RouteMapLabelForm: View {
 
     init(
         journey: JourneySummary, databasePath: String, label: RouteMapLabel? = nil,
-        onSave: @escaping () -> Void
+        placement: JourneyPlacement?, onSave: @escaping () -> Void
     ) {
         self.journey = journey
         self.databasePath = databasePath
         self.label = label
+        self.placement = placement
         self.onSave = onSave
         _title = State(initialValue: label?.title ?? "")
         _subtitle = State(initialValue: label?.subtitle ?? "")
-        _offsetText = State(initialValue: label.map { String($0.offset) } ?? "")
+        _locationText = State(initialValue: label?.revealLocation.text ?? "")
         _location = State(initialValue: label?.location ?? .right)
         _distanceText = State(initialValue: label?.distance.map { String($0) } ?? "")
     }
 
-    /// The offset parsed as seconds; decimals are fine ("383.5").
-    private var offset: Double? {
-        Double(offsetText.trimmingCharacters(in: .whitespaces))
+    /// Where the track reveals the sign, pasted ("51.0712, -1.7983") or as
+    /// displayed.
+    private var revealLocation: TrackLocation? {
+        TrackLocation(parsing: locationText)
     }
 
     /// The distance parsed as a number; blank means the renderer's default
@@ -61,10 +66,11 @@ struct RouteMapLabelForm: View {
                     .help("The sign's main line")
                 TextField("Subtitle", text: $subtitle, prompt: Text("e.g. Historic cathedral city"))
                     .help("The sign's smaller second line; may be empty")
-                TextField("Offset (seconds)", text: $offsetText, prompt: Text("e.g. 383"))
-                    .help(
-                        "Seconds from the start of the telemetry at which the "
-                            + "track reaches the sign")
+                LocationField(
+                    title: "Location", text: $locationText,
+                    help: "Where the track reveals the sign: latitude, longitude, as copied "
+                        + "from a map",
+                    placement: placement, identifier: "route-map-label")
                 Picker("Side", selection: $location) {
                     Text("Left").tag(RouteMapLabel.Location.left)
                     Text("Right").tag(RouteMapLabel.Location.right)
@@ -93,22 +99,22 @@ struct RouteMapLabelForm: View {
             }
         }
         .padding()
-        .frame(width: 440)
+        .frame(width: 520)
     }
 
-    /// The title is the sign's main line, so it can't be empty; the offset
-    /// must parse as a non-negative number of seconds; the distance must be
-    /// blank (default) or a non-negative number.
+    /// The title is the sign's main line, so it can't be empty; the track must
+    /// pass the location exactly once; the distance must be blank (default)
+    /// or a non-negative number.
     private var isValid: Bool {
         guard !title.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        guard let offset, offset >= 0 else { return false }
+        guard isPlaceable(locationText, on: placement) else { return false }
         guard let distance else { return false }
         if let value = distance, value < 0 { return false }
         return true
     }
 
     private func save() {
-        guard let offset, let distance else { return }
+        guard let revealLocation, let distance else { return }
         isSaving = true
         saveError = nil
         let title = title.trimmingCharacters(in: .whitespaces)
@@ -118,11 +124,13 @@ struct RouteMapLabelForm: View {
                 let library = JourneyLibrary(databasePath: databasePath)
                 if let label {
                     try await library.updateRouteMapLabel(
-                        id: label.id, offset: offset, title: title, subtitle: subtitle,
+                        id: label.id, revealLocation: revealLocation, title: title,
+                        subtitle: subtitle,
                         location: location, distance: distance)
                 } else {
                     try await library.addRouteMapLabel(
-                        journeyID: journey.id, offset: offset, title: title, subtitle: subtitle,
+                        journeyID: journey.id, revealLocation: revealLocation, title: title,
+                        subtitle: subtitle,
                         location: location, distance: distance)
                 }
                 onSave()

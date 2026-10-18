@@ -4,10 +4,9 @@ import Foundation
 /// shows a camera other than its default rear view - or the rear view with
 /// its own label - stored in the `camera_overrides` table.
 ///
-/// `start`/`end` are seconds from the start of the raw front.mov, before
-/// its own start offset is applied: the same convention as annotation
-/// offsets, so a side view and the annotation explaining it can be read off
-/// the same player.
+/// The window runs from when the journey passes `startLocation` to when it
+/// passes `endLocation`, so it stays put when the sync offsets change, and
+/// lasts longer if the car slows through it.
 package struct CameraOverride: Identifiable, Sendable, Equatable {
     /// A camera that can fill the slot. The raw value is the `camera`
     /// column's text.
@@ -29,19 +28,20 @@ package struct CameraOverride: Identifiable, Sendable, Equatable {
     package let id: Int64
     package let journeyID: Int64
     package let camera: Camera
-    package let start: Double
-    package let end: Double
+    package let startLocation: TrackLocation
+    package let endLocation: TrackLocation
     /// Custom label text; nil means `camera.defaultLabel`.
     package let label: String?
 
     package init(
-        id: Int64, journeyID: Int64, camera: Camera, start: Double, end: Double, label: String?
+        id: Int64, journeyID: Int64, camera: Camera, startLocation: TrackLocation,
+        endLocation: TrackLocation, label: String?
     ) {
         self.id = id
         self.journeyID = journeyID
         self.camera = camera
-        self.start = start
-        self.end = end
+        self.startLocation = startLocation
+        self.endLocation = endLocation
         self.label = label
     }
 
