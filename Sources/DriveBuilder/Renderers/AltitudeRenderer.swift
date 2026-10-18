@@ -125,11 +125,11 @@ struct AltitudeRenderer: DialRenderer {
     /// `Artwork` can measure the journey's extreme values directly, without
     /// duplicating the format strings (and risking them drifting apart).
     static func latitudeText(_ latitude: Double) -> String {
-        String(format: "%.4f", abs(latitude)) + (latitude < 0 ? "S" : "N")
+        String(format: "%.4f", abs(latitude)) + (latitude < 0 ? "\u{00B0}S" : "\u{00B0}N")
     }
 
     static func longitudeText(_ longitude: Double) -> String {
-        String(format: "%.4f", abs(longitude)) + (longitude < 0 ? "W" : "E")
+        String(format: "%.4f", abs(longitude)) + (longitude < 0 ? "\u{00B0}W" : "\u{00B0}E")
     }
 
     /// No "ALT" label either, for the same reason - a small mountain icon
