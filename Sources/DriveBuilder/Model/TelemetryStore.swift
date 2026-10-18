@@ -82,17 +82,18 @@ struct TelemetryStore {
         return records
     }
 
-    /// Every annotation banner for `journeyID`, in the order they end in the
-    /// video. No rows just means none have been authored yet, not an error.
+    /// Every annotation banner for `journeyID`, in the order they were
+    /// added (when each ends depends on the track, not the row). No rows
+    /// just means none have been authored yet, not an error.
     func annotations(journeyID: Int64) throws -> [Annotation] {
         let database = try open(flags: SQLITE_OPEN_READONLY)
         defer { sqlite3_close(database) }
 
         let sql = """
-            SELECT id, journey_id, video, text, offset
+            SELECT id, journey_id, video, text, latitude, longitude
             FROM annotations
             WHERE journey_id = ?
-            ORDER BY offset
+            ORDER BY id
             """
 
         var statement: OpaquePointer?
@@ -116,22 +117,22 @@ struct TelemetryStore {
                     journeyID: sqlite3_column_int64(statement, 1),
                     video: Self.string(statement, column: 2) ?? "",
                     text: Self.string(statement, column: 3) ?? "",
-                    offset: sqlite3_column_double(statement, 4)))
+                    endLocation: Self.location(statement, column: 4)))
         }
         return annotations
     }
 
-    /// A journey's route-map labels, in the order the animated track
-    /// reveals them. No rows just means none have been authored yet.
+    /// A journey's route-map labels, in the order they were added. No rows
+    /// just means none have been authored yet.
     func routeMapLabels(journeyID: Int64) throws -> [RouteMapLabel] {
         let database = try open(flags: SQLITE_OPEN_READONLY)
         defer { sqlite3_close(database) }
 
         let sql = """
-            SELECT id, journey_id, offset, title, subtitle, location, distance
+            SELECT id, journey_id, latitude, longitude, title, subtitle, location, distance
             FROM route_map_labels
             WHERE journey_id = ?
-            ORDER BY offset
+            ORDER BY id
             """
 
         var statement: OpaquePointer?
@@ -153,12 +154,12 @@ struct TelemetryStore {
                 RouteMapLabel(
                     id: sqlite3_column_int64(statement, 0),
                     journeyID: sqlite3_column_int64(statement, 1),
-                    offset: sqlite3_column_double(statement, 2),
-                    title: Self.string(statement, column: 3) ?? "",
-                    subtitle: Self.string(statement, column: 4) ?? "",
+                    revealLocation: Self.location(statement, column: 2),
+                    title: Self.string(statement, column: 4) ?? "",
+                    subtitle: Self.string(statement, column: 5) ?? "",
                     location: RouteMapLabel.Location(
-                        rawValue: Self.string(statement, column: 5) ?? "") ?? .right,
-                    distance: Self.double(statement, column: 6)))
+                        rawValue: Self.string(statement, column: 6) ?? "") ?? .right,
+                    distance: Self.double(statement, column: 7)))
         }
         return labels
     }
@@ -166,7 +167,7 @@ struct TelemetryStore {
     /// Inserts one route-map label for `journeyID`. A nil `distance` is
     /// stored as NULL, meaning the renderer's default gap.
     func insertRouteMapLabel(
-        journeyID: Int64, offset: Double, title: String, subtitle: String,
+        journeyID: Int64, revealLocation: TrackLocation, title: String, subtitle: String,
         location: RouteMapLabel.Location, distance: Double?
     ) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
@@ -178,8 +179,8 @@ struct TelemetryStore {
                 database,
                 """
                 INSERT INTO route_map_labels
-                    (journey_id, offset, title, subtitle, location, distance)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (journey_id, latitude, longitude, title, subtitle, location, distance)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 -1, &statement, nil)
                 == SQLITE_OK
@@ -189,14 +190,14 @@ struct TelemetryStore {
         defer { sqlite3_finalize(statement) }
 
         sqlite3_bind_int64(statement, 1, journeyID)
-        sqlite3_bind_double(statement, 2, offset)
-        sqlite3_bind_text(statement, 3, title, -1, Self.transient)
-        sqlite3_bind_text(statement, 4, subtitle, -1, Self.transient)
-        sqlite3_bind_text(statement, 5, location.rawValue, -1, Self.transient)
+        Self.bind(revealLocation, to: statement, at: 2)
+        sqlite3_bind_text(statement, 4, title, -1, Self.transient)
+        sqlite3_bind_text(statement, 5, subtitle, -1, Self.transient)
+        sqlite3_bind_text(statement, 6, location.rawValue, -1, Self.transient)
         if let distance {
-            sqlite3_bind_double(statement, 6, distance)
+            sqlite3_bind_double(statement, 7, distance)
         } else {
-            sqlite3_bind_null(statement, 6)
+            sqlite3_bind_null(statement, 7)
         }
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -206,7 +207,7 @@ struct TelemetryStore {
 
     /// Rewrites one route-map label's fields.
     func updateRouteMapLabel(
-        id: Int64, offset: Double, title: String, subtitle: String,
+        id: Int64, revealLocation: TrackLocation, title: String, subtitle: String,
         location: RouteMapLabel.Location, distance: Double?
     ) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
@@ -218,7 +219,8 @@ struct TelemetryStore {
                 database,
                 """
                 UPDATE route_map_labels
-                SET offset = ?, title = ?, subtitle = ?, location = ?, distance = ?
+                SET latitude = ?, longitude = ?, title = ?, subtitle = ?, location = ?,
+                    distance = ?
                 WHERE id = ?
                 """,
                 -1, &statement, nil)
@@ -228,16 +230,16 @@ struct TelemetryStore {
         }
         defer { sqlite3_finalize(statement) }
 
-        sqlite3_bind_double(statement, 1, offset)
-        sqlite3_bind_text(statement, 2, title, -1, Self.transient)
-        sqlite3_bind_text(statement, 3, subtitle, -1, Self.transient)
-        sqlite3_bind_text(statement, 4, location.rawValue, -1, Self.transient)
+        Self.bind(revealLocation, to: statement, at: 1)
+        sqlite3_bind_text(statement, 3, title, -1, Self.transient)
+        sqlite3_bind_text(statement, 4, subtitle, -1, Self.transient)
+        sqlite3_bind_text(statement, 5, location.rawValue, -1, Self.transient)
         if let distance {
-            sqlite3_bind_double(statement, 5, distance)
+            sqlite3_bind_double(statement, 6, distance)
         } else {
-            sqlite3_bind_null(statement, 5)
+            sqlite3_bind_null(statement, 6)
         }
-        sqlite3_bind_int64(statement, 6, id)
+        sqlite3_bind_int64(statement, 7, id)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
@@ -266,17 +268,18 @@ struct TelemetryStore {
         }
     }
 
-    /// A journey's camera-slot overrides, in start order. No rows just means
-    /// the slot shows the rear view throughout.
+    /// A journey's camera-slot overrides, in the order they were added. No
+    /// rows just means the slot shows the rear view throughout.
     func cameraOverrides(journeyID: Int64) throws -> [CameraOverride] {
         let database = try open(flags: SQLITE_OPEN_READONLY)
         defer { sqlite3_close(database) }
 
         let sql = """
-            SELECT id, journey_id, camera, start_offset, end_offset, label
+            SELECT id, journey_id, camera, start_latitude, start_longitude,
+                end_latitude, end_longitude, label
             FROM camera_overrides
             WHERE journey_id = ?
-            ORDER BY start_offset
+            ORDER BY id
             """
 
         var statement: OpaquePointer?
@@ -304,9 +307,9 @@ struct TelemetryStore {
                     id: sqlite3_column_int64(statement, 0),
                     journeyID: sqlite3_column_int64(statement, 1),
                     camera: camera,
-                    start: sqlite3_column_double(statement, 3),
-                    end: sqlite3_column_double(statement, 4),
-                    label: Self.string(statement, column: 5)))
+                    startLocation: Self.location(statement, column: 3),
+                    endLocation: Self.location(statement, column: 5),
+                    label: Self.string(statement, column: 7)))
         }
         return overrides
     }
@@ -314,26 +317,29 @@ struct TelemetryStore {
     /// Inserts one camera-slot override for `journeyID`. A nil `label` is
     /// stored as NULL, meaning the camera's default label.
     func insertCameraOverride(
-        journeyID: Int64, camera: CameraOverride.Camera, start: Double, end: Double,
-        label: String?
+        journeyID: Int64, camera: CameraOverride.Camera, start: TrackLocation,
+        end: TrackLocation, label: String?
     ) throws {
         try writeCameraOverride(
             sql: """
                 INSERT INTO camera_overrides
-                    (camera, start_offset, end_offset, label, journey_id)
-                VALUES (?, ?, ?, ?, ?)
+                    (camera, start_latitude, start_longitude, end_latitude, end_longitude,
+                    label, journey_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
             camera: camera, start: start, end: end, label: label, key: journeyID)
     }
 
     /// Rewrites one camera-slot override's fields.
     func updateCameraOverride(
-        id: Int64, camera: CameraOverride.Camera, start: Double, end: Double, label: String?
+        id: Int64, camera: CameraOverride.Camera, start: TrackLocation, end: TrackLocation,
+        label: String?
     ) throws {
         try writeCameraOverride(
             sql: """
                 UPDATE camera_overrides
-                SET camera = ?, start_offset = ?, end_offset = ?, label = ?
+                SET camera = ?, start_latitude = ?, start_longitude = ?, end_latitude = ?,
+                    end_longitude = ?, label = ?
                 WHERE id = ?
                 """,
             camera: camera, start: start, end: end, label: label, key: id)
@@ -342,7 +348,7 @@ struct TelemetryStore {
     /// Runs an insert or update whose parameters are the override's fields
     /// followed by `key` (the journey id or the row id).
     private func writeCameraOverride(
-        sql: String, camera: CameraOverride.Camera, start: Double, end: Double,
+        sql: String, camera: CameraOverride.Camera, start: TrackLocation, end: TrackLocation,
         label: String?, key: Int64
     ) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
@@ -355,14 +361,14 @@ struct TelemetryStore {
         defer { sqlite3_finalize(statement) }
 
         sqlite3_bind_text(statement, 1, camera.rawValue, -1, Self.transient)
-        sqlite3_bind_double(statement, 2, start)
-        sqlite3_bind_double(statement, 3, end)
+        Self.bind(start, to: statement, at: 2)
+        Self.bind(end, to: statement, at: 4)
         if let label {
-            sqlite3_bind_text(statement, 4, label, -1, Self.transient)
+            sqlite3_bind_text(statement, 6, label, -1, Self.transient)
         } else {
-            sqlite3_bind_null(statement, 4)
+            sqlite3_bind_null(statement, 6)
         }
-        sqlite3_bind_int64(statement, 5, key)
+        sqlite3_bind_int64(statement, 7, key)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
@@ -396,7 +402,7 @@ struct TelemetryStore {
     /// duplicate throws `duplicateAnnotation` rather than a raw SQLite
     /// constraint message.
     func insertAnnotation(
-        journeyID: Int64, video: String, text: String, offset: Double
+        journeyID: Int64, video: String, text: String, endLocation: TrackLocation
     ) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
@@ -405,7 +411,10 @@ struct TelemetryStore {
         guard
             sqlite3_prepare_v2(
                 database,
-                "INSERT INTO annotations (journey_id, video, text, offset) VALUES (?, ?, ?, ?)",
+                """
+                INSERT INTO annotations (journey_id, video, text, latitude, longitude)
+                VALUES (?, ?, ?, ?, ?)
+                """,
                 -1, &statement, nil)
                 == SQLITE_OK
         else {
@@ -416,7 +425,7 @@ struct TelemetryStore {
         sqlite3_bind_int64(statement, 1, journeyID)
         sqlite3_bind_text(statement, 2, video, -1, Self.transient)
         sqlite3_bind_text(statement, 3, text, -1, Self.transient)
-        sqlite3_bind_double(statement, 4, offset)
+        Self.bind(endLocation, to: statement, at: 4)
 
         let result = sqlite3_step(statement)
         guard result == SQLITE_DONE else {
@@ -433,7 +442,9 @@ struct TelemetryStore {
     /// Rewrites one annotation's fields. Like inserting, the new `video`
     /// must stay unique within the journey, so a clash throws
     /// `duplicateAnnotation`.
-    func updateAnnotation(id: Int64, video: String, text: String, offset: Double) throws {
+    func updateAnnotation(
+        id: Int64, video: String, text: String, endLocation: TrackLocation
+    ) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
 
@@ -441,7 +452,10 @@ struct TelemetryStore {
         guard
             sqlite3_prepare_v2(
                 database,
-                "UPDATE annotations SET video = ?, text = ?, offset = ? WHERE id = ?",
+                """
+                UPDATE annotations SET video = ?, text = ?, latitude = ?, longitude = ?
+                WHERE id = ?
+                """,
                 -1, &statement, nil)
                 == SQLITE_OK
         else {
@@ -451,8 +465,8 @@ struct TelemetryStore {
 
         sqlite3_bind_text(statement, 1, video, -1, Self.transient)
         sqlite3_bind_text(statement, 2, text, -1, Self.transient)
-        sqlite3_bind_double(statement, 3, offset)
-        sqlite3_bind_int64(statement, 4, id)
+        Self.bind(endLocation, to: statement, at: 3)
+        sqlite3_bind_int64(statement, 5, id)
 
         let result = sqlite3_step(statement)
         guard result == SQLITE_DONE else {
@@ -1088,7 +1102,7 @@ struct TelemetryStore {
             endJunctionRoad: Self.string(statement, column: 8))
     }
 
-    private func open(flags: Int32) throws -> OpaquePointer? {
+    func open(flags: Int32) throws -> OpaquePointer? {
         var database: OpaquePointer?
         guard sqlite3_open_v2(path, &database, flags, nil) == SQLITE_OK else {
             let message = Self.lastErrorMessage(database)
@@ -1098,14 +1112,14 @@ struct TelemetryStore {
         return database
     }
 
-    private func execute(_ database: OpaquePointer?, _ sql: String) throws {
+    func execute(_ database: OpaquePointer?, _ sql: String) throws {
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
         }
     }
 
     /// Tells SQLite to copy bound strings rather than borrow Swift's buffers.
-    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     private static func record(from statement: OpaquePointer?) throws -> TelemetryRecord {
         let rawTimestamp = string(statement, column: 2) ?? ""
@@ -1142,12 +1156,26 @@ struct TelemetryStore {
         isNull(statement, column: column) ? nil : Int(sqlite3_column_int64(statement, column))
     }
 
-    private static func string(_ statement: OpaquePointer?, column: Int32) -> String? {
+    /// The location in a latitude column and the longitude column after it.
+    private static func location(_ statement: OpaquePointer?, column: Int32) -> TrackLocation {
+        TrackLocation(
+            latitude: sqlite3_column_double(statement, column),
+            longitude: sqlite3_column_double(statement, column + 1))
+    }
+
+    /// Binds `location` to parameter `index` (latitude) and the one after
+    /// it (longitude).
+    static func bind(_ location: TrackLocation, to statement: OpaquePointer?, at index: Int32) {
+        sqlite3_bind_double(statement, index, location.latitude)
+        sqlite3_bind_double(statement, index + 1, location.longitude)
+    }
+
+    static func string(_ statement: OpaquePointer?, column: Int32) -> String? {
         guard let text = sqlite3_column_text(statement, column) else { return nil }
         return String(decodingCString: text, as: UTF8.self)
     }
 
-    private static func lastErrorMessage(_ database: OpaquePointer?) -> String {
+    static func lastErrorMessage(_ database: OpaquePointer?) -> String {
         guard let database, let message = sqlite3_errmsg(database) else {
             return "unknown SQLite error"
         }

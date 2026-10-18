@@ -42,6 +42,12 @@ struct JourneyTimeline: Sendable {
         introDuration - crossFade + routeMapDuration - crossFade
     }
 
+    /// When the drive segment reaches `fix`, in drive seconds (negative if
+    /// the fix comes before the synced start).
+    func driveSeconds(at fix: TrackFix) -> Double {
+        fix.telemetrySeconds - startOffsets.telemetry
+    }
+
     /// `seconds` read off `clock`, as drive seconds; nil for the final
     /// clock while `driveSegmentStart` is unknown.
     func driveSeconds(_ seconds: Double, on clock: Clock) -> Double? {

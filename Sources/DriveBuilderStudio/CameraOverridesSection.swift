@@ -92,8 +92,8 @@ struct CameraOverridesSection: View {
             Button("Cancel", role: .cancel) {}
         } message: { cameraOverride in
             Text(
-                "The \(cameraOverride.camera.displayName.lowercased()) view at "
-                    + "\(ClockTime.text(for: cameraOverride.start)) will be removed; the slot "
+                "The \(cameraOverride.camera.displayName.lowercased()) view from "
+                    + "\(cameraOverride.startLocation.text) will be removed; the slot "
                     + "shows the rear view there instead.")
         }
         .alert(
@@ -109,11 +109,10 @@ struct CameraOverridesSection: View {
         }
     }
 
-    /// The row's caption: camera and window, in raw front.mov time.
+    /// The row's caption: camera and the locations bounding its window.
     private func detail(_ cameraOverride: CameraOverride) -> String {
         "\(cameraOverride.camera.displayName) camera \u{00B7} "
-            + "\(ClockTime.text(for: cameraOverride.start))\u{2013}"
-            + ClockTime.text(for: cameraOverride.end)
+            + "\(cameraOverride.startLocation.text) \u{2192} \(cameraOverride.endLocation.text)"
     }
 
     private func load() async {

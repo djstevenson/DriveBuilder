@@ -120,6 +120,35 @@ struct TrackLocator {
         }
     }
 
+    /// Where the track was `telemetrySeconds` after its first sample,
+    /// interpolated between samples: the inverse of `locate(_:)`, for
+    /// turning a time read off the footage into a location. Nil outside the
+    /// recorded track.
+    func location(atTelemetrySeconds telemetrySeconds: Double) -> TrackLocation? {
+        guard let first = records.first?.timestamp, let last = records.last?.timestamp,
+            telemetrySeconds >= 0, telemetrySeconds <= last.timeIntervalSince(first)
+        else { return nil }
+        let time = first.addingTimeInterval(telemetrySeconds)
+        // The first sample after `time`, by binary search.
+        var low = 0
+        var high = records.count
+        while low < high {
+            let middle = (low + high) / 2
+            if records[middle].timestamp <= time { low = middle + 1 } else { high = middle }
+        }
+        guard low > 0, low < records.count else {
+            let record = records[min(low, records.count - 1)]
+            return TrackLocation(latitude: record.latitude, longitude: record.longitude)
+        }
+        let a = records[low - 1]
+        let b = records[low]
+        let span = b.timestamp.timeIntervalSince(a.timestamp)
+        let fraction = span > 0 ? time.timeIntervalSince(a.timestamp) / span : 0
+        return TrackLocation(
+            latitude: a.latitude + (b.latitude - a.latitude) * fraction,
+            longitude: a.longitude + (b.longitude - a.longitude) * fraction)
+    }
+
     /// Whether the car barely moved between sample `index` and the next.
     private func isStationary(segment index: Int) -> Bool {
         guard index + 1 < records.count else { return true }

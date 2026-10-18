@@ -10,6 +10,11 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .appending(path: "Fixtures/A338 Northbound")
 
+/// Locations along the fixture's A338 for items to sit at.
+private let bournemouth = TrackLocation(latitude: 50.76499, longitude: -1.81223)
+private let ringwood = TrackLocation(latitude: 50.83991, longitude: -1.81230)
+private let salisbury = TrackLocation(latitude: 51.07412, longitude: -1.78681)
+
 @Test func loadsRecordsAndDirectoryForAnExistingJourney() throws {
     let store = TelemetryStore(path: fixtureDirectory.appending(path: "telemetry.sqlite3").path)
     #expect(try store.records(journeyID: 1).count == 38397)
@@ -168,32 +173,33 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(try store.routeMapLabels(journeyID: 1).isEmpty)
 
     try store.insertRouteMapLabel(
-        journeyID: 1, offset: 383.0, title: "A31 Near Ringwood",
+        journeyID: 1, revealLocation: ringwood, title: "A31 Near Ringwood",
         subtitle: "A338/A31 multiplex", location: .left, distance: 75.0)
     try store.insertRouteMapLabel(
-        journeyID: 1, offset: 0.0, title: "A338 Start",
+        journeyID: 1, revealLocation: bournemouth, title: "A338 Start",
         subtitle: "", location: .right, distance: nil)
 
-    // Reads back in offset order, with the nil distance kept as nil.
+    // Reads back in the order added, with the nil distance kept as nil.
     var labels = try store.routeMapLabels(journeyID: 1)
-    #expect(labels.map(\.title) == ["A338 Start", "A31 Near Ringwood"])
-    #expect(labels[0].location == .right)
-    #expect(labels[0].distance == nil)
-    #expect(labels[1].location == .left)
-    #expect(labels[1].distance == 75.0)
+    #expect(labels.map(\.title) == ["A31 Near Ringwood", "A338 Start"])
+    #expect(labels.map(\.revealLocation) == [ringwood, bournemouth])
+    #expect(labels[0].location == .left)
+    #expect(labels[0].distance == 75.0)
+    #expect(labels[1].location == .right)
+    #expect(labels[1].distance == nil)
     #expect(try store.routeMapLabels(journeyID: 999).isEmpty)
 
     try store.updateRouteMapLabel(
-        id: labels[0].id, offset: 5.0, title: "A338",
+        id: labels[1].id, revealLocation: salisbury, title: "A338",
         subtitle: "Near Bournemouth", location: .left, distance: 40.0)
     labels = try store.routeMapLabels(journeyID: 1)
-    #expect(labels[0].title == "A338")
-    #expect(labels[0].offset == 5.0)
-    #expect(labels[0].subtitle == "Near Bournemouth")
-    #expect(labels[0].location == .left)
-    #expect(labels[0].distance == 40.0)
+    #expect(labels[1].title == "A338")
+    #expect(labels[1].revealLocation == salisbury)
+    #expect(labels[1].subtitle == "Near Bournemouth")
+    #expect(labels[1].location == .left)
+    #expect(labels[1].distance == 40.0)
 
-    try store.deleteRouteMapLabel(id: labels[0].id)
+    try store.deleteRouteMapLabel(id: labels[1].id)
     #expect(try store.routeMapLabels(journeyID: 1).map(\.title) == ["A31 Near Ringwood"])
 }
 
@@ -248,7 +254,7 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(try store.annotations(journeyID: 1).isEmpty)
 }
 
-@Test func annotationsReadBackInOffsetOrder() throws {
+@Test func annotationsReadBackInTheOrderAdded() throws {
     // Copy the fixture database rather than mutating the checked-in fixture.
     let tempDirectory = FileManager.default.temporaryDirectory
         .appending(path: "telemetry-store-test-\(UUID().uuidString)")
@@ -267,18 +273,22 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
         sqlite3_exec(
             database,
             """
-            INSERT INTO annotations (journey_id, video, text, offset) VALUES
-                (1, 'A27 On', 'We multiplex onto the A27.', 120.0),
-                (1, 'Start', 'We start our journey.', 30.0);
+            INSERT INTO annotations (journey_id, video, text, latitude, longitude) VALUES
+                (1, 'A27 On', 'We multiplex onto the A27.', 50.84, -1.81),
+                (1, 'Start', 'We start our journey.', 50.78, -1.81);
             """,
             nil, nil, nil) == SQLITE_OK)
 
     let store = TelemetryStore(path: databaseURL.path)
     let annotations = try store.annotations(journeyID: 1)
-    // Rows come back in offset order, not insertion order.
-    #expect(annotations.map(\.video) == ["Start", "A27 On"])
-    #expect(annotations.map(\.text) == ["We start our journey.", "We multiplex onto the A27."])
-    #expect(annotations.map(\.offset) == [30.0, 120.0])
+    // When each ends depends on the track, so rows come back as added.
+    #expect(annotations.map(\.video) == ["A27 On", "Start"])
+    #expect(annotations.map(\.text) == ["We multiplex onto the A27.", "We start our journey."])
+    #expect(
+        annotations.map(\.endLocation) == [
+            TrackLocation(latitude: 50.84, longitude: -1.81),
+            TrackLocation(latitude: 50.78, longitude: -1.81),
+        ])
     #expect(annotations.map(\.journeyID) == [1, 1])
 
     // A journey with no rows of its own doesn't see another's.
@@ -298,17 +308,19 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
         at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
 
     let store = TelemetryStore(path: databaseURL.path)
-    try store.insertAnnotation(journeyID: 1, video: "Start", text: "We begin.", offset: 94.5)
+    try store.insertAnnotation(
+        journeyID: 1, video: "Start", text: "We begin.", endLocation: bournemouth)
 
     let annotations = try store.annotations(journeyID: 1)
     #expect(annotations.count == 1)
     #expect(annotations[0].video == "Start")
     #expect(annotations[0].text == "We begin.")
-    #expect(annotations[0].offset == 94.5)
+    #expect(annotations[0].endLocation == bournemouth)
     #expect(annotations[0].journeyID == 1)
 
     do {
-        try store.insertAnnotation(journeyID: 1, video: "Start", text: "Again.", offset: 200)
+        try store.insertAnnotation(
+            journeyID: 1, video: "Start", text: "Again.", endLocation: ringwood)
         Issue.record("expected a duplicate video name to throw")
     } catch TelemetryStoreError.duplicateAnnotation(let video) {
         #expect(video == "Start")
@@ -330,29 +342,31 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
         at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
 
     let store = TelemetryStore(path: databaseURL.path)
-    try store.insertAnnotation(journeyID: 1, video: "Start", text: "We begin.", offset: 30)
-    try store.insertAnnotation(journeyID: 1, video: "A27 On", text: "We multiplex.", offset: 120)
+    try store.insertAnnotation(
+        journeyID: 1, video: "Start", text: "We begin.", endLocation: bournemouth)
+    try store.insertAnnotation(
+        journeyID: 1, video: "A27 On", text: "We multiplex.", endLocation: ringwood)
     let inserted = try store.annotations(journeyID: 1)
     #expect(inserted.map(\.video) == ["Start", "A27 On"])
 
-    // Rewriting every field, including a new offset that reorders the rows.
+    // Rewriting every field.
     try store.updateAnnotation(
-        id: inserted[0].id, video: "Depart", text: "Off we go.", offset: 150)
+        id: inserted[0].id, video: "Depart", text: "Off we go.", endLocation: salisbury)
     let updated = try store.annotations(journeyID: 1)
-    #expect(updated.map(\.video) == ["A27 On", "Depart"])
-    #expect(updated[1].text == "Off we go.")
-    #expect(updated[1].offset == 150)
+    #expect(updated.map(\.video) == ["Depart", "A27 On"])
+    #expect(updated[0].text == "Off we go.")
+    #expect(updated[0].endLocation == salisbury)
 
     // Renaming onto another annotation's video is rejected.
     do {
         try store.updateAnnotation(
-            id: updated[1].id, video: "A27 On", text: "Off we go.", offset: 150)
+            id: updated[0].id, video: "A27 On", text: "Off we go.", endLocation: salisbury)
         Issue.record("expected renaming to a duplicate video to throw")
     } catch TelemetryStoreError.duplicateAnnotation(let video) {
         #expect(video == "A27 On")
     }
 
-    try store.deleteAnnotation(id: updated[0].id)
+    try store.deleteAnnotation(id: updated[1].id)
     #expect(try store.annotations(journeyID: 1).map(\.video) == ["Depart"])
 }
 
@@ -402,24 +416,25 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(try store.cameraOverrides(journeyID: 1).isEmpty)
 
     try store.insertCameraOverride(
-        journeyID: 1, camera: .right, start: 1563, end: 1624, label: nil)
+        journeyID: 1, camera: .right, start: salisbury, end: ringwood, label: nil)
     try store.insertCameraOverride(
-        journeyID: 1, camera: .left, start: 25, end: 48, label: "Looking left at the old A303")
+        journeyID: 1, camera: .left, start: bournemouth, end: ringwood,
+        label: "Looking left at the old A303")
     var overrides = try store.cameraOverrides(journeyID: 1)
-    // In start order, the default label standing in for NULL.
-    #expect(overrides.map(\.camera) == [.left, .right])
-    #expect(overrides[0].displayLabel == "Looking left at the old A303")
-    #expect(overrides[1].label == nil)
-    #expect(overrides[1].displayLabel == "Right view")
+    // In the order added, the default label standing in for NULL.
+    #expect(overrides.map(\.camera) == [.right, .left])
+    #expect(overrides[0].label == nil)
+    #expect(overrides[0].displayLabel == "Right view")
+    #expect(overrides[1].displayLabel == "Looking left at the old A303")
 
     try store.updateCameraOverride(
-        id: overrides[0].id, camera: .rear, start: 30, end: 50, label: nil)
+        id: overrides[1].id, camera: .rear, start: ringwood, end: salisbury, label: nil)
     overrides = try store.cameraOverrides(journeyID: 1)
-    #expect(overrides[0].camera == .rear)
-    #expect(overrides[0].start == 30 && overrides[0].end == 50)
-    #expect(overrides[0].label == nil)
+    #expect(overrides[1].camera == .rear)
+    #expect(overrides[1].startLocation == ringwood && overrides[1].endLocation == salisbury)
+    #expect(overrides[1].label == nil)
 
-    try store.deleteCameraOverride(id: overrides[0].id)
+    try store.deleteCameraOverride(id: overrides[1].id)
     #expect(try store.cameraOverrides(journeyID: 1).map(\.camera) == [.right])
 
     // Deleting the journey takes its overrides with it.

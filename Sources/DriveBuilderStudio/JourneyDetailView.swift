@@ -312,10 +312,10 @@ struct JourneyDetailView: View {
                 .routeMapLabels(journeyID: journey.id)) ?? []
     }
 
-    /// The label row's caption: when the sign appears, which side it sits
+    /// The label row's caption: where the sign appears, which side it sits
     /// on, its gap from the track point when overridden, and the subtitle.
     private func labelDetail(_ label: RouteMapLabel) -> String {
-        var parts = [SourceVideoRow.offsetText(label.offset), label.location.rawValue]
+        var parts = [label.revealLocation.text, label.location.rawValue]
         if let distance = label.distance {
             parts.append(
                 "gap \(distance.formatted(.number.precision(.fractionLength(0...1))))")

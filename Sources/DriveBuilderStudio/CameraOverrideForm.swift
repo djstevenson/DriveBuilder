@@ -44,13 +44,13 @@ struct CameraOverrideForm: View {
         self.otherOverrides = otherOverrides.filter { $0.id != cameraOverride?.id }
         self.onSave = onSave
         _camera = State(initialValue: cameraOverride?.camera ?? .left)
-        _startText = State(initialValue: cameraOverride.map { ClockTime.text(for: $0.start) } ?? "")
-        _endText = State(initialValue: cameraOverride.map { ClockTime.text(for: $0.end) } ?? "")
+        _startText = State(initialValue: cameraOverride?.startLocation.text ?? "")
+        _endText = State(initialValue: cameraOverride?.endLocation.text ?? "")
         _labelText = State(initialValue: cameraOverride?.label ?? "")
     }
 
-    private var start: Double? { ClockTime.seconds(from: startText) }
-    private var end: Double? { ClockTime.seconds(from: endText) }
+    private var start: TrackLocation? { TrackLocation(parsing: startText) }
+    private var end: TrackLocation? { TrackLocation(parsing: endText) }
 
     /// Blank means the camera's default label, stored as NULL.
     private var label: String? {
@@ -59,23 +59,13 @@ struct CameraOverrideForm: View {
     }
 
     /// Why the current values can't be saved, if they can't; nil when valid.
-    /// An unparsed time just disables Add/Save without a message.
+    /// An unparsed location just disables Add/Save without a message. Order,
+    /// length, and overlaps depend on when the track passes the locations,
+    /// so the final render checks those.
     private var problem: String? {
         if camera != .rear && journey.startOffset(camera == .left ? .left : .right) == nil {
             return "This journey has no \(camera.displayName.lowercased()) camera: "
                 + "set its offset under Source Video and Telemetry first."
-        }
-        guard let start, let end else { return nil }
-        if end <= start { return "The end must be after the start." }
-        if end - start < CameraOverride.minimumDuration {
-            return "Too short: a camera view needs at least "
-                + "\(CameraOverride.minimumDuration.formatted()) s for the camera to push "
-                + "in, its label to appear, and the camera to push back out."
-        }
-        if let clash = otherOverrides.first(where: { start < $0.end && $0.start < end }) {
-            return "Overlaps the \(clash.camera.displayName.lowercased()) view at "
-                + "\(ClockTime.text(for: clash.start))\u{2013}\(ClockTime.text(for: clash.end)); "
-                + "only one camera can fill the slot at a time."
         }
         return nil
     }
@@ -92,12 +82,12 @@ struct CameraOverrideForm: View {
                 }
                 .pickerStyle(.menu)
                 .help("Which camera fills the slot during this window")
-                TextField("Start", text: $startText, prompt: Text("e.g. 25:03"))
+                TextField("Start location", text: $startText, prompt: Text("e.g. 51.0712, -1.7983"))
                     .help(
-                        "Position in the raw front.mov, like annotation offsets: "
-                            + "m:ss, h:mm:ss, or seconds")
-                TextField("End", text: $endText, prompt: Text("e.g. 26:04"))
-                    .help("Position in the raw front.mov where the slot returns to the rear view")
+                        "Where the journey is as this camera pushes in: latitude, longitude, "
+                            + "as copied from a map")
+                TextField("End location", text: $endText, prompt: Text("e.g. 51.0745, -1.7968"))
+                    .help("Where the journey is as the slot returns to the rear view")
                 TextField("Label", text: $labelText, prompt: Text(camera.defaultLabel))
                     .help("The slot's label during this window; blank for \u{201C}\(camera.defaultLabel)\u{201D}")
             }
