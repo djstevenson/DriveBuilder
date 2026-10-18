@@ -11,6 +11,9 @@ struct RouteMapLabelForm: View {
     let databasePath: String
     /// The label being edited; nil means the form creates a new one.
     let label: RouteMapLabel?
+    /// The journey's track, to show when the sign appears; nil while
+    /// loading.
+    let placement: JourneyPlacement?
     /// Runs after a successful save, so the labels list re-reads the
     /// database.
     let onSave: () -> Void
@@ -25,11 +28,12 @@ struct RouteMapLabelForm: View {
 
     init(
         journey: JourneySummary, databasePath: String, label: RouteMapLabel? = nil,
-        onSave: @escaping () -> Void
+        placement: JourneyPlacement?, onSave: @escaping () -> Void
     ) {
         self.journey = journey
         self.databasePath = databasePath
         self.label = label
+        self.placement = placement
         self.onSave = onSave
         _title = State(initialValue: label?.title ?? "")
         _subtitle = State(initialValue: label?.subtitle ?? "")
@@ -62,11 +66,11 @@ struct RouteMapLabelForm: View {
                     .help("The sign's main line")
                 TextField("Subtitle", text: $subtitle, prompt: Text("e.g. Historic cathedral city"))
                     .help("The sign's smaller second line; may be empty")
-                TextField(
-                    "Location", text: $locationText, prompt: Text("e.g. 51.0712, -1.7983"))
-                    .help(
-                        "Where the track reveals the sign: latitude, longitude, as copied "
-                            + "from a map")
+                LocationField(
+                    title: "Location", text: $locationText,
+                    help: "Where the track reveals the sign: latitude, longitude, as copied "
+                        + "from a map",
+                    placement: placement, identifier: "route-map-label")
                 Picker("Side", selection: $location) {
                     Text("Left").tag(RouteMapLabel.Location.left)
                     Text("Right").tag(RouteMapLabel.Location.right)
@@ -95,15 +99,15 @@ struct RouteMapLabelForm: View {
             }
         }
         .padding()
-        .frame(width: 440)
+        .frame(width: 520)
     }
 
-    /// The title is the sign's main line, so it can't be empty; the location
-    /// must parse; the distance must be blank (default) or a non-negative
-    /// number.
+    /// The title is the sign's main line, so it can't be empty; the track must
+    /// pass the location exactly once; the distance must be blank (default)
+    /// or a non-negative number.
     private var isValid: Bool {
         guard !title.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        guard revealLocation != nil else { return false }
+        guard isPlaceable(locationText, on: placement) else { return false }
         guard let distance else { return false }
         if let value = distance, value < 0 { return false }
         return true

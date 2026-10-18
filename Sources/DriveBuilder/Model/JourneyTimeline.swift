@@ -16,6 +16,9 @@ struct JourneyTimeline: Sendable {
         /// Seconds into the raw front.mov, before its start offset: what a
         /// player showing the front footage reads.
         case front
+        /// Likewise for the rear and side cameras' raw footage; a side
+        /// camera the journey doesn't have has no clock.
+        case rear, left, right
         /// Seconds into the synced drive segment.
         case drive
         /// Seconds into final.mov, after the intro and route map.
@@ -48,25 +51,29 @@ struct JourneyTimeline: Sendable {
         fix.telemetrySeconds - startOffsets.telemetry
     }
 
-    /// `seconds` read off `clock`, as drive seconds; nil for the final
-    /// clock while `driveSegmentStart` is unknown.
+    /// `seconds` read off `clock`, as drive seconds; nil for a clock the
+    /// journey doesn't have (see `start(of:)`).
     func driveSeconds(_ seconds: Double, on clock: Clock) -> Double? {
-        switch clock {
-        case .telemetry: seconds - startOffsets.telemetry
-        case .front: seconds - startOffsets.front
-        case .drive: seconds
-        case .final: driveSegmentStart.map { seconds - $0 }
-        }
+        start(of: clock).map { seconds - $0 }
     }
 
-    /// `driveSeconds` as read off `clock`; nil for the final clock while
-    /// `driveSegmentStart` is unknown.
+    /// `driveSeconds` as read off `clock`; nil for a clock the journey
+    /// doesn't have (see `start(of:)`).
     func seconds(_ driveSeconds: Double, on clock: Clock) -> Double? {
+        start(of: clock).map { driveSeconds + $0 }
+    }
+
+    /// Where the drive segment starts on `clock`: nil for the final clock
+    /// while `driveSegmentStart` is unknown, and for a missing side camera.
+    func start(of clock: Clock) -> Double? {
         switch clock {
-        case .telemetry: driveSeconds + startOffsets.telemetry
-        case .front: driveSeconds + startOffsets.front
-        case .drive: driveSeconds
-        case .final: driveSegmentStart.map { driveSeconds + $0 }
+        case .telemetry: startOffsets.telemetry
+        case .front: startOffsets.front
+        case .rear: startOffsets.rear
+        case .left: startOffsets.left
+        case .right: startOffsets.right
+        case .drive: 0
+        case .final: driveSegmentStart
         }
     }
 

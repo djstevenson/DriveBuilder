@@ -20,6 +20,9 @@ private struct CameraOverridesLoadKey: Equatable {
 struct CameraOverridesSection: View {
     @Environment(StudioModel.self) private var model
     let journey: JourneySummary
+    /// The journey's track, for when each window opens and closes; nil
+    /// while loading.
+    let placement: JourneyPlacement?
 
     @State private var overrides: [CameraOverride] = []
     @State private var adding = false
@@ -33,7 +36,7 @@ struct CameraOverridesSection: View {
                 Text("Rear view throughout")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(overrides, id: \.listRowID) { cameraOverride in
+                ForEach(sortedOverrides, id: \.listRowID) { cameraOverride in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(cameraOverride.displayLabel)
@@ -66,7 +69,8 @@ struct CameraOverridesSection: View {
         }
         .sheet(isPresented: $adding) {
             CameraOverrideForm(
-                journey: journey, databasePath: model.databasePath, otherOverrides: overrides
+                journey: journey, databasePath: model.databasePath, otherOverrides: overrides,
+                placement: placement
             ) {
                 Task { await load() }
             }
@@ -74,7 +78,7 @@ struct CameraOverridesSection: View {
         .sheet(item: $editing) { cameraOverride in
             CameraOverrideForm(
                 journey: journey, databasePath: model.databasePath,
-                cameraOverride: cameraOverride, otherOverrides: overrides
+                cameraOverride: cameraOverride, otherOverrides: overrides, placement: placement
             ) {
                 Task { await load() }
             }
@@ -109,10 +113,21 @@ struct CameraOverridesSection: View {
         }
     }
 
-    /// The row's caption: camera and the locations bounding its window.
+    /// The overrides in the order the track reaches them, once it's loaded.
+    private var sortedOverrides: [CameraOverride] {
+        placement?.sorted(overrides, by: \.startLocation) ?? overrides
+    }
+
+    /// The row's caption: camera and when its window opens and closes (or
+    /// the locations bounding it, until the track loads).
     private func detail(_ cameraOverride: CameraOverride) -> String {
-        "\(cameraOverride.camera.displayName) camera \u{00B7} "
-            + "\(cameraOverride.startLocation.text) \u{2192} \(cameraOverride.endLocation.text)"
+        let window =
+            placement.map {
+                "\($0.caption(for: cameraOverride.startLocation)) \u{2192} "
+                    + $0.caption(for: cameraOverride.endLocation)
+            }
+            ?? "\(cameraOverride.startLocation.text) \u{2192} \(cameraOverride.endLocation.text)"
+        return "\(cameraOverride.camera.displayName) camera \u{00B7} \(window)"
     }
 
     private func load() async {

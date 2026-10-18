@@ -3,8 +3,8 @@ import SwiftUI
 
 /// The sheet for authoring an annotation banner: the output movie's name,
 /// the text that scrolls across it, and the location the journey should
-/// reach as the banner finishes. Creates a new annotation,
-/// or edits `annotation` when one is passed.
+/// reach as the banner finishes. Creates a new annotation, or edits
+/// `annotation` when one is passed.
 struct AnnotationForm: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -12,6 +12,9 @@ struct AnnotationForm: View {
     let databasePath: String
     /// The annotation being edited; nil means the form creates a new one.
     let annotation: Annotation?
+    /// The journey's track, to show when the banner finishes; nil while
+    /// loading.
+    let placement: JourneyPlacement?
     /// Runs after a successful save, so the annotations list re-reads the
     /// database.
     let onSave: () -> Void
@@ -24,11 +27,12 @@ struct AnnotationForm: View {
 
     init(
         journey: JourneySummary, databasePath: String, annotation: Annotation? = nil,
-        onSave: @escaping () -> Void
+        placement: JourneyPlacement?, onSave: @escaping () -> Void
     ) {
         self.journey = journey
         self.databasePath = databasePath
         self.annotation = annotation
+        self.placement = placement
         self.onSave = onSave
         _video = State(initialValue: annotation?.video ?? "")
         _text = State(initialValue: annotation?.text ?? "")
@@ -50,11 +54,11 @@ struct AnnotationForm: View {
                 TextField("Text", text: $text, axis: .vertical)
                     .lineLimit(3...6)
                     .help("What scrolls across the banner; line breaks become spaces")
-                TextField(
-                    "End location", text: $locationText, prompt: Text("e.g. 51.0712, -1.7983"))
-                    .help(
-                        "Where the journey should be as the banner finishes: latitude, "
-                            + "longitude, as copied from a map")
+                LocationField(
+                    title: "End location", text: $locationText,
+                    help: "Where the journey should be as the banner finishes: latitude, "
+                        + "longitude, as copied from a map",
+                    placement: placement, identifier: "annotation-end")
             }
             if let saveError {
                 Text(saveError)
@@ -75,17 +79,17 @@ struct AnnotationForm: View {
             }
         }
         .padding()
-        .frame(width: 440)
+        .frame(width: 520)
     }
 
     /// The video name becomes a file name, so it can't be empty or contain
-    /// a path separator; the text must have something to scroll; the end
-    /// location must parse.
+    /// a path separator; the text must have something to scroll; the track
+    /// must pass the end location exactly once.
     private var isValid: Bool {
         let name = video.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, !name.contains("/") else { return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return endLocation != nil
+        return isPlaceable(locationText, on: placement)
     }
 
     private func save() {

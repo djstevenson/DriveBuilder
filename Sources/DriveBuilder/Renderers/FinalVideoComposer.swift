@@ -73,7 +73,11 @@ struct FinalVideoComposer {
     static let cameraLabelPadding = 16.0
 
     /// Length of each cross-fade between clips.
-    var crossFadeSeconds: Double = 1.0
+    var crossFadeSeconds = defaultCrossFadeSeconds
+
+    /// The cross-fade `JourneyRenderer` renders with, which Studio also
+    /// assumes when working out where final.mov's drive segment starts.
+    static let defaultCrossFadeSeconds = 1.0
 
     /// The gap the overlays keep from the frame's edges: the rear-view inset
     /// sits this far from the top and left, the dial column this far from

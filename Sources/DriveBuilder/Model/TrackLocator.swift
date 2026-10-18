@@ -46,7 +46,7 @@ package enum TrackLocatorError: Error, Equatable, CustomStringConvertible {
 /// Finds when a journey passed a location: the closest approach of its
 /// recorded track, treated as straight lines between consecutive samples so
 /// a pin between two 10 Hz fixes still gets a sub-sample time.
-struct TrackLocator {
+struct TrackLocator: Sendable {
     /// How close the track must come for a location to count as on it:
     /// generous enough for GPS error and for a pin dropped on the road's
     /// centreline rather than the lane driven.

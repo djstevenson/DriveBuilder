@@ -24,6 +24,9 @@ struct CameraOverrideForm: View {
     let cameraOverride: CameraOverride?
     /// The journey's other overrides, to catch overlaps before saving.
     let otherOverrides: [CameraOverride]
+    /// The journey's track, to show when the window opens and closes and
+    /// check its length and overlaps; nil while loading.
+    let placement: JourneyPlacement?
     /// Runs after a successful save, so the list re-reads the database.
     let onSave: () -> Void
 
@@ -36,12 +39,14 @@ struct CameraOverrideForm: View {
 
     init(
         journey: JourneySummary, databasePath: String, cameraOverride: CameraOverride? = nil,
-        otherOverrides: [CameraOverride], onSave: @escaping () -> Void
+        otherOverrides: [CameraOverride], placement: JourneyPlacement?,
+        onSave: @escaping () -> Void
     ) {
         self.journey = journey
         self.databasePath = databasePath
         self.cameraOverride = cameraOverride
         self.otherOverrides = otherOverrides.filter { $0.id != cameraOverride?.id }
+        self.placement = placement
         self.onSave = onSave
         _camera = State(initialValue: cameraOverride?.camera ?? .left)
         _startText = State(initialValue: cameraOverride?.startLocation.text ?? "")
@@ -59,15 +64,48 @@ struct CameraOverrideForm: View {
     }
 
     /// Why the current values can't be saved, if they can't; nil when valid.
-    /// An unparsed location just disables Add/Save without a message. Order,
-    /// length, and overlaps depend on when the track passes the locations,
-    /// so the final render checks those.
+    /// A location that doesn't parse or place just disables Add/Save, its
+    /// field saying why. Order, length, and overlaps go by when the track
+    /// passes the locations, so they wait for the track to load.
     private var problem: String? {
         if camera != .rear && journey.startOffset(camera == .left ? .left : .right) == nil {
             return "This journey has no \(camera.displayName.lowercased()) camera: "
                 + "set its offset under Source Video and Telemetry first."
         }
+        guard let placement, let window = windowSeconds(from: start, to: end, on: placement) else {
+            return nil
+        }
+        if window.end <= window.start {
+            return "The track reaches the end location before the start location."
+        }
+        if window.end - window.start < CameraOverride.minimumDuration {
+            return "Too short: a camera view needs at least "
+                + "\(CameraOverride.minimumDuration.formatted()) s for the camera to push "
+                + "in, its label to appear, and the camera to push back out."
+        }
+        for other in otherOverrides {
+            guard
+                let otherWindow = windowSeconds(
+                    from: other.startLocation, to: other.endLocation, on: placement),
+                window.start < otherWindow.end, otherWindow.start < window.end
+            else { continue }
+            return "Overlaps the \(other.camera.displayName.lowercased()) view from "
+                + "\(placement.caption(for: other.startLocation)); only one camera can fill "
+                + "the slot at a time."
+        }
         return nil
+    }
+
+    /// When the track passes `start` and `end`, in drive seconds; nil if
+    /// either is missing or can't be placed.
+    private func windowSeconds(
+        from start: TrackLocation?, to end: TrackLocation?, on placement: JourneyPlacement
+    ) -> (start: Double, end: Double)? {
+        guard let start, let end,
+            case .success(let opens) = placement.place(start),
+            case .success(let closes) = placement.place(end)
+        else { return nil }
+        return (opens.driveSeconds, closes.driveSeconds)
     }
 
     var body: some View {
@@ -82,12 +120,15 @@ struct CameraOverrideForm: View {
                 }
                 .pickerStyle(.menu)
                 .help("Which camera fills the slot during this window")
-                TextField("Start location", text: $startText, prompt: Text("e.g. 51.0712, -1.7983"))
-                    .help(
-                        "Where the journey is as this camera pushes in: latitude, longitude, "
-                            + "as copied from a map")
-                TextField("End location", text: $endText, prompt: Text("e.g. 51.0745, -1.7968"))
-                    .help("Where the journey is as the slot returns to the rear view")
+                LocationField(
+                    title: "Start location", text: $startText,
+                    help: "Where the journey is as this camera pushes in: latitude, longitude, "
+                        + "as copied from a map",
+                    placement: placement, identifier: "camera-view-start")
+                LocationField(
+                    title: "End location", text: $endText,
+                    help: "Where the journey is as the slot returns to the rear view",
+                    placement: placement, identifier: "camera-view-end")
                 TextField("Label", text: $labelText, prompt: Text(camera.defaultLabel))
                     .help("The slot's label during this window; blank for \u{201C}\(camera.defaultLabel)\u{201D}")
             }
@@ -106,11 +147,13 @@ struct CameraOverrideForm: View {
                     save()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(start == nil || end == nil || problem != nil || isSaving)
+                .disabled(
+                    !isPlaceable(startText, on: placement) || !isPlaceable(endText, on: placement)
+                        || problem != nil || isSaving)
             }
         }
         .padding()
-        .frame(width: 440)
+        .frame(width: 520)
     }
 
     private func save() {

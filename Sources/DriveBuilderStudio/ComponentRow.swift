@@ -6,6 +6,9 @@ struct ComponentRow: View {
     @Environment(StudioModel.self) private var model
     let component: RenderComponent
     let journey: JourneySummary
+    /// An extra caption line after the file status, e.g. when an
+    /// annotation finishes.
+    var detail: String?
 
     @State private var showingPlayer = false
 
@@ -22,6 +25,11 @@ struct ComponentRow: View {
                 Text(status.summary)
                     .font(.appCaption)
                     .foregroundStyle(status.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                if let detail {
+                    Text(detail)
+                        .font(.appCaption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             if isRenderingThis {

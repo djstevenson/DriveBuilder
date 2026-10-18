@@ -181,12 +181,17 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
     var offsets = StartOffsets()
     offsets.front = 12
     offsets.telemetry = 3.5
+    offsets.rear = 2
+    offsets.left = 7
+    offsets.right = 0.5
     let timeline = JourneyTimeline(startOffsets: offsets, driveSegmentStart: 40)
     #expect(timeline.driveSeconds(100, on: .front) == 88)
     #expect(timeline.driveSeconds(100, on: .telemetry) == 96.5)
     #expect(timeline.driveSeconds(128, on: .final) == 88)
+    #expect(timeline.driveSeconds(100, on: .left) == 93)
     #expect(timeline.convert(100, from: .front, to: .final) == 128)
     #expect(timeline.convert(100, from: .front, to: .telemetry) == 91.5)
+    #expect(timeline.convert(100, from: .front, to: .rear) == 90)
     // Round trips through every clock.
     for clock in JourneyTimeline.Clock.allCases {
         let there = try #require(timeline.convert(250.25, from: .front, to: clock))
@@ -199,6 +204,70 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
     #expect(timeline.seconds(10, on: .final) == nil)
     #expect(timeline.driveSeconds(10, on: .final) == nil)
     #expect(timeline.convert(10, from: .front, to: .telemetry) == 10)
+    // Nor side-camera clocks for cameras the journey doesn't have.
+    #expect(timeline.seconds(10, on: .left) == nil)
+    #expect(timeline.convert(10, from: .right, to: .front) == nil)
+}
+
+// MARK: - JourneyPlacement
+
+/// The synthetic northbound track, with front 12 s and telemetry 3 s
+/// offsets and final.mov's drive segment starting 40 s in.
+private func placement(finalKnown: Bool = true) -> JourneyPlacement {
+    var offsets = StartOffsets()
+    offsets.front = 12
+    offsets.telemetry = 3
+    offsets.left = 5
+    return JourneyPlacement(
+        locator: TrackLocator(records: northbound()),
+        timeline: JourneyTimeline(startOffsets: offsets, driveSegmentStart: finalKnown ? 40 : nil))
+}
+
+@Test func placementOffersOnlyTheClocksTheJourneyHas() {
+    #expect(placement().clocks == [.final, .dials, .front, .rear, .left])
+    #expect(placement(finalKnown: false).clocks == [.dials, .front, .rear, .left])
+}
+
+@Test func placementReadsALocationOffEveryClock() throws {
+    let placement = placement()
+    // Sample 500 is 50 s into the telemetry, so 47 s into the drive.
+    let placed = try placement.place(location(north: 500 * 3.13)).get()
+    #expect(abs(placed.driveSeconds - 47) < 1e-6)
+    #expect(abs((placement.seconds(placed, on: .final) ?? 0) - 87) < 1e-6)
+    #expect(abs((placement.seconds(placed, on: .front) ?? 0) - 59) < 1e-6)
+    #expect(abs((placement.seconds(placed, on: .left) ?? 0) - 52) < 1e-6)
+    #expect(placement.seconds(placed, on: .right) == nil)
+    // Asking again gives the same (cached) answer.
+    #expect(try placement.place(location(north: 500 * 3.13)).get() == placed)
+
+    #expect(throws: TrackLocatorError.self) {
+        try placement.place(location(north: 500, east: 100)).get()
+    }
+}
+
+@Test func placementTurnsATimeOnAnyClockBackIntoALocation() throws {
+    let placement = placement()
+    // 87 s into final.mov and 59 s into front.mov are both sample 500.
+    for (seconds, clock) in [(87.0, JourneyPlacement.Clock.final), (59, .front), (47, .dials)] {
+        let found = try #require(placement.location(atSeconds: seconds, on: clock))
+        let placed = try placement.place(found).get()
+        #expect(abs(placed.driveSeconds - 47) < 1e-6, "\(clock)")
+    }
+    // Before the track starts, and on a camera the journey doesn't have.
+    #expect(placement.location(atSeconds: 0, on: .final) == nil)
+    #expect(placement.location(atSeconds: 59, on: .right) == nil)
+}
+
+@Test func placementSortsItemsByWhenTheTrackPassesThem() {
+    let placement = placement()
+    let items = [
+        ("third", location(north: 900 * 3.13)),
+        ("off the track", location(north: 100, east: 500)),
+        ("first", location(north: 100 * 3.13)),
+        ("second", location(north: 400 * 3.13)),
+    ]
+    #expect(
+        placement.sorted(items, by: \.1).map(\.0) == ["first", "second", "third", "off the track"])
 }
 
 @Test func driveSegmentStartsAfterTheIntroAndRouteMapLessTheirCrossFades() {

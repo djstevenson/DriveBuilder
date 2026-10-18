@@ -26,6 +26,8 @@ struct RouteMapConfig: Sendable {
     /// `location`/`distance` position it relative to that point; omitted
     /// means right, at the default gap.
     struct Label: Sendable {
+        /// Drive seconds (into the synced track) at which the label pops
+        /// in: when the track passes the label's reveal location.
         var offset: Double
         var title: String
         var subtitle: String
