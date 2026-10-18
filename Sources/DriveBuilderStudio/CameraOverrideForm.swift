@@ -67,6 +67,11 @@ struct CameraOverrideForm: View {
         }
         guard let start, let end else { return nil }
         if end <= start { return "The end must be after the start." }
+        if end - start < CameraOverride.minimumDuration {
+            return "Too short: a camera view needs at least "
+                + "\(CameraOverride.minimumDuration.formatted()) s for the camera to push "
+                + "in, its label to appear, and the camera to push back out."
+        }
         if let clash = otherOverrides.first(where: { start < $0.end && $0.start < end }) {
             return "Overlaps the \(clash.camera.displayName.lowercased()) view at "
                 + "\(ClockTime.text(for: clash.start))\u{2013}\(ClockTime.text(for: clash.end)); "

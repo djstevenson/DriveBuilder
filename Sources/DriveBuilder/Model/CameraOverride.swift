@@ -47,4 +47,15 @@ package struct CameraOverride: Identifiable, Sendable, Equatable {
 
     /// The label actually shown.
     package var displayLabel: String { label ?? camera.defaultLabel }
+
+    /// How long a side camera takes to push into (or out of) the slot.
+    package static let slideSeconds = 1.0
+    /// How long the slot's label takes to pop in (with a slight overshoot)
+    /// and to shrink away.
+    package static let labelPopSeconds = 0.35
+    package static let labelHideSeconds = 0.15
+
+    /// The shortest window that fits the push in, the new label's pop, and
+    /// the push back out; shorter windows are skipped when rendering.
+    package static var minimumDuration: Double { 2 * slideSeconds + labelPopSeconds }
 }

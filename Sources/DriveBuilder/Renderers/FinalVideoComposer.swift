@@ -45,12 +45,16 @@ struct FinalVideoComposer {
     /// Windows during which the camera slot (where the rear view sits,
     /// top-left) shows another camera, or the rear view with its own label.
     /// Times are in raw front.mov seconds, like annotation offsets. They
-    /// mustn't overlap; each change dissolves over `cameraDissolveSeconds`.
+    /// mustn't overlap. A side camera pushes into the slot from its own side
+    /// (and back out) over `cameraSlideSeconds`; the old label shrinks away
+    /// as it starts, and the new one pops in once it lands.
     var cameraOverrides: [CameraOverride] = []
 
-    /// How long the camera slot takes to dissolve from one camera (and its
-    /// label) to another.
-    static let cameraDissolveSeconds = 0.3
+    /// The camera slot's transition timings (see `CameraOverride`).
+    static let cameraSlideSeconds = CameraOverride.slideSeconds
+    static let cameraLabelPopSeconds = CameraOverride.labelPopSeconds
+    static let cameraLabelHideSeconds = CameraOverride.labelHideSeconds
+    static var minimumCameraWindowSeconds: Double { CameraOverride.minimumDuration }
 
     /// The camera slot's label: a tag in the slot's top-left corner, styled
     /// like the annotation banner (translucent black, yellow Helvetica).
@@ -419,7 +423,8 @@ struct FinalVideoComposer {
             track: AVCompositionTrack, clip: Clip,
             placement: Placement = .fitCentred,
             opacityRamp: AVVideoCompositionLayerInstruction.OpacityRamp? = nil,
-            additionalOpacityRamps: [AVVideoCompositionLayerInstruction.OpacityRamp] = []
+            slide: (transforms: [AVVideoCompositionLayerInstruction.TransformRamp],
+                crops: [AVVideoCompositionLayerInstruction.CropRectangleRamp]) = ([], [])
         ) -> AVVideoCompositionLayerInstruction {
             var configuration = AVVideoCompositionLayerInstruction.Configuration(
                 assetTrack: track)
@@ -474,10 +479,58 @@ struct FinalVideoComposer {
             if let opacityRamp {
                 configuration.addOpacityRamp(opacityRamp)
             }
-            for ramp in additionalOpacityRamps {
-                configuration.addOpacityRamp(ramp)
+            // A sliding tile's motion: absolute transforms (after the
+            // source's own orientation) and crops, in time order.
+            for ramp in slide.transforms {
+                configuration.addTransformRamp(
+                    .init(
+                        timeRange: ramp.timeRange,
+                        start: clip.preferredTransform.concatenating(ramp.start),
+                        end: clip.preferredTransform.concatenating(ramp.end)))
+            }
+            for ramp in slide.crops {
+                configuration.addCropRectangleRamp(ramp)
             }
             return AVVideoCompositionLayerInstruction(configuration: configuration)
+        }
+
+        // The pushes, for each side-camera window: the side camera in from
+        // its own side and back out, the rear view out the other way and
+        // back. The rear view's ramps run across the whole timeline.
+        let slideDuration = CMTime(seconds: Self.cameraSlideSeconds, preferredTimescale: timescale)
+        var rearSlide:
+            (transforms: [AVVideoCompositionLayerInstruction.TransformRamp],
+             crops: [AVVideoCompositionLayerInstruction.CropRectangleRamp]) = ([], [])
+        var sideSlides:
+            [(transforms: [AVVideoCompositionLayerInstruction.TransformRamp],
+              crops: [AVVideoCompositionLayerInstruction.CropRectangleRamp])] = []
+        for window in cameraWindows {
+            guard let side = sideCameras[window.override.camera] else {
+                sideSlides.append(([], []))
+                continue
+            }
+            // The left camera arrives from the left (pushing the rear view
+            // right); the right camera from the right.
+            let direction: Double = window.override.camera == .left ? -1 : 1
+            let width = slotRect.width
+            let entry = CMTimeRange(start: window.range.start, duration: slideDuration)
+            let exit = CMTimeRange(start: window.range.end - slideDuration, end: window.range.end)
+            let sideIn = Self.slideRamps(
+                clipSize: side.clip.naturalSize, slot: slotRect, over: entry,
+                from: direction * width, to: 0, timescale: timescale)
+            let sideOut = Self.slideRamps(
+                clipSize: side.clip.naturalSize, slot: slotRect, over: exit,
+                from: 0, to: direction * width, timescale: timescale)
+            sideSlides.append(
+                (sideIn.transforms + sideOut.transforms, sideIn.crops + sideOut.crops))
+            let rearOut = Self.slideRamps(
+                clipSize: rearFootage.naturalSize, slot: slotRect, over: entry,
+                from: 0, to: -direction * width, timescale: timescale)
+            let rearIn = Self.slideRamps(
+                clipSize: rearFootage.naturalSize, slot: slotRect, over: exit,
+                from: -direction * width, to: 0, timescale: timescale)
+            rearSlide.transforms += rearOut.transforms + rearIn.transforms
+            rearSlide.crops += rearOut.crops + rearIn.crops
         }
 
         func shadowLayerInstruction(
@@ -537,7 +590,9 @@ struct FinalVideoComposer {
                         start: 1, end: 0)),
                 layerInstruction(track: trackA, clip: dials, placement: dialsPlacement),
                 shadowLayerInstruction(),
-                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
+                layerInstruction(
+                    track: rearTrack, clip: rearFootage, placement: rearPlacement,
+                    slide: rearSlide),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
@@ -547,7 +602,9 @@ struct FinalVideoComposer {
             layers: [
                 layerInstruction(track: trackA, clip: dials, placement: dialsPlacement),
                 shadowLayerInstruction(),
-                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
+                layerInstruction(
+                    track: rearTrack, clip: rearFootage, placement: rearPlacement,
+                    slide: rearSlide),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
@@ -569,7 +626,7 @@ struct FinalVideoComposer {
                 shadowLayerInstruction(opacityRamp: outroFade),
                 layerInstruction(
                     track: rearTrack, clip: rearFootage, placement: rearPlacement,
-                    opacityRamp: outroFade),
+                    opacityRamp: outroFade, slide: rearSlide),
                 layerInstruction(
                     track: footageTrack, clip: frontFootage, placement: .fill,
                     opacityRamp: outroFade),
@@ -624,26 +681,16 @@ struct FinalVideoComposer {
             phases = result
         }
 
-        // Each side-camera window covers the rear view, directly above it
-        // (below the slot's labels), dissolving in and out.
-        let dissolve = CMTime(seconds: Self.cameraDissolveSeconds, preferredTimescale: timescale)
-        for window in cameraWindows {
+        // Each side-camera window's tile sits directly above the rear view
+        // (below the slot's labels), pushing in and out.
+        for (window, slide) in zip(cameraWindows, sideSlides) {
             guard let side = sideCameras[window.override.camera],
                 let track = sideTracks[window.override.camera]
             else { continue }
-            let range = window.range
             insertLayer(
                 layerInstruction(
-                    track: track, clip: side.clip, placement: .filling(slotRect),
-                    opacityRamp: .init(
-                        timeRange: CMTimeRange(start: range.start, duration: dissolve),
-                        start: 0, end: 1),
-                    additionalOpacityRamps: [
-                        .init(
-                            timeRange: CMTimeRange(start: range.end - dissolve, end: range.end),
-                            start: 1, end: 0)
-                    ]),
-                over: range
+                    track: track, clip: side.clip, placement: .filling(slotRect), slide: slide),
+                over: window.range
             ) { layers in
                 layers.firstIndex { $0.trackID == rearTrack.trackID } ?? 0
             }
@@ -784,7 +831,7 @@ struct FinalVideoComposer {
         }
 
         let minimum = CMTime(
-            seconds: 2 * Self.cameraDissolveSeconds, preferredTimescale: timescale)
+            seconds: Self.minimumCameraWindowSeconds, preferredTimescale: timescale)
         var windows: [CameraWindow] = []
         for override in overrides {
             let side = sideCameras[override.camera]
@@ -800,7 +847,11 @@ struct FinalVideoComposer {
             let start = max(finalTime(override.start), visibleRange.start)
             let end = min(finalTime(override.end), visibleRange.end)
             guard end - start >= minimum else {
-                print("final: skipping \(describe(override).lowercased()); it falls outside the drive segment.")
+                print(
+                    String(
+                        format: "final: skipping %@; less than %.2fs of it falls within the drive "
+                            + "segment, too short for the camera to push in and out.",
+                        describe(override).lowercased(), Self.minimumCameraWindowSeconds))
                 continue
             }
             if let side {
@@ -859,21 +910,23 @@ struct FinalVideoComposer {
         shadowContainer.mask = mask
         canvas.addSublayer(shadowContainer)
 
-        // Opacity keyframes in seconds; each window fades the default label
-        // out and its own in (and back) over the dissolve.
-        let dissolve = cameraDissolveSeconds
-        func label(_ text: String, opacity points: [(seconds: Double, opacity: Double)]) -> CALayer {
+        // Each label scales from its top-left corner: popping in with a slight
+        // overshoot, shrinking away to nothing. Keyframes in seconds,
+        // sampled every frame so the easing survives linear interpolation.
+        func label(_ text: String, scale points: [(seconds: Double, scale: Double)]) -> CALayer {
             let layer = CALayer()
             if let image = cameraLabelImage(text) {
                 layer.contents = image
-                layer.frame = CGRect(
-                    x: slot.minX, y: slot.maxY - Double(image.height),
-                    width: Double(image.width), height: Double(image.height))
+                layer.bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+                layer.anchorPoint = CGPoint(x: 0, y: 1)
+                layer.position = CGPoint(x: slot.minX, y: slot.maxY)
             }
-            layer.opacity = 0
-            let animation = CAKeyframeAnimation(keyPath: "opacity")
-            animation.values = points.map(\.opacity)
-            animation.keyTimes = points.map { NSNumber(value: min(1, max(0, $0.seconds / totalSeconds))) }
+            layer.transform = CATransform3DMakeScale(0, 0, 1)
+            let animation = CAKeyframeAnimation(keyPath: "transform.scale")
+            animation.values = points.map(\.scale)
+            animation.keyTimes = points.map {
+                NSNumber(value: min(1, max(0, $0.seconds / totalSeconds)))
+            }
             animation.beginTime = AVCoreAnimationBeginTimeAtZero
             animation.duration = totalSeconds
             animation.isRemovedOnCompletion = false
@@ -881,23 +934,114 @@ struct FinalVideoComposer {
             layer.add(animation, forKey: "visibility")
             return layer
         }
+        let frame = 1.0 / 30
+        func pop(at start: Double) -> [(seconds: Double, scale: Double)] {
+            stride(from: 0, through: cameraLabelPopSeconds + frame / 2, by: frame).map {
+                (start + $0, RouteMapRenderer.popScale($0 / cameraLabelPopSeconds))
+            }
+        }
+        func hide(at start: Double) -> [(seconds: Double, scale: Double)] {
+            stride(from: 0, through: cameraLabelHideSeconds + frame / 2, by: frame).map {
+                let p = min(1, $0 / cameraLabelHideSeconds)
+                return (start + $0, 1 - p * p)  // ease-in: shrinks faster as it goes
+            }
+        }
 
-        var rearPoints: [(seconds: Double, opacity: Double)] = [(0, 1)]
+        // A side camera's label waits for the push to land, and goes as the
+        // push back out begins; a relabelled rear view swaps labels at once.
+        var hiddenSpans: [(start: Double, end: Double)] = []
         for window in windows {
             let start = window.range.start.seconds
             let end = window.range.end.seconds
-            rearPoints += [(start, 1), (start + dissolve, 0), (end - dissolve, 0), (end, 1)]
+            let isSide = window.override.camera != .rear
+            let labelIn = start + (isSide ? cameraSlideSeconds : cameraLabelHideSeconds)
+            let labelOut = end - (isSide ? cameraSlideSeconds : cameraLabelHideSeconds)
             canvas.addSublayer(
                 label(
                     window.override.displayLabel,
-                    opacity: [
-                        (0, 0), (start, 0), (start + dissolve, 1), (end - dissolve, 1), (end, 0),
-                        (totalSeconds, 0),
-                    ]))
+                    scale: [(0, 0)] + pop(at: labelIn) + hide(at: labelOut) + [(totalSeconds, 0)]))
+            hiddenSpans.append((start, end))
+        }
+
+        // The rear view's label: away for each window, back once it's over -
+        // unless the next window follows too closely for it to pop back in
+        // and shrink away again.
+        var merged: [(start: Double, end: Double)] = []
+        for span in hiddenSpans {
+            if let last = merged.last,
+                span.start - last.end < cameraLabelPopSeconds + cameraLabelHideSeconds
+            {
+                merged[merged.count - 1].end = span.end
+            } else {
+                merged.append(span)
+            }
+        }
+        var rearPoints: [(seconds: Double, scale: Double)] = [(0, 1)]
+        for span in merged {
+            rearPoints += hide(at: span.start) + pop(at: span.end)
         }
         rearPoints.append((totalSeconds, 1))
-        canvas.addSublayer(label(CameraOverride.Camera.rear.defaultLabel, opacity: rearPoints))
+        canvas.addSublayer(label(CameraOverride.Camera.rear.defaultLabel, scale: rearPoints))
         return canvas
+    }
+
+    /// Ramps moving a tile horizontally through the camera slot over
+    /// `range`, from `startOffset` to `endOffset` pixels right of its home
+    /// position, eased in and out. The tile fills the slot's height; it's
+    /// cropped to the part inside the slot, so it never shows beyond it.
+    /// AVFoundation ramps are linear, so the easing is built from one ramp
+    /// per frame.
+    static func slideRamps(
+        clipSize: CGSize, slot: CGRect, over range: CMTimeRange,
+        from startOffset: Double, to endOffset: Double, timescale: CMTimeScale
+    ) -> (
+        transforms: [AVVideoCompositionLayerInstruction.TransformRamp],
+        crops: [AVVideoCompositionLayerInstruction.CropRectangleRamp]
+    ) {
+        let steps = max(1, Int((range.duration.seconds * 30).rounded()))
+        func offset(_ step: Int) -> Double {
+            let p = Double(step) / Double(steps)
+            let eased = p * p * (3 - 2 * p)
+            return startOffset + (endOffset - startOffset) * eased
+        }
+        func time(_ step: Int) -> CMTime {
+            range.start
+                + CMTime(
+                    seconds: range.duration.seconds * Double(step) / Double(steps),
+                    preferredTimescale: timescale)
+        }
+        var transforms: [AVVideoCompositionLayerInstruction.TransformRamp] = []
+        var crops: [AVVideoCompositionLayerInstruction.CropRectangleRamp] = []
+        for step in 0..<steps {
+            let span = CMTimeRange(start: time(step), end: time(step + 1))
+            let from = slidingTile(clipSize: clipSize, slot: slot, offset: offset(step))
+            let to = slidingTile(clipSize: clipSize, slot: slot, offset: offset(step + 1))
+            transforms.append(.init(timeRange: span, start: from.transform, end: to.transform))
+            crops.append(.init(timeRange: span, start: from.crop, end: to.crop))
+        }
+        return (transforms, crops)
+    }
+
+    /// Where a tile filling the camera slot draws when it's `offset`
+    /// pixels right of its home position: its transform, and the crop (in
+    /// the clip's own pixels) that keeps only the part inside the slot.
+    static func slidingTile(
+        clipSize: CGSize, slot: CGRect, offset: Double
+    ) -> (transform: CGAffineTransform, crop: CGRect) {
+        let scale = max(slot.width / clipSize.width, slot.height / clipSize.height)
+        let left = slot.minX + offset
+        let visibleMin = max(slot.minX, left)
+        let visibleMax = min(slot.maxX, left + clipSize.width * scale)
+        // Never empty: a sliver at the slot's edge stays hidden beneath the
+        // other camera, and a zero-width crop isn't well defined.
+        let visibleWidth = max(1, visibleMax - visibleMin)
+        let cropX = min(visibleMin - left, clipSize.width * scale - visibleWidth)
+        return (
+            CGAffineTransform(translationX: left, y: slot.minY).scaledBy(x: scale, y: scale),
+            CGRect(
+                x: max(0, cropX) / scale, y: 0,
+                width: visibleWidth / scale, height: slot.height / scale)
+        )
     }
 
     /// The camera slot's label tag: `text` in yellow Helvetica Bold on a
