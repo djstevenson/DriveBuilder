@@ -11,15 +11,16 @@ private struct SourceVideoLoadKey: Equatable {
 }
 
 /// One of the journey's source-footage files, found by convention beneath
-/// the journey directory (video/front.mov, video/rear.mov) rather than in
-/// the database. Shows the video's duration, resolution, frame rate, and
-/// size, or notes that the file is missing.
+/// the journey directory (video/front.mov, rear.mov, left.mov, right.mov)
+/// rather than in the database. Shows the video's duration, resolution,
+/// frame rate, and size, or notes that the file is missing.
 struct SourceVideoRow: View {
     @Environment(StudioModel.self) private var model
     let name: String
     let url: URL
-    /// The journey's synchronisation offset for this source, in seconds.
-    let offset: Double
+    /// The journey's synchronisation offset for this source, in seconds;
+    /// nil for a side camera the journey doesn't use.
+    let offset: Double?
     /// Opens the offset-editing sheet for this source.
     let onEditOffset: () -> Void
 
@@ -28,14 +29,22 @@ struct SourceVideoRow: View {
     var body: some View {
         let status = FileStatus(url: url)
         let fileDetails = status.exists ? (details ?? "Loading\u{2026}") : "Missing"
+        // An unused side camera: its file (if any) is ignored by the render.
+        let caption =
+            if let offset {
+                "\(fileDetails) \u{00B7} \(Self.offsetText(offset))"
+            } else {
+                status.exists ? "Not used \u{00B7} \(fileDetails)" : "Not used"
+            }
 
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                Text("\(fileDetails) \u{00B7} \(Self.offsetText(offset))")
+                Text(caption)
                     .font(.appCaption)
                     .foregroundStyle(
-                        status.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                        status.exists && offset != nil
+                            ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
             }
             Spacer()
             Button("Edit", systemImage: "pencil") {

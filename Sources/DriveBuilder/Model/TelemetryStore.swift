@@ -266,6 +266,131 @@ struct TelemetryStore {
         }
     }
 
+    /// A journey's camera-slot overrides, in start order. No rows just means
+    /// the slot shows the rear view throughout.
+    func cameraOverrides(journeyID: Int64) throws -> [CameraOverride] {
+        let database = try open(flags: SQLITE_OPEN_READONLY)
+        defer { sqlite3_close(database) }
+
+        let sql = """
+            SELECT id, journey_id, camera, start_offset, end_offset, label
+            FROM camera_overrides
+            WHERE journey_id = ?
+            ORDER BY start_offset
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, journeyID)
+
+        var overrides: [CameraOverride] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { break }
+            guard result == SQLITE_ROW else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            // The column's CHECK constraint keeps it to known cameras.
+            guard
+                let camera = CameraOverride.Camera(
+                    rawValue: Self.string(statement, column: 2) ?? "")
+            else { continue }
+            overrides.append(
+                CameraOverride(
+                    id: sqlite3_column_int64(statement, 0),
+                    journeyID: sqlite3_column_int64(statement, 1),
+                    camera: camera,
+                    start: sqlite3_column_double(statement, 3),
+                    end: sqlite3_column_double(statement, 4),
+                    label: Self.string(statement, column: 5)))
+        }
+        return overrides
+    }
+
+    /// Inserts one camera-slot override for `journeyID`. A nil `label` is
+    /// stored as NULL, meaning the camera's default label.
+    func insertCameraOverride(
+        journeyID: Int64, camera: CameraOverride.Camera, start: Double, end: Double,
+        label: String?
+    ) throws {
+        try writeCameraOverride(
+            sql: """
+                INSERT INTO camera_overrides
+                    (camera, start_offset, end_offset, label, journey_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+            camera: camera, start: start, end: end, label: label, key: journeyID)
+    }
+
+    /// Rewrites one camera-slot override's fields.
+    func updateCameraOverride(
+        id: Int64, camera: CameraOverride.Camera, start: Double, end: Double, label: String?
+    ) throws {
+        try writeCameraOverride(
+            sql: """
+                UPDATE camera_overrides
+                SET camera = ?, start_offset = ?, end_offset = ?, label = ?
+                WHERE id = ?
+                """,
+            camera: camera, start: start, end: end, label: label, key: id)
+    }
+
+    /// Runs an insert or update whose parameters are the override's fields
+    /// followed by `key` (the journey id or the row id).
+    private func writeCameraOverride(
+        sql: String, camera: CameraOverride.Camera, start: Double, end: Double,
+        label: String?, key: Int64
+    ) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, camera.rawValue, -1, Self.transient)
+        sqlite3_bind_double(statement, 2, start)
+        sqlite3_bind_double(statement, 3, end)
+        if let label {
+            sqlite3_bind_text(statement, 4, label, -1, Self.transient)
+        } else {
+            sqlite3_bind_null(statement, 4)
+        }
+        sqlite3_bind_int64(statement, 5, key)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
+    /// Removes one camera-slot override.
+    func deleteCameraOverride(id: Int64) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database, "DELETE FROM camera_overrides WHERE id = ?", -1, &statement, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, id)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+    }
+
     /// Inserts one annotation banner for `journeyID`. `video` must be
     /// unique within the journey — it names the output movie — so a
     /// duplicate throws `duplicateAnnotation` rather than a raw SQLite
@@ -414,17 +539,24 @@ struct TelemetryStore {
     }
 
     /// The journey's per-source synchronisation offsets, as recorded in
-    /// `journeys.front_offset`/`rear_offset`/`telemetry_offset`, for the
-    /// final composition to line up the separately started recordings.
+    /// `journeys.front_offset`/`rear_offset`/`telemetry_offset`/
+    /// `left_offset`/`right_offset`, for the final composition to line up
+    /// the separately started recordings. The side cameras' offsets are
+    /// NULL (nil) when the journey has no such view.
     func journeyStartOffsets(journeyID: Int64) throws -> StartOffsets? {
         try fetchJourneyRow(
             journeyID: journeyID,
-            sql: "SELECT front_offset, rear_offset, telemetry_offset FROM journeys WHERE id = ?"
+            sql: """
+                SELECT front_offset, rear_offset, telemetry_offset, left_offset, right_offset
+                FROM journeys WHERE id = ?
+                """
         ) { statement in
             StartOffsets(
                 front: Self.double(statement, column: 0) ?? 0,
                 rear: Self.double(statement, column: 1) ?? 0,
-                telemetry: Self.double(statement, column: 2) ?? 0)
+                telemetry: Self.double(statement, column: 2) ?? 0,
+                left: Self.double(statement, column: 3),
+                right: Self.double(statement, column: 4))
         }
     }
 
@@ -468,7 +600,8 @@ struct TelemetryStore {
             SELECT j.id, j.title, j.road_type, j.road_number, j.source,
                    COUNT(t.id), MIN(t.timestamp), MAX(t.timestamp),
                    MAX(t.odometer) - MIN(t.odometer),
-                   j.front_offset, j.rear_offset, j.telemetry_offset, j.length
+                   j.front_offset, j.rear_offset, j.telemetry_offset, j.length,
+                   j.left_offset, j.right_offset
             FROM journeys j
             LEFT JOIN telemetry t ON t.journey_id = j.id
             GROUP BY j.id
@@ -502,6 +635,8 @@ struct TelemetryStore {
                     frontOffset: Self.double(statement, column: 9) ?? 0,
                     rearOffset: Self.double(statement, column: 10) ?? 0,
                     telemetryOffset: Self.double(statement, column: 11) ?? 0,
+                    leftOffset: Self.double(statement, column: 13),
+                    rightOffset: Self.double(statement, column: 14),
                     length: Self.double(statement, column: 12)))
         }
         return journeys
@@ -517,11 +652,13 @@ struct TelemetryStore {
 
     // MARK: - Writing
 
-    /// Sets one of the journey's synchronisation offsets, in seconds. The
-    /// column name comes from the enum's fixed raw values, never from user
-    /// input, so interpolating it into the SQL is safe.
+    /// Sets one of the journey's synchronisation offsets, in seconds; nil
+    /// stores NULL, which only the optional side cameras allow (meaning the
+    /// journey has no such view). The column name comes from the enum's
+    /// fixed raw values, never from user input, so interpolating it into
+    /// the SQL is safe.
     func updateStartOffset(
-        journeyID: Int64, source: StartOffsetSource, offset: Double
+        journeyID: Int64, source: StartOffsetSource, offset: Double?
     ) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
@@ -538,7 +675,11 @@ struct TelemetryStore {
         }
         defer { sqlite3_finalize(statement) }
 
-        sqlite3_bind_double(statement, 1, offset)
+        if let offset {
+            sqlite3_bind_double(statement, 1, offset)
+        } else {
+            sqlite3_bind_null(statement, 1)
+        }
         sqlite3_bind_int64(statement, 2, journeyID)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -666,11 +807,11 @@ struct TelemetryStore {
         }
     }
 
-    /// Removes a journey and its telemetry, annotations, and route-map
-    /// labels in one transaction. The deletes are explicit rather than
-    /// relying on the schema's cascades: foreign keys aren't enforced
-    /// without PRAGMA foreign_keys, and route_map_labels has no cascade
-    /// anyway. Rendered output on disk stays put.
+    /// Removes a journey and its telemetry, annotations, route-map labels,
+    /// and camera overrides in one transaction. The deletes are explicit
+    /// rather than relying on the schema's cascades: foreign keys aren't
+    /// enforced without PRAGMA foreign_keys, and route_map_labels has no
+    /// cascade anyway. Rendered output on disk stays put.
     func deleteJourney(id: Int64) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
@@ -679,6 +820,7 @@ struct TelemetryStore {
         do {
             for sql in [
                 "DELETE FROM route_map_labels WHERE journey_id = ?",
+                "DELETE FROM camera_overrides WHERE journey_id = ?",
                 "DELETE FROM annotations WHERE journey_id = ?",
                 "DELETE FROM telemetry WHERE journey_id = ?",
                 "DELETE FROM journeys WHERE id = ?",

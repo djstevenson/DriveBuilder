@@ -1,15 +1,20 @@
 import AVFoundation
+import AppKit
 import Foundation
 import QuartzCore
 
 /// Seconds to skip at the start of each separately recorded component so
 /// they play in sync: the cameras and the telemetry logger don't all start
 /// recording at the same moment. Read from the journey's database row
-/// (`front_offset`, `rear_offset`, `telemetry_offset`).
+/// (`front_offset`, `rear_offset`, `telemetry_offset`, `left_offset`,
+/// `right_offset`).
 struct StartOffsets {
     var front = 0.0
     var rear = 0.0
     var telemetry = 0.0
+    /// The optional side cameras: nil when the journey has no such view.
+    var left: Double?
+    var right: Double?
 }
 
 /// Stitches the already-rendered clips into the final programme:
@@ -28,6 +33,30 @@ struct FinalVideoComposer {
     let frontFootageURL: URL
     let rearFootageURL: URL
     let outroURL: URL
+
+    /// The optional side cameras' footage (video/left.mov, video/right.mov):
+    /// nil when the journey has no such view. A side camera only appears in
+    /// the camera slot during its `cameraOverrides` windows, in sync by
+    /// skipping its own `startOffsets.left`/`.right`, so it only has to
+    /// cover those windows - it doesn't limit the drive segment's length.
+    var leftFootageURL: URL?
+    var rightFootageURL: URL?
+
+    /// Windows during which the camera slot (where the rear view sits,
+    /// top-left) shows another camera, or the rear view with its own label.
+    /// Times are in raw front.mov seconds, like annotation offsets. They
+    /// mustn't overlap; each change dissolves over `cameraDissolveSeconds`.
+    var cameraOverrides: [CameraOverride] = []
+
+    /// How long the camera slot takes to dissolve from one camera (and its
+    /// label) to another.
+    static let cameraDissolveSeconds = 0.3
+
+    /// The camera slot's label: a tag in the slot's top-left corner, styled
+    /// like the annotation banner (translucent black, yellow Helvetica).
+    static let cameraLabelHeight = 52
+    static let cameraLabelFontSize = 30.0
+    static let cameraLabelPadding = 16.0
 
     /// Length of each cross-fade between clips.
     var crossFadeSeconds: Double = 1.0
@@ -106,6 +135,9 @@ struct FinalVideoComposer {
         case fill
         /// Native size, its top-left corner at the given frame offset.
         case pinned(x: Double, y: Double)
+        /// Scaled (keeping its aspect ratio) to cover `rect`, its top-left
+        /// corner at the rect's - for a camera filling the camera slot.
+        case filling(CGRect)
         /// Native size, `inset` from the frame's left and bottom edges — for
         /// the annotation banners, so they share the dial column's bottom
         /// edge and the rear-view inset's left edge.
@@ -119,6 +151,20 @@ struct FinalVideoComposer {
     private struct Phase {
         var range: CMTimeRange
         var layers: [AVVideoCompositionLayerInstruction]
+    }
+
+    /// An optional side camera's footage and sync offset.
+    private struct SideCamera {
+        let url: URL
+        let clip: Clip
+        /// Where in the source the synced drive segment begins.
+        let sourceStart: CMTime
+    }
+
+    /// A camera override placed on the final timeline.
+    private struct CameraWindow {
+        let override: CameraOverride
+        let range: CMTimeRange
     }
 
     private struct Clip {
@@ -164,31 +210,64 @@ struct FinalVideoComposer {
         let timescale: CMTimeScale = 600
         let fade = CMTime(seconds: crossFadeSeconds, preferredTimescale: timescale)
 
+        // The route map is the full-screen element, so it sets the frame
+        // size; the narrower intro and outro are scaled to fit and centred,
+        // the dial column is scaled to fit and right-aligned, the drive
+        // footage fills the frame (cropping any overflow) as the backdrop,
+        // and the camera slot shows the rear view at native size near the
+        // top-left.
+        let renderSize = routeMap.naturalSize
+
         // The drive-segment sources were recorded separately, so each skips
-        // its own start offset to bring the three into sync; what competes
-        // for "shortest" below is the remainder after that skip.
-        let dialsSourceStart = CMTime(seconds: startOffsets.telemetry, preferredTimescale: timescale)
-        let frontSourceStart = CMTime(seconds: startOffsets.front, preferredTimescale: timescale)
-        let rearSourceStart = CMTime(seconds: startOffsets.rear, preferredTimescale: timescale)
-        if startOffsets.front != 0 || startOffsets.rear != 0 || startOffsets.telemetry != 0 {
-            print(
-                String(
-                    format: "final: start offsets front %.1fs, rear %.1fs, telemetry %.1fs.",
-                    startOffsets.front, startOffsets.rear, startOffsets.telemetry))
+        // its own start offset to bring them into sync; what competes for
+        // "shortest" below is the remainder after that skip.
+        func sourceStart(_ seconds: Double) -> CMTime {
+            CMTime(seconds: seconds, preferredTimescale: timescale)
+        }
+        let dialsSourceStart = sourceStart(startOffsets.telemetry)
+        let frontSourceStart = sourceStart(startOffsets.front)
+
+        let rearSourceStart = sourceStart(startOffsets.rear)
+
+        // The side cameras the journey has (an offset and a file); a side
+        // camera's clip is only loaded when an override actually uses it.
+        var sideCameras: [CameraOverride.Camera: SideCamera] = [:]
+        for (camera, url, offset) in [
+            (CameraOverride.Camera.left, leftFootageURL, startOffsets.left),
+            (CameraOverride.Camera.right, rightFootageURL, startOffsets.right),
+        ] {
+            guard let url, let offset, cameraOverrides.contains(where: { $0.camera == camera })
+            else { continue }
+            sideCameras[camera] = SideCamera(
+                url: url, clip: try await loadClip(at: url), sourceStart: sourceStart(offset))
         }
 
+        var offsetDescriptions = [
+            String(format: "front %.1fs", startOffsets.front),
+            String(format: "rear %.1fs", startOffsets.rear),
+            String(format: "telemetry %.1fs", startOffsets.telemetry),
+        ]
+        if let left = startOffsets.left {
+            offsetDescriptions.append(String(format: "left %.1fs", left))
+        }
+        if let right = startOffsets.right {
+            offsetDescriptions.append(String(format: "right %.1fs", right))
+        }
+        print("final: start offsets \(offsetDescriptions.joined(separator: ", ")).")
+
         // Timeline: each clip starts one fade-length before its predecessor
-        // ends. The dials overlay, the rear-view inset, and the drive footage
-        // beneath them run together for whichever of the three is shortest.
+        // ends. The dials overlay, the rear view, and the drive footage
+        // beneath them run together for whichever is shortest.
         let introEnd = intro.duration
         let routeStart = introEnd - fade
         let routeEnd = routeStart + routeMap.duration
         let dialsStart = routeEnd - fade
-        let driveClips = [
-            ("dials.mov", dials.duration - dialsSourceStart),
-            ("front.mov", frontFootage.duration - frontSourceStart),
-            ("rear.mov", rearFootage.duration - rearSourceStart),
-        ]
+        let driveClips =
+            [
+                ("dials.mov", dials.duration - dialsSourceStart),
+                (frontFootageURL.lastPathComponent, frontFootage.duration - frontSourceStart),
+                (rearFootageURL.lastPathComponent, rearFootage.duration - rearSourceStart),
+            ]
         if let empty = driveClips.first(where: { $0.1 <= .zero }) {
             throw CompositionError(
                 message: "The journey's start offset for \(empty.0) skips the whole clip.")
@@ -208,8 +287,9 @@ struct FinalVideoComposer {
         } else if driveClips.contains(where: { $0.1 != dialsSegmentDuration }) {
             let shortest = driveClips.min { $0.1 < $1.1 }!.0
             print(
-                "final: \(shortest) is the shortest of dials.mov/front.mov/rear.mov "
-                    + "after start offsets; truncating the others to match.")
+                "final: \(shortest) is the shortest of "
+                    + driveClips.map(\.0).joined(separator: "/")
+                    + " after start offsets; truncating the others to match.")
         }
         if let maxDriveSegmentSeconds {
             let cap = CMTime(seconds: maxDriveSegmentSeconds, preferredTimescale: timescale)
@@ -225,6 +305,10 @@ struct FinalVideoComposer {
         let outroStart = dialsEnd - fade
         let outroEnd = outroStart + outro.duration
 
+        let cameraWindows = try placeCameraOverrides(
+            sideCameras: sideCameras, dialsStart: dialsStart,
+            visibleRange: CMTimeRange(start: routeEnd, end: outroStart), timescale: timescale)
+
         let composition = AVMutableComposition()
         guard
             let trackA = composition.addMutableTrack(
@@ -238,10 +322,21 @@ struct FinalVideoComposer {
         else {
             throw CompositionError(message: "Could not create composition tracks.")
         }
+        // One track per side camera in use, holding just its windows.
+        var sideTracks: [CameraOverride.Camera: AVMutableCompositionTrack] = [:]
+        for camera in sideCameras.keys {
+            guard
+                let track = composition.addMutableTrack(
+                    withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else {
+                throw CompositionError(message: "Could not create composition tracks.")
+            }
+            sideTracks[camera] = track
+        }
 
         // Adjacent clips sit on different tracks so they can overlap during
         // the fades, alternating A, B, A, B along the timeline. The drive
-        // footage and the rear-view inset run underneath/alongside the dials
+        // footage and the rear view run underneath/alongside the dials
         // clip for the whole dials segment, so they each need a track of
         // their own rather than sharing A.
         try trackA.insertTimeRange(
@@ -259,6 +354,16 @@ struct FinalVideoComposer {
         try rearTrack.insertTimeRange(
             CMTimeRange(start: rearSourceStart, duration: dialsSegmentDuration),
             of: rearFootage.track, at: dialsStart)
+        for window in cameraWindows {
+            guard let side = sideCameras[window.override.camera],
+                let track = sideTracks[window.override.camera]
+            else { continue }
+            try track.insertTimeRange(
+                CMTimeRange(
+                    start: side.sourceStart + (window.range.start - dialsStart),
+                    duration: window.range.duration),
+                of: side.clip.track, at: window.range.start)
+        }
         try trackB.insertTimeRange(
             CMTimeRange(start: .zero, duration: outro.duration),
             of: outro.track, at: outroStart)
@@ -295,49 +400,36 @@ struct FinalVideoComposer {
                     + "the output will be silent.")
         }
 
-        // The route map is the full-screen element, so it sets the frame
-        // size; the narrower intro and outro are scaled to fit and centred,
-        // the dial column is scaled to fit and right-aligned, the drive
-        // footage fills the frame (cropping any overflow) as the backdrop,
-        // and the rear-view inset sits at native size near the top-left.
-        let renderSize = routeMap.naturalSize
+        // The camera slot: the rear view's frame, which every camera fills.
+        let slotRect = CGRect(
+            x: edgeInset, y: edgeInset,
+            width: rearFootage.naturalSize.width, height: rearFootage.naturalSize.height)
 
-        // Core Animation supplies a transparent synthetic track containing a
-        // soft shadow shaped to the rear inset. The footage is composited
-        // immediately above it. The layer mutations run inside an explicit
-        // CATransaction: this method runs off the main thread, where an
-        // implicit transaction would be left uncommitted when the thread
-        // exits (and aborts outright under
-        // CA_ASSERT_MAIN_THREAD_TRANSACTIONS).
+        // Core Animation supplies a transparent synthetic track, composited
+        // just above the camera slot: the slot's soft shadow (masked to
+        // outside the slot, so it can't darken the picture) and its labels.
         let rearShadowTrackID: CMPersistentTrackID = 0x53484457
-        CATransaction.begin()
-        let shadowCanvas = CALayer()
-        shadowCanvas.frame = CGRect(origin: .zero, size: renderSize)
-        let rearShadow = CALayer()
-        rearShadow.frame = CGRect(
-            x: edgeInset,
-            y: renderSize.height - edgeInset - rearFootage.naturalSize.height,
-            width: rearFootage.naturalSize.width,
-            height: rearFootage.naturalSize.height)
-        rearShadow.shadowColor = CGColor(gray: 0, alpha: 1)
-        rearShadow.shadowOpacity = 0.55
-        rearShadow.shadowRadius = 24
-        rearShadow.shadowOffset = CGSize(width: 12, height: -12)
-        rearShadow.shadowPath = CGPath(rect: rearShadow.bounds, transform: nil)
-        shadowCanvas.addSublayer(rearShadow)
-        CATransaction.commit()
+        let shadowCanvas = Self.cameraSlotOverlay(
+            slotRect: slotRect, renderSize: renderSize, windows: cameraWindows,
+            totalSeconds: outroEnd.seconds)
         let shadowAnimationTool = AVVideoCompositionCoreAnimationTool(
             additionalLayer: shadowCanvas, asTrackID: rearShadowTrackID)
 
         func layerInstruction(
             track: AVCompositionTrack, clip: Clip,
             placement: Placement = .fitCentred,
-            opacityRamp: AVVideoCompositionLayerInstruction.OpacityRamp? = nil
+            opacityRamp: AVVideoCompositionLayerInstruction.OpacityRamp? = nil,
+            additionalOpacityRamps: [AVVideoCompositionLayerInstruction.OpacityRamp] = []
         ) -> AVVideoCompositionLayerInstruction {
             var configuration = AVVideoCompositionLayerInstruction.Configuration(
                 assetTrack: track)
             let placementTransform: CGAffineTransform
             switch placement {
+            case .filling(let rect):
+                let scale = max(
+                    rect.width / clip.naturalSize.width, rect.height / clip.naturalSize.height)
+                placementTransform = CGAffineTransform(translationX: rect.minX, y: rect.minY)
+                    .scaledBy(x: scale, y: scale)
             case .pinned(let x, let y):
                 placementTransform = CGAffineTransform(translationX: x, y: y)
             case .pinnedBottomLeading(let inset):
@@ -381,6 +473,9 @@ struct FinalVideoComposer {
                 clip.preferredTransform.concatenating(placementTransform), at: .zero)
             if let opacityRamp {
                 configuration.addOpacityRamp(opacityRamp)
+            }
+            for ramp in additionalOpacityRamps {
+                configuration.addOpacityRamp(ramp)
             }
             return AVVideoCompositionLayerInstruction(configuration: configuration)
         }
@@ -426,11 +521,12 @@ struct FinalVideoComposer {
             from: introEnd, to: dialsStart,
             layers: [layerInstruction(track: trackB, clip: routeMap)])
 
-        let rearPlacement = Placement.pinned(x: edgeInset, y: edgeInset)
         let dialsPlacement = Placement.fitTrailing(inset: edgeInset)
+        let rearPlacement = Placement.pinned(x: slotRect.minX, y: slotRect.minY)
 
-        // Route map fades out over the drive footage, rear-view inset, and
-        // dial column.
+        // Route map fades out over the drive footage, camera slot, and dial
+        // column. The Core Animation track (the slot's shadow and labels)
+        // sits just above the slot.
         addInstruction(
             from: dialsStart, to: routeEnd,
             layers: [
@@ -440,23 +536,25 @@ struct FinalVideoComposer {
                         timeRange: CMTimeRange(start: dialsStart, end: routeEnd),
                         start: 1, end: 0)),
                 layerInstruction(track: trackA, clip: dials, placement: dialsPlacement),
-                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
                 shadowLayerInstruction(),
+                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
-        // Drive footage, rear-view inset, and dial column alone.
+        // Drive footage, camera slot, and dial column alone.
         addInstruction(
             from: routeEnd, to: outroStart,
             layers: [
                 layerInstruction(track: trackA, clip: dials, placement: dialsPlacement),
-                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
                 shadowLayerInstruction(),
+                layerInstruction(track: rearTrack, clip: rearFootage, placement: rearPlacement),
                 layerInstruction(track: footageTrack, clip: frontFootage, placement: .fill),
             ])
 
-        // Drive footage, rear-view inset, and dial column fade out together
+        // Drive footage, camera slot, and dial column fade out together
         // while the outro fades in.
+        let outroFade = AVVideoCompositionLayerInstruction.OpacityRamp(
+            timeRange: CMTimeRange(start: outroStart, end: dialsEnd), start: 1, end: 0)
         addInstruction(
             from: outroStart, to: dialsEnd,
             layers: [
@@ -467,23 +565,14 @@ struct FinalVideoComposer {
                         start: 0, end: 1)),
                 layerInstruction(
                     track: trackA, clip: dials, placement: dialsPlacement,
-                    opacityRamp: .init(
-                        timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
-                        start: 1, end: 0)),
+                    opacityRamp: outroFade),
+                shadowLayerInstruction(opacityRamp: outroFade),
                 layerInstruction(
                     track: rearTrack, clip: rearFootage, placement: rearPlacement,
-                    opacityRamp: .init(
-                        timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
-                        start: 1, end: 0)),
-                shadowLayerInstruction(
-                    opacityRamp: .init(
-                        timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
-                        start: 1, end: 0)),
+                    opacityRamp: outroFade),
                 layerInstruction(
                     track: footageTrack, clip: frontFootage, placement: .fill,
-                    opacityRamp: .init(
-                        timeRange: CMTimeRange(start: outroStart, end: dialsEnd),
-                        start: 1, end: 0)),
+                    opacityRamp: outroFade),
             ])
 
         // Outro alone.
@@ -501,6 +590,15 @@ struct FinalVideoComposer {
         func insertOverlay(
             _ layer: AVVideoCompositionLayerInstruction, over range: CMTimeRange
         ) {
+            insertLayer(layer, over: range) { _ in 0 }
+        }
+
+        // As `insertOverlay`, but at the index `position` picks in each
+        // affected phase's layer list (front to back).
+        func insertLayer(
+            _ layer: AVVideoCompositionLayerInstruction, over range: CMTimeRange,
+            at position: ([AVVideoCompositionLayerInstruction]) -> Int
+        ) {
             var result: [Phase] = []
             for phase in phases {
                 let start = max(phase.range.start, range.start)
@@ -515,14 +613,40 @@ struct FinalVideoComposer {
                             range: CMTimeRange(start: phase.range.start, end: start),
                             layers: phase.layers))
                 }
-                result.append(
-                    Phase(range: CMTimeRange(start: start, end: end), layers: [layer] + phase.layers))
+                var layers = phase.layers
+                layers.insert(layer, at: position(layers))
+                result.append(Phase(range: CMTimeRange(start: start, end: end), layers: layers))
                 if end < phase.range.end {
                     result.append(
                         Phase(range: CMTimeRange(start: end, end: phase.range.end), layers: phase.layers))
                 }
             }
             phases = result
+        }
+
+        // Each side-camera window covers the rear view, directly above it
+        // (below the slot's labels), dissolving in and out.
+        let dissolve = CMTime(seconds: Self.cameraDissolveSeconds, preferredTimescale: timescale)
+        for window in cameraWindows {
+            guard let side = sideCameras[window.override.camera],
+                let track = sideTracks[window.override.camera]
+            else { continue }
+            let range = window.range
+            insertLayer(
+                layerInstruction(
+                    track: track, clip: side.clip, placement: .filling(slotRect),
+                    opacityRamp: .init(
+                        timeRange: CMTimeRange(start: range.start, duration: dissolve),
+                        start: 0, end: 1),
+                    additionalOpacityRamps: [
+                        .init(
+                            timeRange: CMTimeRange(start: range.end - dissolve, end: range.end),
+                            start: 1, end: 0)
+                    ]),
+                over: range
+            ) { layers in
+                layers.firstIndex { $0.trackID == rearTrack.trackID } ?? 0
+            }
         }
 
         // Annotations composite over the drive segment, in the bottom-left
@@ -627,5 +751,178 @@ struct FinalVideoComposer {
             String(
                 format: "final: wrote %.1fs in %.1fs to %@",
                 outroEnd.seconds, seconds, url.path(percentEncoded: false)))
+    }
+
+    // MARK: - Camera slot
+
+    /// Validates `cameraOverrides` and places them on the final timeline:
+    /// raw front.mov seconds become drive-segment time, clamped to
+    /// `visibleRange` (after the route map, before the outro). Throws for a
+    /// window that's empty, overlaps another, uses a camera the journey
+    /// doesn't have, or runs past the end of that camera's video.
+    private func placeCameraOverrides(
+        sideCameras: [CameraOverride.Camera: SideCamera], dialsStart: CMTime,
+        visibleRange: CMTimeRange, timescale: CMTimeScale
+    ) throws -> [CameraWindow] {
+        func time(_ seconds: Double) -> String {
+            let total = max(0, seconds)
+            return String(format: "%d:%04.1f", Int(total) / 60, total.truncatingRemainder(dividingBy: 60))
+        }
+        func describe(_ override: CameraOverride) -> String {
+            "The \(override.camera.rawValue) camera override at \(time(override.start))"
+                + "-\(time(override.end))"
+        }
+
+        let overrides = cameraOverrides.sorted { $0.start < $1.start }
+        for override in overrides where override.end <= override.start {
+            throw CompositionError(message: "\(describe(override)) ends before it starts.")
+        }
+        for (previous, next) in zip(overrides, overrides.dropFirst()) where next.start < previous.end {
+            throw CompositionError(
+                message: "\(describe(next)) overlaps \(describe(previous).lowercased()); "
+                    + "only one camera can fill the slot at a time.")
+        }
+
+        let minimum = CMTime(
+            seconds: 2 * Self.cameraDissolveSeconds, preferredTimescale: timescale)
+        var windows: [CameraWindow] = []
+        for override in overrides {
+            let side = sideCameras[override.camera]
+            if override.camera != .rear && side == nil {
+                throw CompositionError(
+                    message: "\(describe(override)) needs the journey's \(override.camera.rawValue) "
+                        + "camera, but it has no \(override.camera.rawValue)_offset.")
+            }
+            func finalTime(_ rawSeconds: Double) -> CMTime {
+                dialsStart
+                    + CMTime(seconds: rawSeconds - startOffsets.front, preferredTimescale: timescale)
+            }
+            let start = max(finalTime(override.start), visibleRange.start)
+            let end = min(finalTime(override.end), visibleRange.end)
+            guard end - start >= minimum else {
+                print("final: skipping \(describe(override).lowercased()); it falls outside the drive segment.")
+                continue
+            }
+            if let side {
+                let sourceEnd = side.sourceStart + (end - dialsStart)
+                if sourceEnd > side.clip.duration {
+                    throw CompositionError(
+                        message: "\(describe(override)) runs past the end of "
+                            + "\(side.url.lastPathComponent).")
+                }
+            }
+            windows.append(CameraWindow(override: override, range: CMTimeRange(start: start, end: end)))
+        }
+        return windows
+    }
+
+    /// The Core Animation layer composited just above the camera slot: the
+    /// slot's drop shadow, masked to outside the slot, and the slot's
+    /// labels - the rear view's by default, each override's during its
+    /// window - dissolving with the cameras. Built from plain values, so the
+    /// layers can be handed to the animation tool.
+    private static func cameraSlotOverlay(
+        slotRect: CGRect, renderSize: CGSize, windows: [CameraWindow], totalSeconds: Double
+    ) -> CALayer {
+        // The animation tool's layer geometry has a bottom-left origin. The
+        // layer mutations run inside an explicit CATransaction: this runs
+        // off the main thread, where an implicit transaction would be left
+        // uncommitted when the thread exits (and aborts outright under
+        // CA_ASSERT_MAIN_THREAD_TRANSACTIONS).
+        let bounds = CGRect(origin: .zero, size: renderSize)
+        let slot = CGRect(
+            x: slotRect.minX, y: renderSize.height - slotRect.maxY,
+            width: slotRect.width, height: slotRect.height)
+
+        CATransaction.begin()
+        defer { CATransaction.commit() }
+        let canvas = CALayer()
+        canvas.frame = bounds
+
+        let shadow = CALayer()
+        shadow.frame = bounds
+        shadow.shadowColor = CGColor(gray: 0, alpha: 1)
+        shadow.shadowOpacity = 0.55
+        shadow.shadowRadius = 24
+        shadow.shadowOffset = CGSize(width: 12, height: -12)
+        shadow.shadowPath = CGPath(rect: slot, transform: nil)
+        let outsideSlot = CGMutablePath()
+        outsideSlot.addRect(bounds)
+        outsideSlot.addRect(slot)
+        let mask = CAShapeLayer()
+        mask.frame = bounds
+        mask.fillRule = .evenOdd
+        mask.path = outsideSlot
+        let shadowContainer = CALayer()
+        shadowContainer.frame = bounds
+        shadowContainer.addSublayer(shadow)
+        shadowContainer.mask = mask
+        canvas.addSublayer(shadowContainer)
+
+        // Opacity keyframes in seconds; each window fades the default label
+        // out and its own in (and back) over the dissolve.
+        let dissolve = cameraDissolveSeconds
+        func label(_ text: String, opacity points: [(seconds: Double, opacity: Double)]) -> CALayer {
+            let layer = CALayer()
+            if let image = cameraLabelImage(text) {
+                layer.contents = image
+                layer.frame = CGRect(
+                    x: slot.minX, y: slot.maxY - Double(image.height),
+                    width: Double(image.width), height: Double(image.height))
+            }
+            layer.opacity = 0
+            let animation = CAKeyframeAnimation(keyPath: "opacity")
+            animation.values = points.map(\.opacity)
+            animation.keyTimes = points.map { NSNumber(value: min(1, max(0, $0.seconds / totalSeconds))) }
+            animation.beginTime = AVCoreAnimationBeginTimeAtZero
+            animation.duration = totalSeconds
+            animation.isRemovedOnCompletion = false
+            animation.fillMode = .both
+            layer.add(animation, forKey: "visibility")
+            return layer
+        }
+
+        var rearPoints: [(seconds: Double, opacity: Double)] = [(0, 1)]
+        for window in windows {
+            let start = window.range.start.seconds
+            let end = window.range.end.seconds
+            rearPoints += [(start, 1), (start + dissolve, 0), (end - dissolve, 0), (end, 1)]
+            canvas.addSublayer(
+                label(
+                    window.override.displayLabel,
+                    opacity: [
+                        (0, 0), (start, 0), (start + dissolve, 1), (end - dissolve, 1), (end, 0),
+                        (totalSeconds, 0),
+                    ]))
+        }
+        rearPoints.append((totalSeconds, 1))
+        canvas.addSublayer(label(CameraOverride.Camera.rear.defaultLabel, opacity: rearPoints))
+        return canvas
+    }
+
+    /// The camera slot's label tag: `text` in yellow Helvetica Bold on a
+    /// translucent black band, its ink centred vertically.
+    static func cameraLabelImage(_ text: String) -> CGImage? {
+        let font = NSFont.helveticaBold(size: cameraLabelFontSize)
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(
+                string: text,
+                attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor(
+                        cgColor: AnnotationRenderer.textColour) ?? .yellow,
+                ]))
+        let ink = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
+        let advance = CTLineGetTypographicBounds(line, nil, nil, nil)
+        let width = Int((max(advance, ink.maxX) + 2 * cameraLabelPadding).rounded(.up))
+        let height = cameraLabelHeight
+        guard let context = try? LayerCompositor.bitmapContext(width: width, height: height)
+        else { return nil }
+        context.setFillColor(AnnotationRenderer.backgroundColour)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.textPosition = CGPoint(
+            x: cameraLabelPadding, y: (Double(height) - ink.height) / 2 - ink.minY)
+        CTLineDraw(line, context)
+        return context.makeImage()
     }
 }

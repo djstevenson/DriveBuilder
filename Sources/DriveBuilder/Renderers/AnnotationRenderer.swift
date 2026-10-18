@@ -30,12 +30,14 @@ struct AnnotationRenderer {
     /// the 3840 px final frame less the edge inset on the left (the band's
     /// own) and right (the dial column's), the dial column, and the margin
     /// before it.
-    var width =
+    static let defaultWidth =
         3840 - 2 * Int(FinalVideoComposer.defaultEdgeInset)
         - TelemetryVideoRenderer.defaultMapPixelSize - rightMargin
+    var width = defaultWidth
 
     /// Height of the band, which is also the movie frame height.
-    var height = 160
+    static let defaultHeight = 160
+    var height = defaultHeight
 
     var framesPerSecond: Int32 = 30
 
