@@ -110,6 +110,23 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     #expect(offsets.front == 34.0)
     #expect(offsets.rear == 34.5)
     #expect(offsets.telemetry == 62.0)
+
+    // The side cameras are optional: NULL (nil) until set, and clearable.
+    #expect(offsets.left == nil)
+    #expect(offsets.right == nil)
+    try store.updateStartOffset(journeyID: 1, source: .left, offset: 12.5)
+    try store.updateStartOffset(journeyID: 1, source: .right, offset: 13.0)
+    offsets = try #require(try store.journeyStartOffsets(journeyID: 1))
+    #expect(offsets.left == 12.5)
+    #expect(offsets.right == 13.0)
+    let summary = try #require(try store.allJourneys().first { $0.id == 1 })
+    #expect(summary.startOffset(.left) == 12.5)
+    #expect(summary.startOffset(.right) == 13.0)
+
+    try store.updateStartOffset(journeyID: 1, source: .left, offset: nil)
+    offsets = try #require(try store.journeyStartOffsets(journeyID: 1))
+    #expect(offsets.left == nil)
+    #expect(offsets.right == 13.0)
 }
 
 @Test func setsAndClearsJourneyLength() throws {
@@ -367,4 +384,45 @@ private let fixtureDirectory = URL(fileURLWithPath: #filePath)
     } catch TelemetryStoreError.telemetryNotFound(let journeyID) {
         #expect(journeyID == 2)
     }
+}
+
+@Test func insertsUpdatesAndDeletesCameraOverrides() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    #expect(try store.cameraOverrides(journeyID: 1).isEmpty)
+
+    try store.insertCameraOverride(
+        journeyID: 1, camera: .right, start: 1563, end: 1624, label: nil)
+    try store.insertCameraOverride(
+        journeyID: 1, camera: .left, start: 25, end: 48, label: "Looking left at the old A303")
+    var overrides = try store.cameraOverrides(journeyID: 1)
+    // In start order, the default label standing in for NULL.
+    #expect(overrides.map(\.camera) == [.left, .right])
+    #expect(overrides[0].displayLabel == "Looking left at the old A303")
+    #expect(overrides[1].label == nil)
+    #expect(overrides[1].displayLabel == "Right view")
+
+    try store.updateCameraOverride(
+        id: overrides[0].id, camera: .rear, start: 30, end: 50, label: nil)
+    overrides = try store.cameraOverrides(journeyID: 1)
+    #expect(overrides[0].camera == .rear)
+    #expect(overrides[0].start == 30 && overrides[0].end == 50)
+    #expect(overrides[0].label == nil)
+
+    try store.deleteCameraOverride(id: overrides[0].id)
+    #expect(try store.cameraOverrides(journeyID: 1).map(\.camera) == [.right])
+
+    // Deleting the journey takes its overrides with it.
+    try store.deleteJourney(id: 1)
+    #expect(try store.cameraOverrides(journeyID: 1).isEmpty)
 }

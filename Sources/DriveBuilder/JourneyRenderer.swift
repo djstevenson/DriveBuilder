@@ -26,35 +26,48 @@ package struct JourneySummary: Identifiable, Sendable {
     package let end: Date?
     package let distanceMetres: Double
     /// Synchronisation offsets, in seconds, for lining up the separately
-    /// captured sources. Display-only for now: the render pipeline does
-    /// not read these yet.
+    /// captured sources.
     package let frontOffset: Double
     package let rearOffset: Double
     package let telemetryOffset: Double
+    /// The optional side cameras' offsets: nil when the journey has no
+    /// such view.
+    package let leftOffset: Double?
+    package let rightOffset: Double?
     /// The drive segment's length in seconds, measured from the synced
     /// start; nil means it runs for the shortest of the synced sources.
     package let length: Double?
 
     package var roadName: String { "\(roadType)\(roadNumber)" }
 
-    /// The stored offset for one synchronisation source.
-    package func startOffset(_ source: StartOffsetSource) -> Double {
+    /// The stored offset for one synchronisation source; nil only for a
+    /// side camera the journey doesn't have.
+    package func startOffset(_ source: StartOffsetSource) -> Double? {
         switch source {
         case .front: frontOffset
         case .rear: rearOffset
         case .telemetry: telemetryOffset
+        case .left: leftOffset
+        case .right: rightOffset
         }
     }
 }
 
-/// One of the journey's three synchronisation-offset columns; the raw value
-/// is the `journeys` column that stores it.
+/// One of the journey's synchronisation-offset columns; the raw value is
+/// the `journeys` column that stores it.
 package enum StartOffsetSource: String, Sendable, Identifiable {
     case front = "front_offset"
     case rear = "rear_offset"
     case telemetry = "telemetry_offset"
+    /// The optional side cameras, looking out of the left and right windows.
+    case left = "left_offset"
+    case right = "right_offset"
 
     package var id: String { rawValue }
+
+    /// Whether the source may be absent: a NULL offset means the journey
+    /// has no such camera view.
+    package var isOptional: Bool { self == .left || self == .right }
 }
 
 /// Read access to the journeys a front end can list.
@@ -115,10 +128,11 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).deleteAnnotation(id: id)
     }
 
-    /// Sets one of the journey's synchronisation offsets, in seconds.
+    /// Sets one of the journey's synchronisation offsets, in seconds; nil
+    /// (only for an optional side camera) means the journey has no such view.
     @concurrent
     package func updateStartOffset(
-        journeyID: Int64, source: StartOffsetSource, offset: Double
+        journeyID: Int64, source: StartOffsetSource, offset: Double?
     ) async throws {
         try TelemetryStore(path: databasePath).updateStartOffset(
             journeyID: journeyID, source: source, offset: offset)
@@ -129,6 +143,39 @@ package struct JourneyLibrary: Sendable {
     @concurrent
     package func updateLength(journeyID: Int64, length: Double?) async throws {
         try TelemetryStore(path: databasePath).updateLength(journeyID: journeyID, length: length)
+    }
+
+    /// A journey's camera-slot overrides, in start order. No rows just
+    /// means the slot shows the rear view throughout.
+    @concurrent
+    package func cameraOverrides(journeyID: Int64) async throws -> [CameraOverride] {
+        try TelemetryStore(path: databasePath).cameraOverrides(journeyID: journeyID)
+    }
+
+    /// Adds one camera-slot override for `journeyID`; a nil `label` means
+    /// the camera's default.
+    @concurrent
+    package func addCameraOverride(
+        journeyID: Int64, camera: CameraOverride.Camera, start: Double, end: Double,
+        label: String?
+    ) async throws {
+        try TelemetryStore(path: databasePath).insertCameraOverride(
+            journeyID: journeyID, camera: camera, start: start, end: end, label: label)
+    }
+
+    /// Rewrites one camera-slot override's fields.
+    @concurrent
+    package func updateCameraOverride(
+        id: Int64, camera: CameraOverride.Camera, start: Double, end: Double, label: String?
+    ) async throws {
+        try TelemetryStore(path: databasePath).updateCameraOverride(
+            id: id, camera: camera, start: start, end: end, label: label)
+    }
+
+    /// Removes one camera-slot override.
+    @concurrent
+    package func deleteCameraOverride(id: Int64) async throws {
+        try TelemetryStore(path: databasePath).deleteCameraOverride(id: id)
     }
 
     /// A journey's route-map labels, in the order the animated track
@@ -440,6 +487,16 @@ package struct JourneyRenderer: Sendable {
             rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
             outroURL: outputDirectory.appending(path: "outro.mov"))
         composer.startOffsets = try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets()
+        composer.cameraOverrides = try store.cameraOverrides(journeyID: journeyID)
+        // A side camera is available only when the journey has its offset;
+        // an override that uses it then needs its video, like front.mov.
+        let videoDirectory = URL(filePath: journeyDirectory).appending(path: "video")
+        if composer.startOffsets.left != nil {
+            composer.leftFootageURL = videoDirectory.appending(path: "left.mov")
+        }
+        if composer.startOffsets.right != nil {
+            composer.rightFootageURL = videoDirectory.appending(path: "right.mov")
+        }
         composer.driveSegmentLength = try store.journeyLength(journeyID: journeyID)
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
         composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in

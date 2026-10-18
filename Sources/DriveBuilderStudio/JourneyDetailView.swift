@@ -84,6 +84,7 @@ struct JourneyDetailView: View {
                         }
                     }
                 }
+                CameraOverridesSection(journey: journey)
                 Section {
                     if annotations.isEmpty {
                         Text("No annotations yet")
@@ -119,6 +120,20 @@ struct JourneyDetailView: View {
                         offset: journey.rearOffset
                     ) {
                         editingOffsetSource = .rear
+                    }
+                    SourceVideoRow(
+                        name: "Left camera",
+                        url: URL(filePath: journey.directory).appending(path: "video/left.mov"),
+                        offset: journey.leftOffset
+                    ) {
+                        editingOffsetSource = .left
+                    }
+                    SourceVideoRow(
+                        name: "Right camera",
+                        url: URL(filePath: journey.directory).appending(path: "video/right.mov"),
+                        offset: journey.rightOffset
+                    ) {
+                        editingOffsetSource = .right
                     }
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {

@@ -38,13 +38,13 @@ private func record(
     let texts = AltitudeRenderer.rowTexts(
         for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100, odometerMetres: 0),
         startTimestamp: .distantPast)
-    #expect(texts == ["51.5000N", "1.2500W", "328 ft", "0.0 mi", "00:00:00"])
+    #expect(texts == ["51.5000°N", "1.2500°W", "328 ft", "0.0 mi", "00:00:00"])
 
     let southAndEast = AltitudeRenderer.rowTexts(
         for: record(latitude: -33.8, longitude: 151.2, altitudeMetres: 0),
         startTimestamp: .distantPast)
-    #expect(southAndEast[0] == "33.8000S")
-    #expect(southAndEast[1] == "151.2000E")
+    #expect(southAndEast[0] == "33.8000°S")
+    #expect(southAndEast[1] == "151.2000°E")
 }
 
 @Test func odometerTextConvertsMetresToMilesToOneDecimalPlace() {

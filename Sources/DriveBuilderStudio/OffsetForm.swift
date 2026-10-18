@@ -8,13 +8,16 @@ extension StartOffsetSource {
         case .front: "Front camera"
         case .rear: "Rear camera"
         case .telemetry: "Telemetry"
+        case .left: "Left camera"
+        case .right: "Right camera"
         }
     }
 }
 
 /// The sheet for editing one of the journey's synchronisation offsets:
 /// seconds to skip at the start of that source so the separately started
-/// recordings play in sync.
+/// recordings play in sync. For an optional side camera, an empty offset
+/// means the journey has no such view.
 struct OffsetForm: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -37,12 +40,21 @@ struct OffsetForm: View {
         self.databasePath = databasePath
         self.source = source
         self.onSave = onSave
-        _offsetText = State(initialValue: String(journey.startOffset(source)))
+        _offsetText = State(initialValue: journey.startOffset(source).map { String($0) } ?? "")
+    }
+
+    private var trimmedText: String {
+        offsetText.trimmingCharacters(in: .whitespaces)
     }
 
     /// The offset parsed as seconds; decimals are fine ("34.5").
     private var offset: Double? {
-        Double(offsetText.trimmingCharacters(in: .whitespaces))
+        Double(trimmedText)
+    }
+
+    /// An optional side camera left empty: the journey has no such view.
+    private var clearsCamera: Bool {
+        source.isOptional && trimmedText.isEmpty
     }
 
     var body: some View {
@@ -50,9 +62,16 @@ struct OffsetForm: View {
             Text("\(source.displayName) offset")
                 .font(.appHeadline)
             Form {
-                TextField("Offset (seconds)", text: $offsetText, prompt: Text("e.g. 34.5"))
-                    .help(
-                        "Seconds skipped at the start of this source so the "
+                TextField(
+                    "Offset (seconds)", text: $offsetText,
+                    prompt: Text(source.isOptional ? "Empty if not fitted" : "e.g. 34.5")
+                )
+                .help(
+                    source.isOptional
+                        ? "Seconds skipped at the start of this camera's video so the "
+                            + "separately started recordings play in sync; leave empty if "
+                            + "this journey has no such view"
+                        : "Seconds skipped at the start of this source so the "
                             + "separately started recordings play in sync")
             }
             if let saveError {
@@ -78,14 +97,16 @@ struct OffsetForm: View {
     }
 
     /// The composer treats offsets as seconds to skip, so the value must
-    /// parse as a non-negative number.
+    /// parse as a non-negative number - or, for a side camera, be empty.
     private var isValid: Bool {
+        if clearsCamera { return true }
         guard let offset, offset >= 0 else { return false }
         return true
     }
 
     private func save() {
-        guard let offset else { return }
+        guard clearsCamera || offset != nil else { return }
+        let offset = clearsCamera ? nil : offset
         isSaving = true
         saveError = nil
         Task {
