@@ -265,7 +265,8 @@ struct FinalVideoComposer {
         let introEnd = intro.duration
         let routeStart = introEnd - fade
         let routeEnd = routeStart + routeMap.duration
-        let dialsStart = routeEnd - fade
+        let dialsStart = JourneyTimeline.driveSegmentStart(
+            introDuration: intro.duration, routeMapDuration: routeMap.duration, crossFade: fade)
         let driveClips =
             [
                 ("dials.mov", dials.duration - dialsSourceStart),
