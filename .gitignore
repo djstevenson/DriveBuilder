@@ -13,3 +13,4 @@ Sources/DriveBuilder/Resources/oproad_gb.gpkg
 
 ¢ And don't include my database
 Sources/DriveBuilder/Resources/telemetry.sqlite3
+Sources/DriveBuilder/Resources/telemetry.sqlite3.pre-segments

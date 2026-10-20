@@ -5,10 +5,10 @@ import QuartzCore
 
 /// Seconds to skip at the start of each separately recorded component so
 /// they play in sync: the cameras and the telemetry logger don't all start
-/// recording at the same moment. Read from the journey's database row
+/// recording at the same moment. Read from a `journey_segments` row
 /// (`front_offset`, `rear_offset`, `telemetry_offset`, `left_offset`,
 /// `right_offset`).
-struct StartOffsets {
+struct StartOffsets: Equatable {
     var front = 0.0
     var rear = 0.0
     var telemetry = 0.0

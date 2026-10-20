@@ -595,33 +595,14 @@ package struct JourneyRenderer: Sendable {
         try store.records(journeyID: journeyID)
     }
 
-    /// The part of `records` the final video shows: the final composition
-    /// skips the first `telemetry_offset` seconds of the dials to sync them
-    /// with the footage and, when the journey has a `length`, stops that
-    /// many seconds later. Throws if the telemetry is shorter than `length`.
+    /// The part of `records` the final video shows: the journey's segments'
+    /// stretches of telemetry as one continuous drive (see
+    /// `TelemetryRecord.driveRecords(from:segments:)`). The final
+    /// composition skips the first segment's `telemetry_offset` seconds of
+    /// the dials to sync them with the footage.
     private func syncedRecords(from records: [TelemetryRecord]) throws -> [TelemetryRecord] {
-        guard let first = records.first, let last = records.last else { return records }
-        let telemetryOffset =
-            try store.journeyStartOffsets(journeyID: journeyID)?.telemetry ?? 0
-        let syncStart = first.timestamp.addingTimeInterval(telemetryOffset)
-        var synced = records.filter { $0.timestamp >= syncStart }
-
-        if let length = try store.journeyLength(journeyID: journeyID) {
-            // The dials clip holds each sample for one sample interval, so
-            // the telemetry covers up to that much past its last timestamp.
-            let available =
-                last.timestamp.timeIntervalSince(syncStart) + TelemetryRecord.sampleInterval
-            guard available >= length else {
-                throw RenderSetupError(
-                    message: String(
-                        format: "Journey %lld's length is %.1fs, but its telemetry only "
-                            + "has %.1fs after the %.1fs telemetry offset.",
-                        journeyID, length, available, telemetryOffset))
-            }
-            let syncEnd = syncStart.addingTimeInterval(length)
-            synced.removeAll { $0.timestamp > syncEnd }
-        }
-        return synced
+        try TelemetryRecord.driveRecords(
+            from: records, segments: try store.journeySegments(journeyID: journeyID))
     }
 
     private func journeyDirectory() throws -> String {
