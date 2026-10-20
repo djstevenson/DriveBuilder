@@ -116,7 +116,7 @@ extension TelemetryStore {
                 item.problem = "journey \(journeyID) has no telemetry"
                 return item
             }
-            guard let location = locator.location(atTelemetrySeconds: telemetrySeconds) else {
+            guard let location = locator.location(atSeconds: telemetrySeconds) else {
                 item.problem =
                     "telemetry \(ClockTime.text(for: telemetrySeconds)) is outside the recorded track"
                 return item
@@ -124,7 +124,7 @@ extension TelemetryStore {
             item.location = location
             do {
                 let fix = try locator.locate(location)
-                let drift = fix.telemetrySeconds - telemetrySeconds
+                let drift = fix.seconds - telemetrySeconds
                 item.driftSeconds = drift
                 if abs(drift) > Self.maximumMigrationDriftSeconds {
                     item.problem = String(

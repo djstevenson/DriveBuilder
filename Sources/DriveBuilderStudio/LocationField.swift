@@ -10,7 +10,7 @@ extension JourneyPlacement {
     func timeText(_ placement: Placement) -> String {
         let clock = captionClock
         return seconds(placement, on: clock).map {
-            "\(ClockTime.text(for: $0)) in \(clock.movieName)"
+            "\(ClockTime.text(for: $0)) in \(movieName(on: clock, at: placement))"
         } ?? ""
     }
 

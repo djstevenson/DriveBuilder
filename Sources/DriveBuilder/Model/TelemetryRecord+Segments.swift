@@ -45,8 +45,13 @@ extension TelemetryRecord {
     /// telemetry for a last segment with none. Throws if any segment but the
     /// last has no length, if segments overlap, or if the telemetry runs out
     /// before a segment's length.
+    ///
+    /// `keepingEnds` also keeps the recording before the first segment and
+    /// after the last, as the drive's lead-in (before 0 s) and run-out (past
+    /// its end), so items there place as they did before segments, leaving
+    /// out only what lies between segments.
     static func driveRecords(
-        from records: [TelemetryRecord], segments: [JourneySegment]
+        from records: [TelemetryRecord], segments: [JourneySegment], keepingEnds: Bool = false
     ) throws -> [TelemetryRecord] {
         guard let first = records.first, let last = records.last else { return records }
         guard let firstSegment = segments.first else { throw DriveRecordsError.noSegments }
@@ -83,9 +88,11 @@ extension TelemetryRecord {
 
             // Each segment but the last stops short of its end, where the
             // next one's first sample takes over.
+            let keepsLeadIn = keepingEnds && index == 0
+            let keepsRunOut = keepingEnds && isLast
             let kept = records.filter { record in
-                guard record.timestamp >= start else { return false }
-                guard let end else { return true }
+                guard keepsLeadIn || record.timestamp >= start else { return false }
+                guard let end, !keepsRunOut else { return true }
                 return isLast ? record.timestamp <= end : record.timestamp < end
             }
             // Zero for the first segment, which keeps its real readings.

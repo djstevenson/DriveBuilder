@@ -257,3 +257,151 @@ private func seconds(_ record: TelemetryRecord) -> Double {
     #expect(position == 1 && length == 30 && offset == 80)
     #expect(abs(available - 20) < 1e-6)
 }
+
+// MARK: - Timeline
+
+/// Two segments: 20 s from front.mov at 5 s (telemetry 10 s), then the
+/// rest from front-2.mov at 2 s (rear 300 s, telemetry 60 s), which also
+/// has a left camera; final.mov's drive starts 40 s in.
+private func twoSegmentTimeline() -> JourneyTimeline {
+    var second = segment(1, telemetry: 60, length: nil)
+    second.frontFile = "front-2.mov"
+    second.startOffsets.front = 2
+    second.startOffsets.rear = 300
+    second.startOffsets.left = 1
+    var first = segment(0, telemetry: 10, length: 20)
+    first.startOffsets.front = 5
+    return JourneyTimeline(segments: [first, second], driveSegmentStart: 40)
+}
+
+@Test func timelineReadsEachSegmentsSourcesAtItsOwnOffsets() {
+    let timeline = twoSegmentTimeline()
+    #expect(timeline.spans.map(\.driveStart) == [0, 20])
+    #expect(timeline.segmentIndex(atDriveSeconds: -5) == 0)
+    #expect(timeline.segmentIndex(atDriveSeconds: 19.9) == 0)
+    #expect(timeline.segmentIndex(atDriveSeconds: 20) == 1)
+
+    // 10 s into the drive is in the first segment...
+    #expect(timeline.seconds(10, on: .front) == 15)
+    #expect(timeline.seconds(10, on: .telemetry) == 20)
+    #expect(timeline.seconds(10, on: .final) == 50)
+    #expect(timeline.seconds(10, on: .left) == nil)
+    // ...and 25 s is 5 s into the second, which starts its sources afresh,
+    // while final.mov runs straight on.
+    #expect(timeline.seconds(25, on: .front) == 7)
+    #expect(timeline.seconds(25, on: .rear) == 305)
+    #expect(timeline.seconds(25, on: .telemetry) == 65)
+    #expect(timeline.seconds(25, on: .left) == 6)
+    #expect(timeline.seconds(25, on: .final) == 65)
+
+    #expect(timeline.driveSeconds(7, on: .front, segment: 1) == 25)
+    #expect(timeline.driveSeconds(65, on: .final) == 25)
+    #expect(timeline.convert(15, from: .front, segment: 0, to: .final) == 50)
+    #expect(timeline.convert(7, from: .front, segment: 1, to: .rear) == 305)
+    #expect(timeline.hasClock(.left))
+    #expect(!timeline.hasClock(.right))
+}
+
+// MARK: - Placing on the drive
+
+private let junctionLatitude = 51.01
+
+/// A wrong turn: north to a junction (10 s), on past it (10 s), a U-turn
+/// back to it (10 s), then east along the right road (20 s); about 11 m a
+/// sample.
+private func wrongTurn() -> [TelemetryRecord] {
+    var points: [(latitude: Double, longitude: Double)] = []
+    for index in 0..<500 {
+        switch index {
+        case ..<200: points.append((51 + Double(index) * 0.0001, -1.5))
+        case ..<300: points.append((51 + Double(400 - index) * 0.0001, -1.5))
+        default: points.append((junctionLatitude, -1.5 + Double(index - 300) * 0.00016))
+        }
+    }
+    var odometer = 0.0
+    return points.enumerated().map { index, point in
+        if index > 0 {
+            odometer += TelemetrySample.haversineMetres(
+                latitude1: points[index - 1].latitude, longitude1: points[index - 1].longitude,
+                latitude2: point.latitude, longitude2: point.longitude)
+        }
+        return TelemetryRecord(
+            id: Int64(index + 1), journeyID: 1,
+            timestamp: start.addingTimeInterval(Double(index) / 10),
+            latitude: point.latitude, longitude: point.longitude, altitude: 0, speed: 0,
+            heading: 0, accelForward: nil, accelLateral: nil, speedLimit: nil, file: nil,
+            source: "test", odometer: odometer)
+    }
+}
+
+/// The wrong turn with the detour cut out: up to the junction, then from
+/// arriving back at it, in front-2.mov.
+private func wrongTurnPlacement() throws -> JourneyPlacement {
+    var second = segment(1, telemetry: 30, length: nil)
+    second.frontFile = "front-2.mov"
+    return JourneyPlacement(
+        track: try DriveTrack(
+            records: wrongTurn(), segments: [segment(0, telemetry: 0, length: 10), second]))
+}
+
+@Test func placingOnTheDriveIgnoresPassesInTheCutOutDetour() throws {
+    let placement = try wrongTurnPlacement()
+
+    // Just past the junction, the whole recording passes twice (out along
+    // the wrong road and back), but the drive only once, at the join.
+    let pastJunction = TrackLocation(latitude: junctionLatitude + 0.00009, longitude: -1.5)
+    do {
+        _ = try TrackLocator(records: wrongTurn()).locate(pastJunction)
+        Issue.record("expected the whole recording to pass the junction twice")
+    } catch {
+        guard case .ambiguous(let seconds) = error, seconds.count == 2 else {
+            Issue.record("expected two passes, got \(error)")
+            return
+        }
+    }
+    let placed = try placement.place(pastJunction).get()
+    #expect(abs(placed.driveSeconds - 10) < 0.05)
+
+    // Along the right road, 5 s after the join, in the second segment.
+    let along = TrackLocation(latitude: junctionLatitude, longitude: -1.5 + 50 * 0.00016)
+    let alongPlaced = try placement.place(along).get()
+    #expect(abs(alongPlaced.driveSeconds - 15) < 1e-6)
+    #expect(placement.movieName(on: .front, at: alongPlaced) == "front-2.mov")
+    #expect(abs((placement.seconds(alongPlaced, on: .front) ?? 0) - 5) < 1e-6)
+    let found = try #require(placement.location(atSeconds: 5, on: .front, segment: 1))
+    #expect(abs(found.longitude - along.longitude) < 1e-9)
+
+    // On the wrong road itself: only the cut-out part passes it.
+    let onDetour = TrackLocation(latitude: junctionLatitude + 0.005, longitude: -1.5)
+    #expect(placement.place(onDetour) == .failure(.cutOut))
+    let nowhere = TrackLocation(latitude: 52, longitude: -1.5)
+    guard case .failure(.tooFar) = placement.place(nowhere) else {
+        Issue.record("expected a location off the route to be too far")
+        return
+    }
+}
+
+@Test func keepingEndsLeavesOutOnlyWhatLiesBetweenSegments() throws {
+    let records = track(seconds: 100)
+    let drive = try TelemetryRecord.driveRecords(
+        from: records,
+        segments: [segment(0, telemetry: 10, length: 20), segment(1, telemetry: 60, length: 20)],
+        keepingEnds: true)
+    // The lead-in before 10 s at its real time, then the segments, then
+    // the run-out past the second segment's end, moved back with it.
+    #expect(drive.map(\.id) == Array(1...300) + Array(601...1000))
+    #expect(drive.first?.timestamp == start)
+    #expect(drive.last.map(seconds) == 69.9)
+}
+
+@Test func itemsBeforeTheDriveStartPlaceAtNegativeDriveSeconds() throws {
+    // A label pinned at the very first sample, before a 3 s telemetry
+    // offset, places 3 s before the drive starts, as before segments.
+    let records = track(seconds: 100)
+    let drive = try DriveTrack(records: records, segments: [segment(0, telemetry: 3, length: 20)])
+    let first = TrackLocation(latitude: records[0].latitude, longitude: records[0].longitude)
+    #expect(abs(try drive.locate(first).seconds + 3) < 1e-6)
+    // And one past the end, after it.
+    let late = TrackLocation(latitude: records[500].latitude, longitude: records[500].longitude)
+    #expect(abs(try drive.locate(late).seconds - 47) < 1e-6)
+}
