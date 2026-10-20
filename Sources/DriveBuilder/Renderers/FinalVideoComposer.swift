@@ -90,8 +90,9 @@ struct FinalVideoComposer {
     var edgeInset = defaultEdgeInset
 
     /// Seconds skipped at the start of each drive-segment source (from the
-    /// journey's database row) so the separately started recordings play in
-    /// sync; the telemetry offset applies to the dials clip rendered from it.
+    /// journey's first segment) so the separately started recordings play in
+    /// sync; the telemetry offset was already applied when dials.mov was
+    /// rendered from the drive, so the dials clip skips nothing.
     var startOffsets = StartOffsets()
 
     /// The drive segment's length in seconds (the journey's `length`
@@ -240,7 +241,9 @@ struct FinalVideoComposer {
         func sourceStart(_ seconds: Double) -> CMTime {
             CMTime(seconds: seconds, preferredTimescale: timescale)
         }
-        let dialsSourceStart = sourceStart(startOffsets.telemetry)
+        // dials.mov already starts where the drive does (see
+        // `TelemetryRecord.driveFrames`), so it skips nothing.
+        let dialsSourceStart = CMTime.zero
         let frontSourceStart = sourceStart(startOffsets.front)
 
         let rearSourceStart = sourceStart(startOffsets.rear)

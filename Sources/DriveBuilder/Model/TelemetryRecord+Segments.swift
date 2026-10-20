@@ -121,3 +121,74 @@ extension TelemetryRecord {
             speedLimit: speedLimit, file: file, source: source, odometer: odometer + metres)
     }
 }
+
+extension TelemetryRecord {
+    /// The drive as the dials and route map show it: `driveRecords`
+    /// resampled every `sampleInterval` from the moment the drive starts
+    /// (the first segment's telemetry offset) to its end, so frame `n` of a
+    /// movie drawn one record per sample is exactly `n` samples into the
+    /// drive, joins and all. A drive with every segment's length runs to
+    /// their total; one whose last segment has none runs to the end of the
+    /// telemetry. Throws as `driveRecords` does.
+    static func driveFrames(
+        from records: [TelemetryRecord], segments: [JourneySegment]
+    ) throws -> [TelemetryRecord] {
+        // The lead-in and run-out give the samples either side of the
+        // drive's first and last grid points to interpolate between.
+        let drive = try driveRecords(from: records, segments: segments, keepingEnds: true)
+        guard let first = records.first, let last = drive.last, let firstSegment = segments.first
+        else { return drive }
+        let start = first.timestamp.addingTimeInterval(firstSegment.startOffsets.telemetry)
+        let lengths = segments.compactMap(\.length)
+        guard lengths.count == segments.count else {
+            return resampled(drive, from: start, through: last.timestamp)
+        }
+        // Up to a whole number of samples, so the movie covers a length
+        // that isn't (as far as the telemetry allows).
+        let samples = (lengths.reduce(0, +) / sampleInterval - 1e-6).rounded(.up)
+        return resampled(
+            drive, from: start, through: start.addingTimeInterval(samples * sampleInterval))
+    }
+
+    /// `records` (in timestamp order) every `interval` from `start` through
+    /// `end`, interpolated between the samples either side; a sample already
+    /// on a grid point is kept as is. Grid points outside the records are
+    /// left out.
+    static func resampled(
+        _ records: [TelemetryRecord], from start: Date, through end: Date,
+        interval: TimeInterval = sampleInterval
+    ) -> [TelemetryRecord] {
+        // Timestamps are read from millisecond strings, so a sample within
+        // this of a grid point is on it.
+        let tolerance = 1e-4
+        var result: [TelemetryRecord] = []
+        var index = 0
+        var step = 0
+        while true {
+            // Counting steps rather than adding up intervals keeps the grid
+            // from drifting.
+            let time = start.addingTimeInterval(Double(step) * interval)
+            guard time.timeIntervalSince(end) <= tolerance else { break }
+            step += 1
+            while index + 1 < records.count,
+                records[index + 1].timestamp.timeIntervalSince(time) <= tolerance
+            {
+                index += 1
+            }
+            guard index < records.count else { break }
+            let before = records[index]
+            let lag = time.timeIntervalSince(before.timestamp)
+            if abs(lag) <= tolerance {
+                result.append(before)
+            } else if lag > 0, index + 1 < records.count {
+                let after = records[index + 1]
+                let span = after.timestamp.timeIntervalSince(before.timestamp)
+                result.append(interpolated(from: before, to: after, fraction: lag / span))
+            } else if lag > 0 {
+                break  // past the last sample
+            }
+            // Otherwise the grid point comes before the first sample.
+        }
+        return result
+    }
+}

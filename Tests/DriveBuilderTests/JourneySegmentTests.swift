@@ -405,3 +405,45 @@ private func wrongTurnPlacement() throws -> JourneyPlacement {
     let late = TrackLocation(latitude: records[500].latitude, longitude: records[500].longitude)
     #expect(abs(try drive.locate(late).seconds - 47) < 1e-6)
 }
+
+// MARK: - Drive frames
+
+@Test func driveFramesSitOnAGridFromTheDrivesStart() throws {
+    // A telemetry offset between samples: the frames interpolate onto the
+    // grid from 10.05 s, rather than starting at the next sample.
+    let records = track(seconds: 100)
+    let frames = try TelemetryRecord.driveFrames(
+        from: records, segments: [segment(0, telemetry: 10.05, length: 20)])
+    #expect(frames.count == 201)
+    let firstFrame = try #require(frames.first)
+    #expect(abs(firstFrame.timestamp.timeIntervalSince(start) - 10.05) < 1e-6)
+    #expect(abs(firstFrame.latitude - (records[100].latitude + records[101].latitude) / 2) < 1e-9)
+    let last = try #require(frames.last)
+    #expect(abs(last.timestamp.timeIntervalSince(start) - 30.05) < 1e-6)
+}
+
+@Test func driveFramesKeepSamplesOnTheGridAndStepEvenlyAcrossJoins() throws {
+    let records = track(seconds: 100)
+    // On the grid, the frames are the samples themselves.
+    let onGrid = try TelemetryRecord.driveFrames(
+        from: records, segments: [segment(0, telemetry: 10, length: 30)])
+    #expect(onGrid.map(\.id) == Array(101...401))
+    #expect(onGrid.allSatisfy { $0.source == "test" })
+
+    // A second segment starting between samples still steps 0.1 s on.
+    let joined = try TelemetryRecord.driveFrames(
+        from: records,
+        segments: [segment(0, telemetry: 10, length: 20), segment(1, telemetry: 60.05, length: 20)])
+    #expect(joined.count == 401)
+    let times = joined.map { $0.timestamp.timeIntervalSince(start) }
+    #expect(zip(times, times.dropFirst()).allSatisfy { abs($1 - $0 - 0.1) < 1e-6 })
+    // 10 s into the drive's second segment is 70.05 s of telemetry: halfway
+    // between samples 700 and 701.
+    #expect(abs(joined[300].latitude - (records[700].latitude + records[701].latitude) / 2) < 1e-9)
+}
+
+@Test func driveFramesCoverALengthThatIsntAWholeNumberOfSamples() throws {
+    let frames = try TelemetryRecord.driveFrames(
+        from: track(seconds: 100), segments: [segment(0, telemetry: 0, length: 20.05)])
+    #expect(frames.count == 202)
+}

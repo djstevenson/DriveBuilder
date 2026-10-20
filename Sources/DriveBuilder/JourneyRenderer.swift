@@ -350,13 +350,14 @@ package struct JourneyRenderer: Sendable {
         tileRenderer.scaleFactor =
             Double(Self.defaultMapPixelSize) / ProgressMapRenderer.designPixelSize
 
-        // dials.mov keeps the full raw timeline (the final composition skips
-        // the telemetry offset itself), but the overview map shows only the
-        // stretch of track the final video plays, and elapsed time and
-        // distance count from its start.
+        // dials.mov runs on the drive's clock: it starts where the drive
+        // starts and cuts straight from each segment to the next, so the
+        // final composition lays it under the footage as is. Elapsed time
+        // and distance count from its start.
+        let drive = try driveFrames(from: records)
         let renderer = TelemetryVideoRenderer(
-            records: records,
-            syncedRecords: try syncedRecords(from: records),
+            records: drive,
+            syncedRecords: drive,
             dialPixelSize: Self.defaultDialPixelSize,
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)
@@ -374,10 +375,10 @@ package struct JourneyRenderer: Sendable {
         progress?(.preparing)
         let outputDirectory = try makeOutputDirectory()
 
-        // Only the stretch of track the final video shows. Each label pops
-        // in when that track passes its reveal location.
+        // Only the drive the final video shows. Each label pops in when the
+        // drive passes its reveal location.
         let allRecords = try self.records()
-        let records = try syncedRecords(from: allRecords)
+        let records = try driveFrames(from: allRecords)
         let placer = try ItemPlacer(store: store, journeyID: journeyID, records: allRecords)
 
         var config = RouteMapConfig()
@@ -596,12 +597,10 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// The part of `records` the final video shows: the journey's segments'
-    /// stretches of telemetry as one continuous drive (see
-    /// `TelemetryRecord.driveRecords(from:segments:)`). The final
-    /// composition skips the first segment's `telemetry_offset` seconds of
-    /// the dials to sync them with the footage.
-    private func syncedRecords(from records: [TelemetryRecord]) throws -> [TelemetryRecord] {
-        try TelemetryRecord.driveRecords(
+    /// stretches of telemetry as one continuous drive, on a 10 Hz grid from
+    /// its start (see `TelemetryRecord.driveFrames(from:segments:)`).
+    private func driveFrames(from records: [TelemetryRecord]) throws -> [TelemetryRecord] {
+        try TelemetryRecord.driveFrames(
             from: records, segments: try store.journeySegments(journeyID: journeyID))
     }
 
