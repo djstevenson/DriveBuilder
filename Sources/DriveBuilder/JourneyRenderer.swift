@@ -25,49 +25,8 @@ package struct JourneySummary: Identifiable, Sendable {
     package let start: Date?
     package let end: Date?
     package let distanceMetres: Double
-    /// Synchronisation offsets, in seconds, for lining up the separately
-    /// captured sources.
-    package let frontOffset: Double
-    package let rearOffset: Double
-    package let telemetryOffset: Double
-    /// The optional side cameras' offsets: nil when the journey has no
-    /// such view.
-    package let leftOffset: Double?
-    package let rightOffset: Double?
-    /// The drive segment's length in seconds, measured from the synced
-    /// start; nil means it runs for the shortest of the synced sources.
-    package let length: Double?
 
     package var roadName: String { "\(roadType)\(roadNumber)" }
-
-    /// The stored offset for one synchronisation source; nil only for a
-    /// side camera the journey doesn't have.
-    package func startOffset(_ source: StartOffsetSource) -> Double? {
-        switch source {
-        case .front: frontOffset
-        case .rear: rearOffset
-        case .telemetry: telemetryOffset
-        case .left: leftOffset
-        case .right: rightOffset
-        }
-    }
-}
-
-/// One of the journey's synchronisation-offset columns; the raw value is
-/// the `journeys` column that stores it.
-package enum StartOffsetSource: String, Sendable, Identifiable {
-    case front = "front_offset"
-    case rear = "rear_offset"
-    case telemetry = "telemetry_offset"
-    /// The optional side cameras, looking out of the left and right windows.
-    case left = "left_offset"
-    case right = "right_offset"
-
-    package var id: String { rawValue }
-
-    /// Whether the source may be absent: a NULL offset means the journey
-    /// has no such camera view.
-    package var isOptional: Bool { self == .left || self == .right }
 }
 
 /// Read access to the journeys a front end can list.
@@ -128,21 +87,35 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).deleteAnnotation(id: id)
     }
 
-    /// Sets one of the journey's synchronisation offsets, in seconds; nil
-    /// (only for an optional side camera) means the journey has no such view.
+    /// A journey's segments, in playback order (see `JourneySegment`).
     @concurrent
-    package func updateStartOffset(
-        journeyID: Int64, source: StartOffsetSource, offset: Double?
-    ) async throws {
-        try TelemetryStore(path: databasePath).updateStartOffset(
-            journeyID: journeyID, source: source, offset: offset)
+    package func segments(journeyID: Int64) async throws -> [JourneySegment] {
+        try TelemetryStore(path: databasePath).journeySegments(journeyID: journeyID)
     }
 
-    /// Sets the journey's drive-segment length in seconds; nil means the
-    /// shortest synced source decides.
+    /// Adds a segment after the journey's last, its sources guessed to
+    /// follow on from it; returns the new segment.
     @concurrent
-    package func updateLength(journeyID: Int64, length: Double?) async throws {
-        try TelemetryStore(path: databasePath).updateLength(journeyID: journeyID, length: length)
+    package func addSegment(journeyID: Int64) async throws -> JourneySegment {
+        try TelemetryStore(path: databasePath).insertSegment(journeyID: journeyID)
+    }
+
+    /// Rewrites a segment's files, offsets, and length.
+    @concurrent
+    package func updateSegment(_ segment: JourneySegment) async throws {
+        try TelemetryStore(path: databasePath).updateSegment(segment)
+    }
+
+    /// Removes a segment; a journey's only segment can't go.
+    @concurrent
+    package func deleteSegment(_ segment: JourneySegment) async throws {
+        try TelemetryStore(path: databasePath).deleteSegment(segment)
+    }
+
+    /// Swaps a segment with its neighbour before (`earlier`) or after it.
+    @concurrent
+    package func moveSegment(_ segment: JourneySegment, earlier: Bool) async throws {
+        try TelemetryStore(path: databasePath).moveSegment(segment, earlier: earlier)
     }
 
     /// A journey's camera-slot overrides, in the order they were added. No

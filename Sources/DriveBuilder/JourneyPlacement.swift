@@ -67,6 +67,21 @@ package struct JourneyPlacement: Sendable {
         Clock.allCases.filter { timeline.hasClock($0.timelineClock) }
     }
 
+    /// How many segments the drive plays.
+    package var segmentCount: Int { timeline.spans.count }
+
+    /// Which segment (from 0) is playing `driveSeconds` into the drive: the
+    /// first before the drive starts, the last after it ends.
+    package func segmentIndex(atDriveSeconds driveSeconds: Double) -> Int {
+        timeline.segmentIndex(atDriveSeconds: driveSeconds)
+    }
+
+    /// Whether segment `index` has `clock`: a side camera it has no offset
+    /// for doesn't.
+    package func segment(_ index: Int, has clock: Clock) -> Bool {
+        timeline.start(of: clock.timelineClock, segment: index) != nil
+    }
+
     /// When the track passes `location`, or why it can't be pinned down.
     package func place(_ location: TrackLocation) -> Result<Placement, TrackLocatorError> {
         if let cached = cache.placements.withLock({ $0[location] }) { return cached }
@@ -91,7 +106,47 @@ package struct JourneyPlacement: Sendable {
         let segment = timeline.spans[
             timeline.segmentIndex(atDriveSeconds: placement.driveSeconds)
         ].segment
-        return switch clock {
+        return Self.fileName(of: clock, in: segment)
+    }
+
+    /// A movie a time can be read off, for a front end's picker: a clock,
+    /// and for a camera, which segment's file.
+    package struct Movie: Hashable, Identifiable, Sendable {
+        package let clock: Clock
+        /// An index into the journey's segments; 0 for final.mov and
+        /// dials.mov, which run through them all.
+        package let segment: Int
+        /// The file, with its segment when another segment shares the name
+        /// ("rear.mov (segment 2)").
+        package let name: String
+
+        package var id: Self { self }
+    }
+
+    /// Every movie this journey has: final.mov (once known), dials.mov, and
+    /// each segment's camera files.
+    package var movies: [Movie] {
+        clocks.flatMap { clock -> [Movie] in
+            if clock == .final || clock == .dials {
+                return [Movie(clock: clock, segment: 0, name: clock.movieName)]
+            }
+            let files = timeline.spans.indices.compactMap { index -> (Int, String)? in
+                guard timeline.start(of: clock.timelineClock, segment: index) != nil else {
+                    return nil
+                }
+                return (index, Self.fileName(of: clock, in: timeline.spans[index].segment))
+            }
+            return files.map { index, name in
+                let isShared = files.filter { $0.1 == name }.count > 1
+                return Movie(
+                    clock: clock, segment: index,
+                    name: isShared ? "\(name) (segment \(index + 1))" : name)
+            }
+        }
+    }
+
+    private static func fileName(of clock: Clock, in segment: JourneySegment) -> String {
+        switch clock {
         case .final, .dials: clock.movieName
         case .front: segment.frontFile
         case .rear: segment.rearFile

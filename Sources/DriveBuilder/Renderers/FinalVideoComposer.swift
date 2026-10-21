@@ -8,13 +8,24 @@ import QuartzCore
 /// recording at the same moment. Read from a `journey_segments` row
 /// (`front_offset`, `rear_offset`, `telemetry_offset`, `left_offset`,
 /// `right_offset`).
-struct StartOffsets: Equatable {
-    var front = 0.0
-    var rear = 0.0
-    var telemetry = 0.0
-    /// The optional side cameras: nil when the journey has no such view.
-    var left: Double?
-    var right: Double?
+package struct StartOffsets: Sendable, Equatable {
+    package var front: Double
+    package var rear: Double
+    package var telemetry: Double
+    /// The optional side cameras: nil when the segment has no such view.
+    package var left: Double?
+    package var right: Double?
+
+    package init(
+        front: Double = 0, rear: Double = 0, telemetry: Double = 0, left: Double? = nil,
+        right: Double? = nil
+    ) {
+        self.front = front
+        self.rear = rear
+        self.telemetry = telemetry
+        self.left = left
+        self.right = right
+    }
 }
 
 /// Stitches the already-rendered clips into the final programme:

@@ -68,12 +68,30 @@ struct CameraOverrideForm: View {
     /// field saying why. Order, length, and overlaps go by when the track
     /// passes the locations, so they wait for the track to load.
     private var problem: String? {
-        if camera != .rear && journey.startOffset(camera == .left ? .left : .right) == nil {
+        let sideClock: JourneyPlacement.Clock? =
+            switch camera {
+            case .rear: nil
+            case .left: .left
+            case .right: .right
+            }
+        if let placement, let sideClock, !placement.clocks.contains(sideClock) {
             return "This journey has no \(camera.displayName.lowercased()) camera: "
-                + "set its offset under Source Video and Telemetry first."
+                + "set its offset in a segment first."
         }
         guard let placement, let window = windowSeconds(from: start, to: end, on: placement) else {
             return nil
+        }
+        // A window ending exactly at a join belongs to the segment before.
+        let segment = placement.segmentIndex(atDriveSeconds: window.start)
+        if window.end > window.start,
+            placement.segmentIndex(atDriveSeconds: window.end - 0.001) != segment
+        {
+            return "Runs across the join between segments \(segment + 1) and \(segment + 2): "
+                + "split it into a view for each segment."
+        }
+        if let sideClock, !placement.segment(segment, has: sideClock) {
+            return "Segment \(segment + 1) has no \(camera.displayName.lowercased()) camera: "
+                + "set its offset in that segment first."
         }
         if window.end <= window.start {
             return "The track reaches the end location before the start location."

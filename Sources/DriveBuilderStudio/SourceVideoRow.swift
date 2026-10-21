@@ -10,16 +10,18 @@ private struct SourceVideoLoadKey: Equatable {
     let outputsVersion: Int
 }
 
-/// One of the journey's source-footage files, found by convention beneath
-/// the journey directory (video/front.mov, rear.mov, left.mov, right.mov)
-/// rather than in the database. Shows the video's duration, resolution,
-/// frame rate, and size, or notes that the file is missing.
+/// One of a segment's source-footage files, named by the segment and found
+/// beneath the journey's video directory. Shows the file's name and the
+/// video's duration, resolution, frame rate, and size, or notes that the
+/// file is missing.
 struct SourceVideoRow: View {
     @Environment(StudioModel.self) private var model
     let name: String
+    /// The file's name, as the segment stores it.
+    let file: String
     let url: URL
-    /// The journey's synchronisation offset for this source, in seconds;
-    /// nil for a side camera the journey doesn't use.
+    /// The segment's synchronisation offset for this source, in seconds;
+    /// nil for a side camera the segment doesn't use.
     let offset: Double?
     /// Opens the offset-editing sheet for this source.
     let onEditOffset: () -> Void
@@ -28,7 +30,8 @@ struct SourceVideoRow: View {
 
     var body: some View {
         let status = FileStatus(url: url)
-        let fileDetails = status.exists ? (details ?? "Loading\u{2026}") : "Missing"
+        let fileDetails =
+            "\(file) \u{00B7} " + (status.exists ? (details ?? "Loading\u{2026}") : "Missing")
         // An unused side camera: its file (if any) is ignored by the render.
         let caption =
             if let offset {

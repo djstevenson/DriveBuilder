@@ -130,7 +130,7 @@ private func columns(of table: String, in path: String) throws -> [String] {
     #expect(try store.journeySegments(journeyID: journeyID).isEmpty)
 }
 
-@Test func segmentsReadBackInPlaybackOrderWithTheFirstOneDrivingTheOldAccessors() throws {
+@Test func segmentsReadBackInPlaybackOrder() throws {
     let (path, directory) = try fixtureCopy(
         running: """
             UPDATE journey_segments SET telemetry_offset = 5, length = 60 WHERE journey_id = 1;
@@ -146,11 +146,80 @@ private func columns(of table: String, in path: String) throws -> [String] {
     #expect(segments.map(\.position) == [0, 1, 2])
     #expect(segments.map(\.frontFile) == ["front.mov", "front-2.mov", "front-3.mov"])
     #expect(segments.map(\.startOffsets.telemetry) == [5, 100, 400])
-
+    #expect(segments.map(\.length) == [60, 200, nil])
     #expect(try store.journeyStartOffsets(journeyID: 1)?.telemetry == 5)
-    #expect(try store.journeyLength(journeyID: 1) == 60)
-    try store.updateLength(journeyID: 1, length: 61)
-    #expect(try store.journeySegments(journeyID: 1).map(\.length) == [61, 200, nil])
+}
+
+@Test func updatesEverythingAboutASegment() throws {
+    let (path, directory) = try fixtureCopy()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = TelemetryStore(path: path)
+
+    var segment = try #require(try store.journeySegments(journeyID: 1).first)
+    segment.frontFile = "iphone.mov"
+    segment.rearFile = "dashcam.mov"
+    segment.leftFile = "mini.mov"
+    segment.startOffsets = StartOffsets(front: 34, rear: 34.5, telemetry: 62, left: 12.5)
+    segment.length = 2400.5
+    try store.updateSegment(segment)
+    #expect(try store.journeySegments(journeyID: 1) == [segment])
+
+    // The side cameras and length clear back to NULL.
+    segment.startOffsets.left = nil
+    segment.length = nil
+    try store.updateSegment(segment)
+    let cleared = try #require(try store.journeySegments(journeyID: 1).first)
+    #expect(cleared.startOffsets.left == nil && cleared.length == nil)
+}
+
+@Test func addedSegmentsFollowOnFromTheLast() throws {
+    let (path, directory) = try fixtureCopy(
+        running: """
+            UPDATE journey_segments SET rear_file = 'dashcam.mov', rear_offset = 3,
+                telemetry_offset = 10, length = 600, left_offset = 2 WHERE journey_id = 1;
+            """)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = TelemetryStore(path: path)
+
+    // A new front file, the rear camera and telemetry carrying on from
+    // where the last segment ends, and no side cameras yet.
+    let added = try store.insertSegment(journeyID: 1)
+    #expect(added.position == 1)
+    #expect(added.frontFile == "front-2.mov")
+    #expect(added.rearFile == "dashcam.mov")
+    #expect(added.startOffsets == StartOffsets(front: 0, rear: 603, telemetry: 610))
+    #expect(added.length == nil)
+    #expect(try store.journeySegments(journeyID: 1).map(\.id).last == added.id)
+}
+
+@Test func deletingAndMovingSegmentsKeepsPositionsInOrder() throws {
+    let (path, directory) = try fixtureCopy(
+        running: "UPDATE journey_segments SET length = 60 WHERE journey_id = 1;")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = TelemetryStore(path: path)
+    let first = try #require(try store.journeySegments(journeyID: 1).first)
+    let second = try store.insertSegment(journeyID: 1)
+    let third = try store.insertSegment(journeyID: 1)
+    func order() throws -> [Int64] {
+        let segments = try store.journeySegments(journeyID: 1)
+        #expect(segments.map(\.position) == Array(segments.indices))
+        return segments.map(\.id)
+    }
+
+    try store.moveSegment(third, earlier: true)
+    #expect(try order() == [first.id, third.id, second.id])
+    // Moving past either end does nothing.
+    try store.moveSegment(first, earlier: true)
+    #expect(try order() == [first.id, third.id, second.id])
+
+    try store.deleteSegment(first)
+    #expect(try order() == [third.id, second.id])
+    try store.deleteSegment(try #require(try store.journeySegments(journeyID: 1).last))
+    #expect(try order() == [third.id])
+    // A journey keeps at least one segment.
+    #expect(throws: TelemetryStoreError.self) {
+        try store.deleteSegment(try #require(try store.journeySegments(journeyID: 1).first))
+    }
 }
 
 // MARK: - Drive records
@@ -446,4 +515,23 @@ private func wrongTurnPlacement() throws -> JourneyPlacement {
     let frames = try TelemetryRecord.driveFrames(
         from: track(seconds: 100), segments: [segment(0, telemetry: 0, length: 20.05)])
     #expect(frames.count == 202)
+}
+
+@Test func placementListsEachSegmentsMoviesByFile() throws {
+    var second = segment(1, telemetry: 30, length: nil)
+    second.frontFile = "front-2.mov"
+    second.startOffsets.left = 0
+    let placement = JourneyPlacement(
+        track: try DriveTrack(
+            records: wrongTurn(), segments: [segment(0, telemetry: 0, length: 10), second],
+            driveSegmentStart: 40))
+    #expect(placement.segmentCount == 2)
+    #expect(
+        placement.movies.map(\.name) == [
+            "final.mov", "dials.mov", "front.mov", "front-2.mov",
+            "rear.mov (segment 1)", "rear.mov (segment 2)", "left.mov",
+        ])
+    let left = try #require(placement.movies.last)
+    #expect(left.clock == .left && left.segment == 1)
+    #expect(!placement.segment(0, has: .left) && placement.segment(1, has: .left))
 }
