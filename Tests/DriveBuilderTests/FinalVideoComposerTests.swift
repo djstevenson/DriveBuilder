@@ -62,8 +62,8 @@ private func composer(in directory: URL) -> FinalVideoComposer {
     func url(_ name: String) -> URL { directory.appending(path: name) }
     var composer = FinalVideoComposer(
         introURL: url("intro.mov"), routeMapURL: url("route_map.mov"),
-        dialsURL: url("dials.mov"), frontFootageURL: url("front.mov"),
-        rearFootageURL: url("rear.mov"), outroURL: url("outro.mov"))
+        dialsURL: url("dials.mov"), outroURL: url("outro.mov"),
+        segments: [.init(frontURL: url("front.mov"), rearURL: url("rear.mov"))])
     composer.crossFadeSeconds = 0.5
     return composer
 }
@@ -138,10 +138,10 @@ func cameraOverridesPushIntoTheSlotInSyncWithLabels() async throws {
     ) { _ in red }
 
     var composer = composer(in: directory)
-    composer.startOffsets.left = 1
-    composer.startOffsets.right = 0
-    composer.leftFootageURL = directory.appending(path: "left.mov")
-    composer.rightFootageURL = directory.appending(path: "right.mov")
+    composer.segments[0].startOffsets.left = 1
+    composer.segments[0].startOffsets.right = 0
+    composer.segments[0].leftURL = directory.appending(path: "left.mov")
+    composer.segments[0].rightURL = directory.appending(path: "right.mov")
     // Drive seconds; +1 s gives final-video times: left 1.6...4.2 s,
     // right 4.6...7.3 s. Each push takes 1 s; a label pops in over 0.35 s
     // once its push has landed.
@@ -232,8 +232,8 @@ func invalidCameraOverridesFailTheRender() async throws {
     ) async -> String {
         var composer = composer(in: directory)
         if left {
-            composer.startOffsets.left = 0
-            composer.leftFootageURL = directory.appending(path: "left.mov")
+            composer.segments[0].startOffsets.left = 0
+            composer.segments[0].leftURL = directory.appending(path: "left.mov")
         }
         composer.cameraOverrides = overrides
         let error = await #expect(throws: (any Error).self) {
@@ -250,4 +250,108 @@ func invalidCameraOverridesFailTheRender() async throws {
     #expect(await failure([override(.left, 0.5, 3.5)]).contains("left.mov"))
     // Ends before it starts.
     #expect(await failure([override(.left, 2, 1)]).contains("ends before it starts"))
+}
+
+// MARK: - Segments
+
+private let yellow = CGColor(srgbRed: 1, green: 1, blue: 0, alpha: 1)
+private let cyan = CGColor(srgbRed: 0, green: 1, blue: 1, alpha: 1)
+
+/// A point on the drive footage clear of the camera slot and dial column.
+private let backdrop = (2000, 1500)
+
+/// Two segments over the common clips: 3 s of grey front.mov, then
+/// front-2.mov from 1 s in (magenta for its first second, then yellow), with
+/// the rear camera left running: rear.mov blue for 4 s, then cyan, the
+/// second segment picking it up 4 s in. The second runs for its shortest
+/// source, 4 s, so the drive is final 1...8 s with the join at 4 s.
+private func twoSegmentComposer(in directory: URL) async throws -> FinalVideoComposer {
+    try await writeCommonClips(in: directory)
+    try await writeClip(
+        directory.appending(path: "rear.mov"), width: 960, height: 540, seconds: 8
+    ) { $0 < 120 ? blue : cyan }
+    try await writeClip(
+        directory.appending(path: "front-2.mov"), width: 640, height: 360, seconds: 5
+    ) { $0 < 30 ? magenta : yellow }
+
+    var composer = composer(in: directory)
+    composer.segments[0].length = 3
+    var second = FinalVideoComposer.SegmentFootage(
+        frontURL: directory.appending(path: "front-2.mov"),
+        rearURL: directory.appending(path: "rear.mov"))
+    second.startOffsets.front = 1
+    second.startOffsets.rear = 4
+    composer.segments.append(second)
+    return composer
+}
+
+@Test(.timeLimit(.minutes(2)))
+func segmentsPlayInTurnDippingToBlackAtTheJoin() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let output = directory.appending(path: "final.mov")
+    try await twoSegmentComposer(in: directory).writeMovie(to: output)
+
+    // The outro starts fading in half a second before the drive ends at 8 s.
+    let duration = try await AVURLAsset(url: output).load(.duration).seconds
+    #expect(abs(duration - 8.5) < 0.05, "duration \(duration)")
+
+    // The first segment: grey footage, the rear view from rear.mov's start.
+    let first = try await frame(of: output, at: 3.0)
+    #expect(isClose(try rgb(first, backdrop.0, backdrop.1), to: [204, 204, 204]), "front.mov")
+    #expect(isClose(try rgb(first, slotMiddle.0, slotMiddle.1), to: [0, 0, 255]), "rear.mov early")
+
+    // Halfway down into the join, and black at it.
+    let dipping = try await frame(of: output, at: 3.75)
+    #expect(isClose(try rgb(dipping, backdrop.0, backdrop.1), to: [102, 102, 102]), "fading out")
+    let join = try await frame(of: output, at: 4.0)
+    #expect(isClose(try rgb(join, backdrop.0, backdrop.1), to: [0, 0, 0]), "black at the join")
+    #expect(isClose(try rgb(join, slotMiddle.0, slotMiddle.1), to: [0, 0, 0]), "slot black too")
+
+    // The second segment: front-2.mov past its skipped magenta second, and
+    // the rear view picked up 4 s into rear.mov.
+    let second = try await frame(of: output, at: 5.5)
+    #expect(isClose(try rgb(second, backdrop.0, backdrop.1), to: [255, 255, 0]), "front-2.mov")
+    #expect(isClose(try rgb(second, slotMiddle.0, slotMiddle.1), to: [0, 255, 255]), "rear.mov later")
+    let fadingIn = try await frame(of: output, at: 4.6)
+    #expect(isClose(try rgb(fadingIn, backdrop.0, backdrop.1), to: [255, 255, 0]), "not magenta")
+}
+
+@Test(.timeLimit(.minutes(2)))
+func segmentsThatCantBeJoinedFailTheRender() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let base = try await twoSegmentComposer(in: directory)
+    try await writeClip(
+        directory.appending(path: "small-rear.mov"), width: 480, height: 270, seconds: 8
+    ) { _ in blue }
+
+    func failure(_ change: (inout FinalVideoComposer) -> Void) async -> String {
+        var composer = base
+        change(&composer)
+        let error = await #expect(throws: (any Error).self) {
+            try await composer.writeMovie(to: directory.appending(path: "final.mov"))
+        }
+        return String(describing: error)
+    }
+
+    // Only the last segment may leave its length to its sources.
+    #expect(await failure { $0.segments[0].length = nil }.contains("has no length"))
+    // Too close to the route map for the join's fade out.
+    #expect(await failure { $0.segments[0].length = 0.6 }.contains("too soon"))
+    // A camera override across the join.
+    #expect(
+        await failure { $0.cameraOverrides = [override(.rear, 1, 4.5)] }
+            .contains("across the join"))
+    // A side camera the second segment doesn't have.
+    #expect(
+        await failure {
+            $0.segments[0].startOffsets.left = 0
+            $0.segments[0].leftURL = directory.appending(path: "front.mov")
+            $0.cameraOverrides = [override(.left, 3.5, 6.5)]
+        }.contains("left_offset"))
+    // A rear view of a different size.
+    #expect(
+        await failure { $0.segments[1].rearURL = directory.appending(path: "small-rear.mov") }
+            .contains("same size"))
 }

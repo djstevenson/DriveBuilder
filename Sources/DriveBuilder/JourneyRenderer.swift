@@ -483,15 +483,31 @@ package struct JourneyRenderer: Sendable {
         let journeyDirectory = try journeyDirectory()
         let outputDirectory = try makeOutputDirectory()
 
+        // Each segment's footage, beneath the journey's video directory; a
+        // side camera is available only in a segment with its offset, and
+        // an override that uses it then needs its video, like front.mov.
+        let videoDirectory = URL(filePath: journeyDirectory).appending(path: "video")
+        let segments = try store.journeySegments(journeyID: journeyID).map { segment in
+            var footage = FinalVideoComposer.SegmentFootage(
+                frontURL: videoDirectory.appending(path: segment.frontFile),
+                rearURL: videoDirectory.appending(path: segment.rearFile))
+            if segment.startOffsets.left != nil {
+                footage.leftURL = videoDirectory.appending(path: segment.leftFile)
+            }
+            if segment.startOffsets.right != nil {
+                footage.rightURL = videoDirectory.appending(path: segment.rightFile)
+            }
+            footage.startOffsets = segment.startOffsets
+            footage.length = segment.length
+            return footage
+        }
         var composer = FinalVideoComposer(
             introURL: outputDirectory.appending(path: "intro.mov"),
             routeMapURL: outputDirectory.appending(path: "route_map.mov"),
             dialsURL: outputDirectory.appending(path: "dials.mov"),
-            frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
-            rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
-            outroURL: outputDirectory.appending(path: "outro.mov"))
-        composer.startOffsets = try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets()
-        // Overrides and annotations happen where the track passes their
+            outroURL: outputDirectory.appending(path: "outro.mov"),
+            segments: segments)
+        // Overrides and annotations happen where the drive passes their
         // locations, found here as drive seconds.
         let placer = try ItemPlacer(store: store, journeyID: journeyID, records: try records())
         composer.cameraOverrides = try store.cameraOverrides(journeyID: journeyID).map { override in
@@ -502,16 +518,6 @@ package struct JourneyRenderer: Sendable {
                 end: try placer.driveSeconds(at: override.endLocation, for: "\(item)'s end"),
                 label: override.displayLabel)
         }
-        // A side camera is available only when the journey has its offset;
-        // an override that uses it then needs its video, like front.mov.
-        let videoDirectory = URL(filePath: journeyDirectory).appending(path: "video")
-        if composer.startOffsets.left != nil {
-            composer.leftFootageURL = videoDirectory.appending(path: "left.mov")
-        }
-        if composer.startOffsets.right != nil {
-            composer.rightFootageURL = videoDirectory.appending(path: "right.mov")
-        }
-        composer.driveSegmentLength = try store.journeyLength(journeyID: journeyID)
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
         composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
             FinalVideoComposer.AnnotationClip(
