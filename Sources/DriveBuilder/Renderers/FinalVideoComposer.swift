@@ -291,26 +291,12 @@ struct FinalVideoComposer {
         let dialsStart = JourneyTimeline.driveSegmentStart(
             introDuration: intro.duration, routeMapDuration: routeMap.duration, crossFade: fade)
 
-        var placed = try await placeSegments(
+        let placed = try await placeSegments(
             dials: dials, dialsStart: dialsStart, timescale: timescale)
         guard let firstSegment = placed.first, let lastSegment = placed.last else {
             throw CompositionError(message: "The journey has no segments to play.")
         }
-        var dialsSegmentDuration = lastSegment.end - dialsStart
-        if let maxDriveSegmentSeconds {
-            let cap = CMTime(seconds: maxDriveSegmentSeconds, preferredTimescale: timescale)
-            if cap < dialsSegmentDuration {
-                print(
-                    String(
-                        format: "final: capping the drive segment to %.1fs for a test render.",
-                        maxDriveSegmentSeconds))
-                dialsSegmentDuration = cap
-                // Segments starting past the cap go; the one it falls in
-                // stops there.
-                placed.removeAll { $0.start >= dialsStart + cap }
-                placed[placed.count - 1].duration = dialsStart + cap - placed[placed.count - 1].start
-            }
-        }
+        let dialsSegmentDuration = lastSegment.end - dialsStart
         let dialsEnd = dialsStart + dialsSegmentDuration
         let outroStart = dialsEnd - fade
         let outroEnd = outroStart + outro.duration
@@ -884,15 +870,22 @@ struct FinalVideoComposer {
     /// skips a whole clip, a length a source can't cover, a missing length
     /// on any segment but the last, rear views of different sizes (the
     /// camera slot is the rear view's frame), or dials.mov falling short.
+    ///
+    /// With `maxDriveSegmentSeconds`, only the drive up to the cap is
+    /// placed: segments starting past it are skipped unchecked (a quick
+    /// preview's dials.mov doesn't reach them), and the one it falls in
+    /// stops there.
     private func placeSegments(
         dials: Clip, dialsStart: CMTime, timescale: CMTimeScale
     ) async throws -> [PlacedSegment] {
         func time(_ seconds: Double) -> CMTime {
             CMTime(seconds: seconds, preferredTimescale: timescale)
         }
+        let capEnd = maxDriveSegmentSeconds.map { dialsStart + time($0) }
         var placed: [PlacedSegment] = []
         var start = dialsStart
         for (index, footage) in segments.enumerated() {
+            if let capEnd, start >= capEnd { break }
             let isLast = index == segments.count - 1
             let name = segments.count > 1 ? "Segment \(index + 1)'s" : "The journey's"
             let front = try await loadClip(at: footage.frontURL)
@@ -920,11 +913,14 @@ struct FinalVideoComposer {
                 throw CompositionError(
                     message: "\(name) start offset for \(empty.0) skips the whole clip.")
             }
-            if isLast {
+            // A length-less last segment runs until dials.mov ends too; a
+            // set length is checked against dials.mov once the drive's
+            // total (after any cap) is known, below.
+            if isLast, footage.length == nil {
                 sources.append(("dials.mov", dials.duration - (start - dialsStart)))
             }
 
-            let duration: CMTime
+            var duration: CMTime
             if let length = footage.length {
                 if let short = sources.first(where: { $0.1 < time(length) }) {
                     throw CompositionError(
@@ -954,6 +950,13 @@ struct FinalVideoComposer {
                 throw CompositionError(
                     message: "dials.mov ends before segment \(index + 1) starts; render the "
                         + "dials again.")
+            }
+            if let capEnd, start + duration > capEnd {
+                print(
+                    String(
+                        format: "final: capping the drive segment to %.1fs for a test render.",
+                        (capEnd - dialsStart).seconds))
+                duration = capEnd - start
             }
 
             let offsets = footage.startOffsets

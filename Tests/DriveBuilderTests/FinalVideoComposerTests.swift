@@ -318,6 +318,27 @@ func segmentsPlayInTurnDippingToBlackAtTheJoin() async throws {
 }
 
 @Test(.timeLimit(.minutes(2)))
+func aCappedRenderOnlyPlacesTheSegmentsBeforeTheCap() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var composer = try await twoSegmentComposer(in: directory)
+    // A quick preview's dials.mov: rendered only for the start of the drive,
+    // so it doesn't reach the second segment, which isn't even loaded.
+    try await writeClip(
+        directory.appending(path: "dials.mov"), width: 64, height: 196, seconds: 2
+    ) { _ in CGColor(gray: 0, alpha: 0) }
+    composer.segments[1].frontURL = directory.appending(path: "missing.mov")
+    composer.maxDriveSegmentSeconds = 2
+
+    let output = directory.appending(path: "final.mov")
+    try await composer.writeMovie(to: output)
+
+    // The drive runs 1...3 s, then the outro fades in for its 1 s.
+    let duration = try await AVURLAsset(url: output).load(.duration).seconds
+    #expect(abs(duration - 3.5) < 0.05, "duration \(duration)")
+}
+
+@Test(.timeLimit(.minutes(2)))
 func segmentsThatCantBeJoinedFailTheRender() async throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
