@@ -97,7 +97,7 @@ struct CameraOverrideForm: View {
             return "The track reaches the end location before the start location."
         }
         if window.end - window.start < CameraOverride.minimumDuration {
-            return "Too short: a camera view needs at least "
+            return "Too short: a secondary camera selection needs at least "
                 + "\(CameraOverride.minimumDuration.formatted()) s for the camera to push "
                 + "in, its label to appear, and the camera to push back out."
         }
@@ -128,7 +128,9 @@ struct CameraOverrideForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(cameraOverride == nil ? "New camera view" : "Edit camera view")
+            Text(
+                cameraOverride == nil
+                    ? "New secondary camera selection" : "Edit secondary camera selection")
                 .font(.appHeadline)
             Form {
                 Picker("Camera", selection: $camera) {

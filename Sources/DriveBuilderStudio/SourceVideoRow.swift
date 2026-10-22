@@ -23,7 +23,7 @@ struct SourceVideoRow: View {
     /// The segment's synchronisation offset for this source, in seconds;
     /// nil for a side camera the segment doesn't use.
     let offset: Double?
-    /// Opens the offset-editing sheet for this source.
+    /// Opens the editing sheet for this source.
     let onEditOffset: () -> Void
 
     @State private var details: String?

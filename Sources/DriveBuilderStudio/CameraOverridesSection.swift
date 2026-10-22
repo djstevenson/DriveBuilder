@@ -14,7 +14,7 @@ private struct CameraOverridesLoadKey: Equatable {
     let outputsVersion: Int
 }
 
-/// The journey pane's "Camera Views" section: the windows during which the
+/// The journey pane's "Secondary Camera Selection" section: the windows during which the
 /// camera slot shows a side camera (or relabels the rear view), with add,
 /// edit, and delete.
 struct CameraOverridesSection: View {
@@ -57,7 +57,7 @@ struct CameraOverridesSection: View {
             }
         } header: {
             HStack {
-                Text("Camera Views")
+                Text("Secondary Camera Selection")
                 Spacer()
                 Button("Add", systemImage: "plus") {
                     adding = true
@@ -84,7 +84,7 @@ struct CameraOverridesSection: View {
             }
         }
         .alert(
-            "Delete camera view?",
+            "Delete secondary camera selection?",
             isPresented: Binding(
                 get: { toDelete != nil },
                 set: { if !$0 { toDelete = nil } }),

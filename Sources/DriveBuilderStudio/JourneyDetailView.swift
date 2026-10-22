@@ -38,7 +38,7 @@ struct JourneyDetailView: View {
     @State private var annotationToDelete: Annotation?
     @State private var deleteError: String?
     @State private var segments: [JourneySegment] = []
-    @State private var editingSegment: JourneySegment?
+    @State private var editingSegment: SegmentEdit?
     @State private var segmentToDelete: JourneySegment?
     @State private var segmentError: String?
     @State private var editingJourney = false
@@ -52,6 +52,10 @@ struct JourneyDetailView: View {
     /// joined (see `placementError`).
     @State private var placement: JourneyPlacement?
     @State private var placementError: String?
+    /// The journey whose telemetry is being extracted, if any; by id so the
+    /// spinner stays with that journey if the selection changes meanwhile.
+    @State private var extractingJourneyID: Int64?
+    @State private var extractError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -210,10 +214,10 @@ struct JourneyDetailView: View {
                     + "route map labels will be removed from the database. Source videos "
                     + "and rendered output on disk stay put.")
         }
-        .sheet(item: $editingSegment) { segment in
+        .sheet(item: $editingSegment) { edit in
             SegmentForm(
-                databasePath: model.databasePath, segment: segment,
-                isLast: segment.id == segments.last?.id
+                databasePath: model.databasePath, segment: edit.segment, field: edit.field,
+                isLast: edit.segment.id == segments.last?.id
             ) {
                 Task { await loadSegments() }
             }
@@ -270,6 +274,17 @@ struct JourneyDetailView: View {
             Text(message)
         }
         .alert(
+            "Could not extract telemetry",
+            isPresented: Binding(
+                get: { extractError != nil },
+                set: { if !$0 { extractError = nil } }),
+            presenting: extractError
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { message in
+            Text(message)
+        }
+        .alert(
             "Could not delete",
             isPresented: Binding(
                 get: { deleteError != nil },
@@ -279,6 +294,20 @@ struct JourneyDetailView: View {
             Button("OK", role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+    }
+
+    private func extractTelemetry() async {
+        extractingJourneyID = journey.id
+        defer { extractingJourneyID = nil }
+        do {
+            _ = try await JourneyLibrary(databasePath: model.databasePath)
+                .extractTelemetry(journeyID: journey.id)
+            // Re-reads the journey's sample count, span, and distance, which
+            // hides this button and re-places the journey's items.
+            await model.reload()
+        } catch {
+            extractError = String(describing: error)
         }
     }
 
@@ -385,6 +414,20 @@ struct JourneyDetailView: View {
         HStack(alignment: .top) {
             journeySummaryHeader
             Spacer()
+            if journey.sampleCount == 0 {
+                if extractingJourneyID == journey.id {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.trailing, 4)
+                }
+                Button("Extract Telemetry", systemImage: "location") {
+                    Task { await extractTelemetry() }
+                }
+                .help(
+                    "Read the GPS and accelerometer data from the NextBase/front clips in "
+                        + "the journey's directory into the database. Takes a few minutes.")
+                .disabled(extractingJourneyID != nil)
+            }
             Button("Edit", systemImage: "pencil") {
                 editingJourney = true
             }
@@ -500,36 +543,38 @@ struct JourneyDetailView: View {
         }
     }
 
-    /// A segment's sources, telemetry, and length; every Edit opens the
-    /// segment's form. After the last segment, why the segments can't be
+    /// A segment's sources, telemetry, and length; each Edit opens the
+    /// segment's form for just that row. After the last segment, why the segments can't be
     /// joined, if they can't.
     @ViewBuilder
     private func segmentRows(_ segment: JourneySegment, index: Int) -> some View {
         let video = URL(filePath: journey.directory).appending(path: "video")
         let offsets = segment.startOffsets
-        let edit = { editingSegment = segment }
+        let edit = { (field: SegmentField) in editingSegment = SegmentEdit(segment: segment, field: field) }
         SourceVideoRow(
             name: "Front camera", file: segment.frontFile,
             url: video.appending(path: segment.frontFile), offset: offsets.front,
-            onEditOffset: edit)
+            onEditOffset: { edit(.front) })
         SourceVideoRow(
             name: "Rear camera", file: segment.rearFile,
             url: video.appending(path: segment.rearFile), offset: offsets.rear,
-            onEditOffset: edit)
+            onEditOffset: { edit(.rear) })
         SourceVideoRow(
             name: "Left camera", file: segment.leftFile,
             url: video.appending(path: segment.leftFile), offset: offsets.left,
-            onEditOffset: edit)
+            onEditOffset: { edit(.left) })
         SourceVideoRow(
             name: "Right camera", file: segment.rightFile,
             url: video.appending(path: segment.rightFile), offset: offsets.right,
-            onEditOffset: edit)
+            onEditOffset: { edit(.right) })
         captionRow(
             "Telemetry",
             caption: "\(telemetryLength ?? "No telemetry") \u{00B7} "
                 + SourceVideoRow.offsetText(offsets.telemetry),
-            dimmed: telemetryLength == nil, onEdit: edit)
-        captionRow("Length", caption: lengthCaption(segment, index: index), onEdit: edit)
+            dimmed: telemetryLength == nil, onEdit: { edit(.telemetry) })
+        captionRow(
+            "Length", caption: lengthCaption(segment, index: index),
+            onEdit: { edit(.length) })
         if index == segments.count - 1, let placementError {
             Text(placementError)
                 .font(.appCallout)

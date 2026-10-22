@@ -201,6 +201,22 @@ package struct JourneyLibrary: Sendable {
             source: source, roadType: roadType, roadNumber: roadNumber, title: title)
     }
 
+    /// Extracts a journey's telemetry from the NextBase front-camera clips
+    /// beneath its directory (exiftool, speed limits, odometer) and stores
+    /// it, returning the number of samples. Only for a journey with no
+    /// telemetry yet: throws `TelemetryStoreError.telemetryAlreadyStored`
+    /// otherwise. Takes minutes for a long drive.
+    @concurrent
+    package func extractTelemetry(journeyID: Int64) async throws -> Int {
+        let store = TelemetryStore(path: databasePath)
+        guard let directory = try store.journeyDirectory(journeyID: journeyID) else {
+            throw TelemetryStoreError.journeyNotFound(journeyID: journeyID)
+        }
+        let samples = try NextBaseExtractor.journeySamples(directory: directory)
+        try store.insertTelemetry(journeyID: journeyID, samples: samples)
+        return samples.count
+    }
+
     /// Rewrites a journey's descriptive fields, leaving the
     /// synchronisation offsets alone. Throws
     /// `TelemetryStoreError.duplicateJourney` if the new `source` clashes

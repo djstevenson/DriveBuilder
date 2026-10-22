@@ -9,6 +9,7 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
     case telemetryNotFound(journeyID: Int64)
     case duplicateAnnotation(video: String)
     case duplicateJourney(source: String)
+    case telemetryAlreadyStored(journeyID: Int64)
 
     var description: String {
         switch self {
@@ -26,6 +27,8 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
             "An annotation named \"\(video)\" already exists for this journey"
         case .duplicateJourney(let source):
             "A journey with source directory \"\(source)\" already exists"
+        case .telemetryAlreadyStored(let journeyID):
+            "Journey \(journeyID) already has telemetry"
         }
     }
 }
@@ -998,6 +1001,48 @@ struct TelemetryStore {
             try insertTelemetryRows(database, journeyID: journeyID, samples: samples)
             try execute(database, "COMMIT")
             return journeyID
+        } catch {
+            try? execute(database, "ROLLBACK")
+            throw error
+        }
+    }
+
+    /// Adds telemetry to an existing journey that has none yet, in one
+    /// transaction. Throws `journeyNotFound` for an unknown journey and
+    /// `telemetryAlreadyStored` if it already has samples, so a second
+    /// extraction can't double them up.
+    func insertTelemetry(journeyID: Int64, samples: [TelemetrySample]) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        try execute(database, "BEGIN IMMEDIATE")
+        do {
+            var statement: OpaquePointer?
+            guard
+                sqlite3_prepare_v2(
+                    database,
+                    "SELECT (SELECT COUNT(*) FROM journeys WHERE id = ?1), "
+                        + "(SELECT COUNT(*) FROM telemetry WHERE journey_id = ?1)",
+                    -1, &statement, nil)
+                    == SQLITE_OK
+            else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            defer { sqlite3_finalize(statement) }
+
+            sqlite3_bind_int64(statement, 1, journeyID)
+            guard sqlite3_step(statement) == SQLITE_ROW else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            guard sqlite3_column_int64(statement, 0) > 0 else {
+                throw TelemetryStoreError.journeyNotFound(journeyID: journeyID)
+            }
+            guard sqlite3_column_int64(statement, 1) == 0 else {
+                throw TelemetryStoreError.telemetryAlreadyStored(journeyID: journeyID)
+            }
+
+            try insertTelemetryRows(database, journeyID: journeyID, samples: samples)
+            try execute(database, "COMMIT")
         } catch {
             try? execute(database, "ROLLBACK")
             throw error

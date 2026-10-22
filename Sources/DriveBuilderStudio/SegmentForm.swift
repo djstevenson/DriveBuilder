@@ -1,79 +1,110 @@
 import DriveBuilder
 import SwiftUI
 
-/// The sheet for editing one of the journey's segments: which files beneath
-/// its video directory play for that stretch of the drive, the seconds to
-/// skip at the start of each source so the separately started recordings
-/// play in sync, and how long it runs.
+/// The part of a segment one of its rows edits.
+enum SegmentField: Hashable {
+    case front, rear, left, right, telemetry, length
+
+    var title: String {
+        switch self {
+        case .front: "Front camera"
+        case .rear: "Rear camera"
+        case .left: "Left camera"
+        case .right: "Right camera"
+        case .telemetry: "Telemetry"
+        case .length: "Length"
+        }
+    }
+
+    /// Side cameras may be missing from a segment; front and rear may not.
+    var isOptionalCamera: Bool {
+        self == .left || self == .right
+    }
+
+    /// An example file name, for a camera's empty file field.
+    var examplePrompt: String {
+        switch self {
+        case .front: "front.mov"
+        case .rear: "rear.mov"
+        case .left: "left.mov"
+        case .right: "right.mov"
+        case .telemetry, .length: ""
+        }
+    }
+}
+
+/// Which of a segment's rows is being edited, for the sheet's item.
+struct SegmentEdit: Identifiable {
+    let segment: JourneySegment
+    let field: SegmentField
+
+    var id: String { "\(segment.id)-\(field)" }
+}
+
+/// The sheet for editing one part of one of the journey's segments: a
+/// camera's file beneath the video directory and the seconds to skip at its
+/// start so the separately started recordings play in sync (a side camera
+/// may be marked as unavailable), the telemetry's offset, or how long the
+/// segment runs.
 struct SegmentForm: View {
     @Environment(\.dismiss) private var dismiss
 
     let databasePath: String
     let segment: JourneySegment
+    let field: SegmentField
     /// Only the last segment may leave its length to its sources.
     let isLast: Bool
     /// Runs after a successful save, so the journey pane re-reads it.
     let onSave: () -> Void
 
-    @State private var frontFile: String
-    @State private var rearFile: String
-    @State private var leftFile: String
-    @State private var rightFile: String
-    @State private var frontOffset: String
-    @State private var rearOffset: String
-    @State private var telemetryOffset: String
-    @State private var leftOffset: String
-    @State private var rightOffset: String
+    @State private var isAvailable: Bool
+    @State private var file: String
+    @State private var offset: String
     @State private var lengthText: String
     @State private var isSaving = false
     @State private var saveError: String?
 
     init(
-        databasePath: String, segment: JourneySegment, isLast: Bool,
+        databasePath: String, segment: JourneySegment, field: SegmentField, isLast: Bool,
         onSave: @escaping () -> Void
     ) {
         self.databasePath = databasePath
         self.segment = segment
+        self.field = field
         self.isLast = isLast
         self.onSave = onSave
         let offsets = segment.startOffsets
-        _frontFile = State(initialValue: segment.frontFile)
-        _rearFile = State(initialValue: segment.rearFile)
-        _leftFile = State(initialValue: segment.leftFile)
-        _rightFile = State(initialValue: segment.rightFile)
-        _frontOffset = State(initialValue: String(offsets.front))
-        _rearOffset = State(initialValue: String(offsets.rear))
-        _telemetryOffset = State(initialValue: String(offsets.telemetry))
-        _leftOffset = State(initialValue: offsets.left.map { String($0) } ?? "")
-        _rightOffset = State(initialValue: offsets.right.map { String($0) } ?? "")
+        let (file, offset): (String, Double?) =
+            switch field {
+            case .front: (segment.frontFile, offsets.front)
+            case .rear: (segment.rearFile, offsets.rear)
+            case .left: (segment.leftFile, offsets.left)
+            case .right: (segment.rightFile, offsets.right)
+            case .telemetry: ("", offsets.telemetry)
+            case .length: ("", nil)
+            }
+        _isAvailable = State(initialValue: !field.isOptionalCamera || offset != nil)
+        _file = State(initialValue: file)
+        _offset = State(initialValue: offset.map { String($0) } ?? "0.0")
         _lengthText = State(initialValue: segment.length.map { String($0) } ?? "")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Segment \(segment.position + 1)")
+            Text("Segment \(segment.position + 1) \u{00B7} \(field.title)")
                 .font(.appHeadline)
             Form {
-                Section("Files, in the journey's video directory") {
-                    TextField("Front camera", text: $frontFile, prompt: Text("front.mov"))
-                    TextField("Rear camera", text: $rearFile, prompt: Text("rear.mov"))
-                    TextField("Left camera", text: $leftFile, prompt: Text("left.mov"))
-                    TextField("Right camera", text: $rightFile, prompt: Text("right.mov"))
-                }
-                Section("Start offsets, in seconds") {
-                    TextField("Front camera", text: $frontOffset, prompt: Text("e.g. 34.5"))
-                    TextField("Rear camera", text: $rearOffset, prompt: Text("e.g. 34.5"))
-                    TextField("Telemetry", text: $telemetryOffset, prompt: Text("e.g. 62"))
+                switch field {
+                case .front, .rear, .left, .right:
+                    cameraFields
+                case .telemetry:
+                    TextField("Start offset, in seconds", text: $offset, prompt: Text("e.g. 62"))
                         .help(
                             "Seconds from the journey's first telemetry sample to this "
                                 + "segment's synced start")
-                    TextField("Left camera", text: $leftOffset, prompt: Text("Empty if not fitted"))
+                case .length:
                     TextField(
-                        "Right camera", text: $rightOffset, prompt: Text("Empty if not fitted"))
-                }
-                Section("Length, in seconds") {
-                    TextField(
-                        "Length", text: $lengthText,
+                        "Length, in seconds", text: $lengthText,
                         prompt: Text(isLast ? "Empty for shortest source" : "e.g. 2216"))
                         .help(
                             isLast
@@ -111,43 +142,72 @@ struct SegmentForm: View {
         .frame(width: 460)
     }
 
+    @ViewBuilder
+    private var cameraFields: some View {
+        if field.isOptionalCamera {
+            Toggle("Clip available", isOn: $isAvailable)
+                .toggleStyle(.checkbox)
+        }
+        Group {
+            TextField(
+                "File, in the journey's video directory", text: $file,
+                prompt: Text(field.examplePrompt))
+            TextField("Start offset, in seconds", text: $offset, prompt: Text("e.g. 34.5"))
+        }
+        .disabled(!isAvailable)
+    }
+
     /// Why the form can't be saved yet, if it can't.
     private var problem: String? {
-        let files = [frontFile, rearFile, leftFile, rightFile]
-        if files.contains(where: { trimmed($0).isEmpty }) {
-            return "Every camera needs a file name, even one this segment doesn't use."
+        switch field {
+        case .front, .rear, .left, .right:
+            guard isAvailable else { return nil }
+            if trimmed(file).isEmpty {
+                return "The camera needs a file name."
+            }
+            if seconds(offset) == nil {
+                return "The offset must be seconds, 0 or more."
+            }
+            return nil
+        case .telemetry:
+            return seconds(offset) == nil ? "The offset must be seconds, 0 or more." : nil
+        case .length:
+            if trimmed(lengthText).isEmpty {
+                return isLast ? nil : "Only the last segment may leave its length empty."
+            }
+            guard let length = seconds(lengthText), length > 0 else {
+                return "The length must be a positive number of seconds."
+            }
+            return nil
         }
-        if [frontOffset, rearOffset, telemetryOffset].contains(where: { seconds($0) == nil }) {
-            return "The front, rear, and telemetry offsets must be seconds, 0 or more."
-        }
-        let sideOffsets = [leftOffset, rightOffset]
-        if sideOffsets.contains(where: { !trimmed($0).isEmpty && seconds($0) == nil }) {
-            return "A side camera's offset must be seconds, 0 or more, or empty if not fitted."
-        }
-        if trimmed(lengthText).isEmpty {
-            return isLast ? nil : "Only the last segment may leave its length empty."
-        }
-        guard let length = seconds(lengthText), length > 0 else {
-            return "The length must be a positive number of seconds."
-        }
-        return nil
     }
 
     /// The segment as edited, if the form is valid.
     private var edited: JourneySegment? {
-        guard problem == nil,
-            let front = seconds(frontOffset), let rear = seconds(rearOffset),
-            let telemetry = seconds(telemetryOffset)
-        else { return nil }
+        guard problem == nil else { return nil }
         var segment = segment
-        segment.frontFile = trimmed(frontFile)
-        segment.rearFile = trimmed(rearFile)
-        segment.leftFile = trimmed(leftFile)
-        segment.rightFile = trimmed(rightFile)
-        segment.startOffsets = StartOffsets(
-            front: front, rear: rear, telemetry: telemetry, left: seconds(leftOffset),
-            right: seconds(rightOffset))
-        segment.length = seconds(lengthText)
+        // An unavailable side camera keeps its stored file name (the column
+        // can't be empty); its nil offset is what marks it as missing.
+        let file = isAvailable ? trimmed(file) : nil
+        let offset = isAvailable ? seconds(offset) : nil
+        switch field {
+        case .front:
+            segment.frontFile = file ?? segment.frontFile
+            segment.startOffsets.front = offset ?? segment.startOffsets.front
+        case .rear:
+            segment.rearFile = file ?? segment.rearFile
+            segment.startOffsets.rear = offset ?? segment.startOffsets.rear
+        case .left:
+            segment.leftFile = file ?? segment.leftFile
+            segment.startOffsets.left = offset
+        case .right:
+            segment.rightFile = file ?? segment.rightFile
+            segment.startOffsets.right = offset
+        case .telemetry:
+            segment.startOffsets.telemetry = offset ?? segment.startOffsets.telemetry
+        case .length:
+            segment.length = seconds(lengthText)
+        }
         return segment
     }
 

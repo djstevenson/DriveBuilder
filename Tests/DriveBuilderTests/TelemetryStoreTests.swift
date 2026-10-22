@@ -89,6 +89,58 @@ private let salisbury = TrackLocation(latitude: 51.07412, longitude: -1.78681)
     #expect(records[1].odometer == 12.3)
 }
 
+@Test func addsTelemetryToAJourneyThatHasNone() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let epoch = try Date("2026-07-26T14:37:55Z", strategy: .iso8601).timeIntervalSince1970
+    let samples = [
+        TelemetrySample(
+            tick: Int64(epoch) * 10, latitude: 50.76, longitude: -1.81, altitude: 23.5,
+            speed: 0.98, heading: 160.29, accelForward: 0.01, accelLateral: -0.02,
+            speedLimit: 30, file: "260726_153931_001_FH.MP4", source: "GPS", odometer: 0)
+    ]
+
+    let store = TelemetryStore(path: databaseURL.path)
+    let journeyID = try store.insertJourney(
+        source: "/tmp/B3347 Southbound", roadType: "B", roadNumber: 3347,
+        title: "B3347 Southbound")
+    try store.insertTelemetry(journeyID: journeyID, samples: samples)
+
+    let records = try store.records(journeyID: journeyID)
+    #expect(records.count == 1)
+    #expect(records[0].latitude == 50.76)
+    #expect(records[0].file == "260726_153931_001_FH.MP4")
+
+    // A second extraction would double the samples up, so it's refused.
+    #expect(throws: TelemetryStoreError.self) {
+        try store.insertTelemetry(journeyID: journeyID, samples: samples)
+    }
+    #expect(try store.records(journeyID: journeyID).count == 1)
+
+    // The fixture's journey already has telemetry, and unknown ids have none.
+    do {
+        try store.insertTelemetry(journeyID: 1, samples: samples)
+        Issue.record("expected adding telemetry to journey 1 to throw")
+    } catch TelemetryStoreError.telemetryAlreadyStored(let id) {
+        #expect(id == 1)
+    }
+    do {
+        try store.insertTelemetry(journeyID: 999_999, samples: samples)
+        Issue.record("expected adding telemetry to an unknown journey to throw")
+    } catch TelemetryStoreError.journeyNotFound(let id) {
+        #expect(id == 999_999)
+    }
+}
+
 @Test func insertsUpdatesAndDeletesRouteMapLabels() throws {
     // Copy the fixture database rather than mutating the checked-in fixture.
     let tempDirectory = FileManager.default.temporaryDirectory

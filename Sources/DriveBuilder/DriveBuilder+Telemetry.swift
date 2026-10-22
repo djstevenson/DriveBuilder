@@ -58,18 +58,12 @@ extension DriveBuilder {
             }
 
             Self.log("Extract telemetry data")
-            let extractor = NextBaseExtractor(videoPath: source) { points in
-                try SpeedLimitLookup().limits(for: points)
-            }
-            let samples = try extractor.samples()
-
-            Self.log("Calculate odometer")
-            let samplesWithOdometer = TelemetrySample.addingOdometer(to: samples)
+            let samples = try NextBaseExtractor.journeySamples(directory: source)
 
             Self.log("Store telemetry in SQLite")
             let journeyID = try store.insertJourney(
                 source: source, roadType: roadType, roadNumber: roadNumber, title: title,
-                samples: samplesWithOdometer)
+                samples: samples)
 
             Self.log("Done")
             print("Journey \(journeyID): \(samples.count) records for \(roadType)\(roadNumber)")
