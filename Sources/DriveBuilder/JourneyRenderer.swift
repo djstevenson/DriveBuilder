@@ -263,6 +263,10 @@ package struct JourneyRenderer: Sendable {
     package var mapDirectory = Self.defaultMapDirectory
     /// Render only the first N frames, for a quick check.
     package var frameLimit: Int?
+    /// Render only the first N seconds of the drive's dials, for a quick
+    /// check of the final video's first N seconds; overrides `frameLimit`
+    /// for dials.mov, whose frame rate the caller needn't know.
+    package var dialsSecondsLimit: Double?
 
     package init(journeyID: Int64, databasePath: String) {
         self.journeyID = journeyID
@@ -351,8 +355,12 @@ package struct JourneyRenderer: Sendable {
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)
         let url = outputDirectory.appending(path: "dials.mov")
+        let limit =
+            dialsSecondsLimit.map {
+                Int(($0 * Double(ProgressMapZoomedRenderer.framesPerSecond)).rounded(.up))
+            } ?? frameLimit
         return try await write(url) {
-            try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
+            try await renderer.writeMovie(to: url, frameLimit: limit, progress: progress)
         }
     }
 

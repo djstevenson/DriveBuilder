@@ -871,17 +871,20 @@ struct FinalVideoComposer {
     /// on any segment but the last, rear views of different sizes (the
     /// camera slot is the rear view's frame), or dials.mov falling short.
     ///
-    /// With `maxDriveSegmentSeconds`, only the drive up to the cap is
-    /// placed: segments starting past it are skipped unchecked (a quick
-    /// preview's dials.mov doesn't reach them), and the one it falls in
-    /// stops there.
+    /// With `maxDriveSegmentSeconds`, only the drive up to the cap (or the
+    /// end of dials.mov, if sooner) is placed: segments starting past it
+    /// are skipped unchecked, and the one it falls in stops there.
     private func placeSegments(
         dials: Clip, dialsStart: CMTime, timescale: CMTimeScale
     ) async throws -> [PlacedSegment] {
         func time(_ seconds: Double) -> CMTime {
             CMTime(seconds: seconds, preferredTimescale: timescale)
         }
-        let capEnd = maxDriveSegmentSeconds.map { dialsStart + time($0) }
+        // A capped (test) render also stops where dials.mov does: a quick
+        // preview's dials only cover its first few seconds of the drive.
+        let capEnd = maxDriveSegmentSeconds.map { seconds in
+            dialsStart + min(time(seconds), dials.duration)
+        }
         var placed: [PlacedSegment] = []
         var start = dialsStart
         for (index, footage) in segments.enumerated() {

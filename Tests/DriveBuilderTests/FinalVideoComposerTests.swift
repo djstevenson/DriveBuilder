@@ -339,6 +339,25 @@ func aCappedRenderOnlyPlacesTheSegmentsBeforeTheCap() async throws {
 }
 
 @Test(.timeLimit(.minutes(2)))
+func aCappedRenderStopsWhereAShortPreviewDialsMovieDoes() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var composer = try await twoSegmentComposer(in: directory)
+    // A quick preview's dials.mov covering less than the cap.
+    try await writeClip(
+        directory.appending(path: "dials.mov"), width: 64, height: 196, seconds: 2
+    ) { _ in CGColor(gray: 0, alpha: 0) }
+    composer.maxDriveSegmentSeconds = 30
+
+    let output = directory.appending(path: "final.mov")
+    try await composer.writeMovie(to: output)
+
+    // The drive stops with dials.mov at 3 s, then the outro fades in.
+    let duration = try await AVURLAsset(url: output).load(.duration).seconds
+    #expect(abs(duration - 3.5) < 0.05, "duration \(duration)")
+}
+
+@Test(.timeLimit(.minutes(2)))
 func segmentsThatCantBeJoinedFailTheRender() async throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
