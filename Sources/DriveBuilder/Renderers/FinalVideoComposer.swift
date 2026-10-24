@@ -912,9 +912,16 @@ struct FinalVideoComposer {
                 (footage.frontURL.lastPathComponent, front.duration - frontSourceStart),
                 (footage.rearURL.lastPathComponent, rear.duration - rearSourceStart),
             ]
-            if let empty = sources.first(where: { $0.1 <= .zero }) {
+            let skips = [
+                (footage.frontURL.lastPathComponent, footage.startOffsets.front, front.duration),
+                (footage.rearURL.lastPathComponent, footage.startOffsets.rear, rear.duration),
+            ]
+            if let empty = skips.first(where: { time($0.1) >= $0.2 }) {
                 throw CompositionError(
-                    message: "\(name) start offset for \(empty.0) skips the whole clip.")
+                    message: String(
+                        format: "%@ start offset for %@ is %.1fs, but %@ is only %.1fs long, "
+                            + "so it skips the whole clip.",
+                        name, empty.0, empty.1, empty.0, empty.2.seconds))
             }
             // A length-less last segment runs until dials.mov ends too; a
             // set length is checked against dials.mov once the drive's
