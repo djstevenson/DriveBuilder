@@ -41,7 +41,7 @@ private func oldSchemaDatabase(rows: String) throws -> (path: String, directory:
             REFERENCES journeys(id), offset REAL NOT NULL, title TEXT NOT NULL,
             subtitle TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT 'right',
             distance REAL);
-        UPDATE journeys SET front_offset = 12, telemetry_offset = 3 WHERE id = 1;
+        UPDATE journey_segments SET front_offset = 12, telemetry_offset = 3 WHERE journey_id = 1;
         \(rows)
         """
     guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {

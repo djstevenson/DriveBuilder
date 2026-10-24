@@ -2,9 +2,9 @@ import Foundation
 
 /// Where a journey's recorded track passes a `TrackLocation`.
 package struct TrackFix: Sendable, Equatable {
-    /// Seconds since the journey's first telemetry sample (before the
-    /// telemetry offset is applied), interpolated between samples.
-    package let telemetrySeconds: Double
+    /// Seconds since the locator's origin (by default its first sample),
+    /// interpolated between samples: drive seconds for a `DriveTrack`.
+    package let seconds: Double
     /// The sample at the start of the track segment the fix lies on, and
     /// how far along that segment (0...1) towards the next sample.
     package let sampleIndex: Int
@@ -23,9 +23,12 @@ package enum TrackLocatorError: Error, Equatable, CustomStringConvertible {
     /// pin on the wrong road.
     case tooFar(nearestMetres: Double, thresholdMetres: Double)
     /// The track passes within the threshold more than once (a roundabout,
-    /// a bridge over the route, an out-and-back drive), at these telemetry
-    /// seconds.
-    case ambiguous(telemetrySeconds: [Double])
+    /// a bridge over the route, an out-and-back drive), at these seconds
+    /// (see `TrackFix.seconds`).
+    case ambiguous(seconds: [Double])
+    /// Only a stretch of the recorded track cut out between segments
+    /// passes the location.
+    case cutOut
 
     package var description: String {
         switch self {
@@ -36,9 +39,11 @@ package enum TrackLocatorError: Error, Equatable, CustomStringConvertible {
                 format: "The track never comes within %.0f m of the location (nearest %.0f m).",
                 threshold, nearest)
         case .ambiguous(let seconds):
-            "The track passes the location more than once, at telemetry "
+            "The track passes the location more than once, at "
                 + seconds.map { ClockTime.text(for: $0) }.joined(separator: ", ")
-                + "; move it to a point passed only once."
+                + " into the drive; move it to a point passed only once."
+        case .cutOut:
+            "The track only passes the location in a stretch cut out between segments."
         }
     }
 }
@@ -63,7 +68,14 @@ struct TrackLocator: Sendable {
     static let stationaryStepMetres = 0.2
 
     let records: [TelemetryRecord]
+    /// What fixes' `seconds` count from; nil means the first sample.
+    var origin: Date?
     var thresholdMetres = defaultThresholdMetres
+
+    init(records: [TelemetryRecord], origin: Date? = nil) {
+        self.records = records
+        self.origin = origin
+    }
 
     func locate(_ location: TrackLocation) throws(TrackLocatorError) -> TrackFix {
         guard !records.isEmpty else { throw .emptyTrack }
@@ -116,19 +128,18 @@ struct TrackLocator: Sendable {
         case 1:
             return passes[0]
         default:
-            throw .ambiguous(telemetrySeconds: passes.map(\.telemetrySeconds))
+            throw .ambiguous(seconds: passes.map(\.seconds))
         }
     }
 
-    /// Where the track was `telemetrySeconds` after its first sample,
-    /// interpolated between samples: the inverse of `locate(_:)`, for
-    /// turning a time read off the footage into a location. Nil outside the
-    /// recorded track.
-    func location(atTelemetrySeconds telemetrySeconds: Double) -> TrackLocation? {
-        guard let first = records.first?.timestamp, let last = records.last?.timestamp,
-            telemetrySeconds >= 0, telemetrySeconds <= last.timeIntervalSince(first)
+    /// Where the track was `seconds` after the origin, interpolated between
+    /// samples: the inverse of `locate(_:)`, for turning a time read off the
+    /// footage into a location. Nil outside the recorded track.
+    func location(atSeconds seconds: Double) -> TrackLocation? {
+        guard let first = records.first?.timestamp, let last = records.last?.timestamp
         else { return nil }
-        let time = first.addingTimeInterval(telemetrySeconds)
+        let time = (origin ?? first).addingTimeInterval(seconds)
+        guard time >= first, time <= last else { return nil }
         // The first sample after `time`, by binary search.
         var low = 0
         var high = records.count
@@ -169,9 +180,9 @@ struct TrackLocator: Sendable {
         let (x, y) = (p.x + fraction * dx, p.y + fraction * dy)
 
         func lerp(_ u: Double, _ v: Double) -> Double { u + (v - u) * fraction }
-        let first = records[0].timestamp
+        let first = origin ?? records[0].timestamp
         return TrackFix(
-            telemetrySeconds: lerp(
+            seconds: lerp(
                 a.timestamp.timeIntervalSince(first), b.timestamp.timeIntervalSince(first)),
             sampleIndex: index, fraction: fraction,
             distanceMetres: (x * x + y * y).squareRoot(),

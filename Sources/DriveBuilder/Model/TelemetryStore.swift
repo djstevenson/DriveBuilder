@@ -9,6 +9,7 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
     case telemetryNotFound(journeyID: Int64)
     case duplicateAnnotation(video: String)
     case duplicateJourney(source: String)
+    case telemetryAlreadyStored(journeyID: Int64)
 
     var description: String {
         switch self {
@@ -26,6 +27,8 @@ enum TelemetryStoreError: Error, CustomStringConvertible {
             "An annotation named \"\(video)\" already exists for this journey"
         case .duplicateJourney(let source):
             "A journey with source directory \"\(source)\" already exists"
+        case .telemetryAlreadyStored(let journeyID):
+            "Journey \(journeyID) already has telemetry"
         }
     }
 }
@@ -552,38 +555,64 @@ struct TelemetryStore {
         }
     }
 
-    /// The journey's per-source synchronisation offsets, as recorded in
-    /// `journeys.front_offset`/`rear_offset`/`telemetry_offset`/
-    /// `left_offset`/`right_offset`, for the final composition to line up
-    /// the separately started recordings. The side cameras' offsets are
-    /// NULL (nil) when the journey has no such view.
+    /// The journey's segments, in playback order; empty if it has none.
+    func journeySegments(journeyID: Int64) throws -> [JourneySegment] {
+        let database = try open(flags: SQLITE_OPEN_READONLY)
+        defer { sqlite3_close(database) }
+
+        let sql = """
+            SELECT id, journey_id, position, front_file, rear_file, left_file, right_file,
+                   front_offset, rear_offset, telemetry_offset, left_offset, right_offset,
+                   length
+            FROM journey_segments
+            WHERE journey_id = ?
+            ORDER BY position
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, journeyID)
+
+        var segments: [JourneySegment] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { break }
+            guard result == SQLITE_ROW else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            segments.append(
+                JourneySegment(
+                    id: sqlite3_column_int64(statement, 0),
+                    journeyID: sqlite3_column_int64(statement, 1),
+                    position: Self.integer(statement, column: 2) ?? 0,
+                    frontFile: Self.string(statement, column: 3) ?? "",
+                    rearFile: Self.string(statement, column: 4) ?? "",
+                    leftFile: Self.string(statement, column: 5) ?? "",
+                    rightFile: Self.string(statement, column: 6) ?? "",
+                    startOffsets: Self.startOffsets(statement, column: 7),
+                    length: Self.double(statement, column: 12)))
+        }
+        return segments
+    }
+
+    /// The journey's first segment's synchronisation offsets (see
+    /// `JourneySegment`), for the one-off location migration, which ran
+    /// when every journey had just the one. Nil if the journey has no
+    /// segment.
     func journeyStartOffsets(journeyID: Int64) throws -> StartOffsets? {
         try fetchJourneyRow(
             journeyID: journeyID,
             sql: """
                 SELECT front_offset, rear_offset, telemetry_offset, left_offset, right_offset
-                FROM journeys WHERE id = ?
+                FROM journey_segments WHERE journey_id = ? AND position = 0
                 """
         ) { statement in
-            StartOffsets(
-                front: Self.double(statement, column: 0) ?? 0,
-                rear: Self.double(statement, column: 1) ?? 0,
-                telemetry: Self.double(statement, column: 2) ?? 0,
-                left: Self.double(statement, column: 3),
-                right: Self.double(statement, column: 4))
+            Self.startOffsets(statement, column: 0)
         }
-    }
-
-    /// The journey's drive-segment length in seconds, from
-    /// `journeys.length`; nil (NULL) means the drive segment runs for the
-    /// shortest of the synced sources.
-    func journeyLength(journeyID: Int64) throws -> Double? {
-        let length: Double?? = try fetchJourneyRow(
-            journeyID: journeyID, sql: "SELECT length FROM journeys WHERE id = ?"
-        ) {
-            .some(Self.double($0, column: 0))
-        }
-        return length ?? nil
     }
 
     /// The journey's road, as recorded by the capture pipeline in
@@ -613,9 +642,7 @@ struct TelemetryStore {
         let sql = """
             SELECT j.id, j.title, j.road_type, j.road_number, j.source,
                    COUNT(t.id), MIN(t.timestamp), MAX(t.timestamp),
-                   MAX(t.odometer) - MIN(t.odometer),
-                   j.front_offset, j.rear_offset, j.telemetry_offset, j.length,
-                   j.left_offset, j.right_offset
+                   MAX(t.odometer) - MIN(t.odometer)
             FROM journeys j
             LEFT JOIN telemetry t ON t.journey_id = j.id
             GROUP BY j.id
@@ -645,13 +672,7 @@ struct TelemetryStore {
                     sampleCount: Self.integer(statement, column: 5) ?? 0,
                     start: try Self.date(statement, column: 6),
                     end: try Self.date(statement, column: 7),
-                    distanceMetres: Self.double(statement, column: 8) ?? 0,
-                    frontOffset: Self.double(statement, column: 9) ?? 0,
-                    rearOffset: Self.double(statement, column: 10) ?? 0,
-                    telemetryOffset: Self.double(statement, column: 11) ?? 0,
-                    leftOffset: Self.double(statement, column: 13),
-                    rightOffset: Self.double(statement, column: 14),
-                    length: Self.double(statement, column: 12)))
+                    distanceMetres: Self.double(statement, column: 8) ?? 0))
         }
         return journeys
     }
@@ -664,70 +685,164 @@ struct TelemetryStore {
         return date
     }
 
-    // MARK: - Writing
+    // MARK: - Segments
 
-    /// Sets one of the journey's synchronisation offsets, in seconds; nil
-    /// stores NULL, which only the optional side cameras allow (meaning the
-    /// journey has no such view). The column name comes from the enum's
-    /// fixed raw values, never from user input, so interpolating it into
-    /// the SQL is safe.
-    func updateStartOffset(
-        journeyID: Int64, source: StartOffsetSource, offset: Double?
+    /// Adds a segment after the journey's last, returning it. Its sources
+    /// start as guesses for the usual break: a new front file, the same rear
+    /// file and telemetry picking up where the last segment ends (the
+    /// dashcam usually keeps running), and no side cameras.
+    func insertSegment(journeyID: Int64) throws -> JourneySegment {
+        guard let last = try journeySegments(journeyID: journeyID).last else {
+            throw TelemetryStoreError.queryFailed(
+                message: "Journey \(journeyID) has no segment to follow.")
+        }
+        let position = last.position + 1
+        let carriedOn = last.length ?? 0
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+        try run(
+            database,
+            """
+            INSERT INTO journey_segments
+                (journey_id, position, front_file, rear_file, left_file, right_file,
+                rear_offset, telemetry_offset)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        ) { statement in
+            sqlite3_bind_int64(statement, 1, journeyID)
+            sqlite3_bind_int64(statement, 2, Int64(position))
+            sqlite3_bind_text(statement, 3, "front-\(position + 1).mov", -1, Self.transient)
+            sqlite3_bind_text(statement, 4, last.rearFile, -1, Self.transient)
+            sqlite3_bind_text(statement, 5, "left-\(position + 1).mov", -1, Self.transient)
+            sqlite3_bind_text(statement, 6, "right-\(position + 1).mov", -1, Self.transient)
+            sqlite3_bind_double(statement, 7, last.startOffsets.rear + carriedOn)
+            sqlite3_bind_double(statement, 8, last.startOffsets.telemetry + carriedOn)
+        }
+        let id = sqlite3_last_insert_rowid(database)
+        guard let segment = try journeySegments(journeyID: journeyID).first(where: { $0.id == id })
+        else {
+            throw TelemetryStoreError.queryFailed(message: "Segment \(id) vanished on insert.")
+        }
+        return segment
+    }
+
+    /// Rewrites a segment's files, offsets, and length (not its position).
+    func updateSegment(_ segment: JourneySegment) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+        try run(
+            database,
+            """
+            UPDATE journey_segments
+            SET front_file = ?, rear_file = ?, left_file = ?, right_file = ?,
+                front_offset = ?, rear_offset = ?, telemetry_offset = ?,
+                left_offset = ?, right_offset = ?, length = ?
+            WHERE id = ?
+            """
+        ) { statement in
+            sqlite3_bind_text(statement, 1, segment.frontFile, -1, Self.transient)
+            sqlite3_bind_text(statement, 2, segment.rearFile, -1, Self.transient)
+            sqlite3_bind_text(statement, 3, segment.leftFile, -1, Self.transient)
+            sqlite3_bind_text(statement, 4, segment.rightFile, -1, Self.transient)
+            let offsets = segment.startOffsets
+            sqlite3_bind_double(statement, 5, offsets.front)
+            sqlite3_bind_double(statement, 6, offsets.rear)
+            sqlite3_bind_double(statement, 7, offsets.telemetry)
+            Self.bind(offsets.left, to: statement, at: 8)
+            Self.bind(offsets.right, to: statement, at: 9)
+            Self.bind(segment.length, to: statement, at: 10)
+            sqlite3_bind_int64(statement, 11, segment.id)
+        }
+    }
+
+    /// Removes a segment, closing up the positions after it. A journey's
+    /// only segment can't go.
+    func deleteSegment(_ segment: JourneySegment) throws {
+        guard try journeySegments(journeyID: segment.journeyID).count > 1 else {
+            throw TelemetryStoreError.queryFailed(
+                message: "A journey needs at least one segment.")
+        }
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+        try transaction(database) {
+            try run(database, "DELETE FROM journey_segments WHERE id = ?") {
+                sqlite3_bind_int64($0, 1, segment.id)
+            }
+            // Through negative positions, so no two rows ever share one.
+            for sql in [
+                "UPDATE journey_segments SET position = -position "
+                    + "WHERE journey_id = ? AND position > ?",
+                "UPDATE journey_segments SET position = -position - 1 "
+                    + "WHERE journey_id = ? AND position < 0",
+            ] {
+                try run(database, sql) { statement in
+                    sqlite3_bind_int64(statement, 1, segment.journeyID)
+                    sqlite3_bind_int64(statement, 2, Int64(segment.position))
+                }
+            }
+        }
+    }
+
+    /// Swaps a segment with the one before it (`earlier`) or after it in
+    /// playback order; a no-op at either end.
+    func moveSegment(_ segment: JourneySegment, earlier: Bool) throws {
+        let segments = try journeySegments(journeyID: segment.journeyID)
+        guard let index = segments.firstIndex(where: { $0.id == segment.id }) else { return }
+        let otherIndex = earlier ? index - 1 : index + 1
+        guard segments.indices.contains(otherIndex) else { return }
+        let other = segments[otherIndex]
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+        try transaction(database) {
+            for (id, position) in [
+                (segment.id, -1), (other.id, segments[index].position),
+                (segment.id, other.position),
+            ] {
+                try run(database, "UPDATE journey_segments SET position = ? WHERE id = ?") {
+                    sqlite3_bind_int64($0, 1, Int64(position))
+                    sqlite3_bind_int64($0, 2, id)
+                }
+            }
+        }
+    }
+
+    /// Runs `body` in a transaction, rolling back if it throws.
+    private func transaction(_ database: OpaquePointer?, _ body: () throws -> Void) throws {
+        try execute(database, "BEGIN IMMEDIATE")
+        do {
+            try body()
+            try execute(database, "COMMIT")
+        } catch {
+            try? execute(database, "ROLLBACK")
+            throw error
+        }
+    }
+
+    /// Prepares `sql`, binds its parameters with `bind`, and steps it once.
+    private func run(
+        _ database: OpaquePointer?, _ sql: String, bind: (OpaquePointer?) -> Void
     ) throws {
-        let database = try open(flags: SQLITE_OPEN_READWRITE)
-        defer { sqlite3_close(database) }
-
         var statement: OpaquePointer?
-        guard
-            sqlite3_prepare_v2(
-                database,
-                "UPDATE journeys SET \(source.rawValue) = ? WHERE id = ?",
-                -1, &statement, nil)
-                == SQLITE_OK
-        else {
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
         }
         defer { sqlite3_finalize(statement) }
-
-        if let offset {
-            sqlite3_bind_double(statement, 1, offset)
-        } else {
-            sqlite3_bind_null(statement, 1)
-        }
-        sqlite3_bind_int64(statement, 2, journeyID)
-
+        bind(statement)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
         }
     }
 
-    /// Sets the journey's drive-segment length in seconds; nil stores NULL,
-    /// meaning the shortest synced source decides.
-    func updateLength(journeyID: Int64, length: Double?) throws {
-        let database = try open(flags: SQLITE_OPEN_READWRITE)
-        defer { sqlite3_close(database) }
-
-        var statement: OpaquePointer?
-        guard
-            sqlite3_prepare_v2(
-                database, "UPDATE journeys SET length = ? WHERE id = ?", -1, &statement, nil)
-                == SQLITE_OK
-        else {
-            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
-        }
-        defer { sqlite3_finalize(statement) }
-
-        if let length {
-            sqlite3_bind_double(statement, 1, length)
+    /// Binds `value` to parameter `index`, or NULL for nil.
+    private static func bind(_ value: Double?, to statement: OpaquePointer?, at index: Int32) {
+        if let value {
+            sqlite3_bind_double(statement, index, value)
         } else {
-            sqlite3_bind_null(statement, 1)
-        }
-        sqlite3_bind_int64(statement, 2, journeyID)
-
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            sqlite3_bind_null(statement, index)
         }
     }
+
+    // MARK: - Writing
 
     /// The id of the journey whose source directory is `source`, if any.
     func journeyID(source: String) throws -> Int64? {
@@ -771,17 +886,26 @@ struct TelemetryStore {
         return sqlite3_column_int64(statement, 0)
     }
 
-    /// Inserts a journey row with no telemetry yet, returning its id. The
-    /// synchronisation offsets keep their 0.0 defaults; the offset editor
-    /// fills them in later.
+    /// Inserts a journey row with no telemetry yet, returning its id. Its
+    /// one segment's synchronisation offsets keep their 0.0 defaults; the
+    /// offset editor fills them in later.
     func insertJourney(
         source: String, roadType: String, roadNumber: Int, title: String
     ) throws -> Int64 {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
 
-        return try insertJourneyRow(
-            database, source: source, roadType: roadType, roadNumber: roadNumber, title: title)
+        try execute(database, "BEGIN IMMEDIATE")
+        do {
+            let journeyID = try insertJourneyRow(
+                database, source: source, roadType: roadType, roadNumber: roadNumber,
+                title: title)
+            try execute(database, "COMMIT")
+            return journeyID
+        } catch {
+            try? execute(database, "ROLLBACK")
+            throw error
+        }
     }
 
     /// Rewrites a journey's descriptive fields, leaving the
@@ -821,8 +945,8 @@ struct TelemetryStore {
         }
     }
 
-    /// Removes a journey and its telemetry, annotations, route-map labels,
-    /// and camera overrides in one transaction. The deletes are explicit
+    /// Removes a journey and its segments, telemetry, annotations,
+    /// route-map labels, and camera overrides in one transaction. The deletes are explicit
     /// rather than relying on the schema's cascades: foreign keys aren't
     /// enforced without PRAGMA foreign_keys, and route_map_labels has no
     /// cascade anyway. Rendered output on disk stays put.
@@ -837,6 +961,7 @@ struct TelemetryStore {
                 "DELETE FROM camera_overrides WHERE journey_id = ?",
                 "DELETE FROM annotations WHERE journey_id = ?",
                 "DELETE FROM telemetry WHERE journey_id = ?",
+                "DELETE FROM journey_segments WHERE journey_id = ?",
                 "DELETE FROM journeys WHERE id = ?",
             ] {
                 var statement: OpaquePointer?
@@ -882,6 +1007,48 @@ struct TelemetryStore {
         }
     }
 
+    /// Adds telemetry to an existing journey that has none yet, in one
+    /// transaction. Throws `journeyNotFound` for an unknown journey and
+    /// `telemetryAlreadyStored` if it already has samples, so a second
+    /// extraction can't double them up.
+    func insertTelemetry(journeyID: Int64, samples: [TelemetrySample]) throws {
+        let database = try open(flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(database) }
+
+        try execute(database, "BEGIN IMMEDIATE")
+        do {
+            var statement: OpaquePointer?
+            guard
+                sqlite3_prepare_v2(
+                    database,
+                    "SELECT (SELECT COUNT(*) FROM journeys WHERE id = ?1), "
+                        + "(SELECT COUNT(*) FROM telemetry WHERE journey_id = ?1)",
+                    -1, &statement, nil)
+                    == SQLITE_OK
+            else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            defer { sqlite3_finalize(statement) }
+
+            sqlite3_bind_int64(statement, 1, journeyID)
+            guard sqlite3_step(statement) == SQLITE_ROW else {
+                throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+            }
+            guard sqlite3_column_int64(statement, 0) > 0 else {
+                throw TelemetryStoreError.journeyNotFound(journeyID: journeyID)
+            }
+            guard sqlite3_column_int64(statement, 1) == 0 else {
+                throw TelemetryStoreError.telemetryAlreadyStored(journeyID: journeyID)
+            }
+
+            try insertTelemetryRows(database, journeyID: journeyID, samples: samples)
+            try execute(database, "COMMIT")
+        } catch {
+            try? execute(database, "ROLLBACK")
+            throw error
+        }
+    }
+
     private func insertJourneyRow(
         _ database: OpaquePointer?, source: String, roadType: String, roadNumber: Int,
         title: String
@@ -912,7 +1079,25 @@ struct TelemetryStore {
             }
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
         }
-        return sqlite3_last_insert_rowid(database)
+        let journeyID = sqlite3_last_insert_rowid(database)
+
+        // Every journey starts as one segment over the default files.
+        var segment: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                database, "INSERT INTO journey_segments (journey_id, position) VALUES (?, 0)",
+                -1, &segment, nil)
+                == SQLITE_OK
+        else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        defer { sqlite3_finalize(segment) }
+
+        sqlite3_bind_int64(segment, 1, journeyID)
+        guard sqlite3_step(segment) == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        return journeyID
     }
 
     private func insertTelemetryRows(
@@ -1154,6 +1339,17 @@ struct TelemetryStore {
 
     private static func integer(_ statement: OpaquePointer?, column: Int32) -> Int? {
         isNull(statement, column: column) ? nil : Int(sqlite3_column_int64(statement, column))
+    }
+
+    /// The offsets in five consecutive columns from `column`: front, rear,
+    /// telemetry, left, right.
+    private static func startOffsets(_ statement: OpaquePointer?, column: Int32) -> StartOffsets {
+        StartOffsets(
+            front: double(statement, column: column) ?? 0,
+            rear: double(statement, column: column + 1) ?? 0,
+            telemetry: double(statement, column: column + 2) ?? 0,
+            left: double(statement, column: column + 3),
+            right: double(statement, column: column + 4))
     }
 
     /// The location in a latitude column and the longitude column after it.

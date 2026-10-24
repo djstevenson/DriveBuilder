@@ -10,7 +10,7 @@ extension JourneyPlacement {
     func timeText(_ placement: Placement) -> String {
         let clock = captionClock
         return seconds(placement, on: clock).map {
-            "\(ClockTime.text(for: $0)) in \(clock.movieName)"
+            "\(ClockTime.text(for: $0)) in \(movieName(on: clock, at: placement))"
         } ?? ""
     }
 
@@ -41,7 +41,7 @@ struct LocationField: View {
 
     @State private var showingFromTime = false
     @State private var timeText = ""
-    @State private var clock: JourneyPlacement.Clock = .final
+    @State private var movie: JourneyPlacement.Movie?
 
     var body: some View {
         TextField(title, text: $text, prompt: Text("e.g. 51.0712, -1.7983"))
@@ -55,8 +55,8 @@ struct LocationField: View {
                     .accessibilityIdentifier("\(identifier)-status")
                 Spacer()
                 Button("From time\u{2026}") {
-                    if let placement, !placement.clocks.contains(clock) {
-                        clock = placement.captionClock
+                    if let placement, movie.map(placement.movies.contains) != true {
+                        movie = placement.movies.first { $0.clock == placement.captionClock }
                     }
                     showingFromTime = true
                 }
@@ -101,12 +101,16 @@ struct LocationField: View {
     /// the track was then.
     private var fromTime: some View {
         let seconds = ClockTime.seconds(from: timeText)
-        let location = seconds.flatMap { placement?.location(atSeconds: $0, on: clock) }
+        let location = seconds.flatMap { seconds in
+            movie.flatMap {
+                placement?.location(atSeconds: seconds, on: $0.clock, segment: $0.segment)
+            }
+        }
         return VStack(alignment: .leading, spacing: 10) {
             Form {
-                Picker("Movie", selection: $clock) {
-                    ForEach(placement?.clocks ?? []) { clock in
-                        Text(clock.movieName).tag(clock)
+                Picker("Movie", selection: $movie) {
+                    ForEach(placement?.movies ?? []) { movie in
+                        Text(movie.name).tag(Optional(movie))
                     }
                 }
                 .accessibilityIdentifier("\(identifier)-from-time-movie")

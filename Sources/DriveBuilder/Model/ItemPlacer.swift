@@ -1,25 +1,24 @@
 import Foundation
 
 /// Places a journey's location-based items (annotations, camera overrides,
-/// route-map labels) on its drive segment: finds when the whole recorded
-/// track passes each location, then shifts that onto the synced timeline.
+/// route-map labels) on its drive: when the drive passes each location
+/// (see `DriveTrack`).
 struct ItemPlacer {
-    let locator: TrackLocator
-    let timeline: JourneyTimeline
+    let track: DriveTrack
 
-    /// `records` should be the journey's whole track, not the synced trim,
-    /// so a location's time doesn't depend on the sync offsets or length.
+    /// `records` should be the journey's whole track, not the synced trim:
+    /// the journey's segments pick the drive out of it.
     init(store: TelemetryStore, journeyID: Int64, records: [TelemetryRecord]) throws {
-        locator = TrackLocator(records: records)
-        timeline = JourneyTimeline(
-            startOffsets: try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets())
+        track = try DriveTrack(
+            records: records, segments: try store.journeySegments(journeyID: journeyID))
     }
 
-    /// Drive seconds at which the track passes `location`. Throws, naming
-    /// `item`, if it's off the track or passed more than once.
+    /// Drive seconds at which the drive passes `location`. Throws, naming
+    /// `item`, if it's off the track, passed more than once, or only passed
+    /// where the video doesn't show.
     func driveSeconds(at location: TrackLocation, for item: String) throws -> Double {
         do {
-            return timeline.driveSeconds(at: try locator.locate(location))
+            return try track.locate(location).seconds
         } catch {
             throw RenderSetupError(message: "\(item) at \(location.text): \(error)")
         }

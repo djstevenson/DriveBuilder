@@ -92,7 +92,7 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
     let fix = try TrackLocator(records: northbound()).locate(location(north: 100.5 * 3.13))
     #expect(fix.sampleIndex == 100)
     #expect(abs(fix.fraction - 0.5) < 1e-6)
-    #expect(abs(fix.telemetrySeconds - 10.05) < 1e-6)
+    #expect(abs(fix.seconds - 10.05) < 1e-6)
     #expect(abs(fix.odometerMetres - 100.5 * 3.13) < 1e-6)
     #expect(fix.distanceMetres < 0.01)
 }
@@ -100,7 +100,7 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
 @Test func locatorAcceptsAPinBesideTheTrack() throws {
     let fix = try TrackLocator(records: northbound()).locate(location(north: 500, east: 20))
     #expect(abs(fix.distanceMetres - 20) < 0.01)
-    #expect(abs(fix.telemetrySeconds - 500 / 3.13 / 10) < 1e-3)
+    #expect(abs(fix.seconds - 500 / 3.13 / 10) < 1e-3)
 }
 
 @Test func locatorRejectsAPinTooFarFromTheTrack() {
@@ -151,7 +151,7 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
     let points = approach + queue + onwards
     let fix = try TrackLocator(records: track(points)).locate(location(north: 100 * 3.13))
     // Arriving at the queue (sample 99's segment ends there), not leaving it.
-    #expect(fix.telemetrySeconds < 10.01)
+    #expect(fix.seconds < 10.01)
 }
 
 @Test func locatorRejectsAnEmptyTrack() {
@@ -170,7 +170,7 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
         let fix = try locator.locate(
             TrackLocation(latitude: sample.latitude, longitude: sample.longitude))
         let expected = sample.timestamp.timeIntervalSince(records[0].timestamp)
-        #expect(abs(fix.telemetrySeconds - expected) <= TelemetryRecord.sampleInterval)
+        #expect(abs(fix.seconds - expected) <= TelemetryRecord.sampleInterval)
         #expect(fix.distanceMetres < 0.01)
     }
 }
@@ -213,23 +213,24 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
 
 /// The synthetic northbound track, with front 12 s and telemetry 3 s
 /// offsets and final.mov's drive segment starting 40 s in.
-private func placement(finalKnown: Bool = true) -> JourneyPlacement {
+private func placement(finalKnown: Bool = true) throws -> JourneyPlacement {
     var offsets = StartOffsets()
     offsets.front = 12
     offsets.telemetry = 3
     offsets.left = 5
-    return JourneyPlacement(
-        locator: TrackLocator(records: northbound()),
-        timeline: JourneyTimeline(startOffsets: offsets, driveSegmentStart: finalKnown ? 40 : nil))
+    return try JourneyPlacement(
+        track: DriveTrack(
+            records: northbound(), segments: [.single(startOffsets: offsets)],
+            driveSegmentStart: finalKnown ? 40 : nil))
 }
 
-@Test func placementOffersOnlyTheClocksTheJourneyHas() {
-    #expect(placement().clocks == [.final, .dials, .front, .rear, .left])
-    #expect(placement(finalKnown: false).clocks == [.dials, .front, .rear, .left])
+@Test func placementOffersOnlyTheClocksTheJourneyHas() throws {
+    #expect(try placement().clocks == [.final, .dials, .front, .rear, .left])
+    #expect(try placement(finalKnown: false).clocks == [.dials, .front, .rear, .left])
 }
 
 @Test func placementReadsALocationOffEveryClock() throws {
-    let placement = placement()
+    let placement = try placement()
     // Sample 500 is 50 s into the telemetry, so 47 s into the drive.
     let placed = try placement.place(location(north: 500 * 3.13)).get()
     #expect(abs(placed.driveSeconds - 47) < 1e-6)
@@ -246,7 +247,7 @@ private func placement(finalKnown: Bool = true) -> JourneyPlacement {
 }
 
 @Test func placementTurnsATimeOnAnyClockBackIntoALocation() throws {
-    let placement = placement()
+    let placement = try placement()
     // 87 s into final.mov and 59 s into front.mov are both sample 500.
     for (seconds, clock) in [(87.0, JourneyPlacement.Clock.final), (59, .front), (47, .dials)] {
         let found = try #require(placement.location(atSeconds: seconds, on: clock))
@@ -258,8 +259,8 @@ private func placement(finalKnown: Bool = true) -> JourneyPlacement {
     #expect(placement.location(atSeconds: 59, on: .right) == nil)
 }
 
-@Test func placementSortsItemsByWhenTheTrackPassesThem() {
-    let placement = placement()
+@Test func placementSortsItemsByWhenTheTrackPassesThem() throws {
+    let placement = try placement()
     let items = [
         ("third", location(north: 900 * 3.13)),
         ("off the track", location(north: 100, east: 500)),

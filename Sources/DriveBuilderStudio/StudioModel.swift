@@ -29,7 +29,7 @@ final class StudioModel {
     private(set) var loadError: String?
 
     /// Cap renders for a quick check: the first 300 frames of a clip, and
-    /// a 30-second drive segment for the final video.
+    /// the first 30 seconds of drive for the dials and the final video.
     var quickPreview = false
 
     private(set) var activeRender: ActiveRender?
@@ -67,8 +67,11 @@ final class StudioModel {
             journeyID: journey.id, componentID: component.id, progress: .preparing)
 
         var renderer = JourneyRenderer(journeyID: journey.id, databasePath: databasePath)
-        if quickPreview { renderer.frameLimit = 300 }
         let driveSegmentSeconds: Double? = quickPreview ? 30 : nil
+        if quickPreview {
+            renderer.frameLimit = 300
+            renderer.dialsSecondsLimit = driveSegmentSeconds
+        }
         let kind = component.kind
         let name = component.name
 

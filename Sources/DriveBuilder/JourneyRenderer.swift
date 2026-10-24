@@ -25,49 +25,8 @@ package struct JourneySummary: Identifiable, Sendable {
     package let start: Date?
     package let end: Date?
     package let distanceMetres: Double
-    /// Synchronisation offsets, in seconds, for lining up the separately
-    /// captured sources.
-    package let frontOffset: Double
-    package let rearOffset: Double
-    package let telemetryOffset: Double
-    /// The optional side cameras' offsets: nil when the journey has no
-    /// such view.
-    package let leftOffset: Double?
-    package let rightOffset: Double?
-    /// The drive segment's length in seconds, measured from the synced
-    /// start; nil means it runs for the shortest of the synced sources.
-    package let length: Double?
 
     package var roadName: String { "\(roadType)\(roadNumber)" }
-
-    /// The stored offset for one synchronisation source; nil only for a
-    /// side camera the journey doesn't have.
-    package func startOffset(_ source: StartOffsetSource) -> Double? {
-        switch source {
-        case .front: frontOffset
-        case .rear: rearOffset
-        case .telemetry: telemetryOffset
-        case .left: leftOffset
-        case .right: rightOffset
-        }
-    }
-}
-
-/// One of the journey's synchronisation-offset columns; the raw value is
-/// the `journeys` column that stores it.
-package enum StartOffsetSource: String, Sendable, Identifiable {
-    case front = "front_offset"
-    case rear = "rear_offset"
-    case telemetry = "telemetry_offset"
-    /// The optional side cameras, looking out of the left and right windows.
-    case left = "left_offset"
-    case right = "right_offset"
-
-    package var id: String { rawValue }
-
-    /// Whether the source may be absent: a NULL offset means the journey
-    /// has no such camera view.
-    package var isOptional: Bool { self == .left || self == .right }
 }
 
 /// Read access to the journeys a front end can list.
@@ -128,21 +87,35 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).deleteAnnotation(id: id)
     }
 
-    /// Sets one of the journey's synchronisation offsets, in seconds; nil
-    /// (only for an optional side camera) means the journey has no such view.
+    /// A journey's segments, in playback order (see `JourneySegment`).
     @concurrent
-    package func updateStartOffset(
-        journeyID: Int64, source: StartOffsetSource, offset: Double?
-    ) async throws {
-        try TelemetryStore(path: databasePath).updateStartOffset(
-            journeyID: journeyID, source: source, offset: offset)
+    package func segments(journeyID: Int64) async throws -> [JourneySegment] {
+        try TelemetryStore(path: databasePath).journeySegments(journeyID: journeyID)
     }
 
-    /// Sets the journey's drive-segment length in seconds; nil means the
-    /// shortest synced source decides.
+    /// Adds a segment after the journey's last, its sources guessed to
+    /// follow on from it; returns the new segment.
     @concurrent
-    package func updateLength(journeyID: Int64, length: Double?) async throws {
-        try TelemetryStore(path: databasePath).updateLength(journeyID: journeyID, length: length)
+    package func addSegment(journeyID: Int64) async throws -> JourneySegment {
+        try TelemetryStore(path: databasePath).insertSegment(journeyID: journeyID)
+    }
+
+    /// Rewrites a segment's files, offsets, and length.
+    @concurrent
+    package func updateSegment(_ segment: JourneySegment) async throws {
+        try TelemetryStore(path: databasePath).updateSegment(segment)
+    }
+
+    /// Removes a segment; a journey's only segment can't go.
+    @concurrent
+    package func deleteSegment(_ segment: JourneySegment) async throws {
+        try TelemetryStore(path: databasePath).deleteSegment(segment)
+    }
+
+    /// Swaps a segment with its neighbour before (`earlier`) or after it.
+    @concurrent
+    package func moveSegment(_ segment: JourneySegment, earlier: Bool) async throws {
+        try TelemetryStore(path: databasePath).moveSegment(segment, earlier: earlier)
     }
 
     /// A journey's camera-slot overrides, in the order they were added. No
@@ -228,6 +201,22 @@ package struct JourneyLibrary: Sendable {
             source: source, roadType: roadType, roadNumber: roadNumber, title: title)
     }
 
+    /// Extracts a journey's telemetry from the NextBase front-camera clips
+    /// beneath its directory (exiftool, speed limits, odometer) and stores
+    /// it, returning the number of samples. Only for a journey with no
+    /// telemetry yet: throws `TelemetryStoreError.telemetryAlreadyStored`
+    /// otherwise. Takes minutes for a long drive.
+    @concurrent
+    package func extractTelemetry(journeyID: Int64) async throws -> Int {
+        let store = TelemetryStore(path: databasePath)
+        guard let directory = try store.journeyDirectory(journeyID: journeyID) else {
+            throw TelemetryStoreError.journeyNotFound(journeyID: journeyID)
+        }
+        let samples = try NextBaseExtractor.journeySamples(directory: directory)
+        try store.insertTelemetry(journeyID: journeyID, samples: samples)
+        return samples.count
+    }
+
     /// Rewrites a journey's descriptive fields, leaving the
     /// synchronisation offsets alone. Throws
     /// `TelemetryStoreError.duplicateJourney` if the new `source` clashes
@@ -274,6 +263,10 @@ package struct JourneyRenderer: Sendable {
     package var mapDirectory = Self.defaultMapDirectory
     /// Render only the first N frames, for a quick check.
     package var frameLimit: Int?
+    /// Render only the first N seconds of the drive's dials, for a quick
+    /// check of the final video's first N seconds; overrides `frameLimit`
+    /// for dials.mov, whose frame rate the caller needn't know.
+    package var dialsSecondsLimit: Double?
 
     package init(journeyID: Int64, databasePath: String) {
         self.journeyID = journeyID
@@ -350,19 +343,24 @@ package struct JourneyRenderer: Sendable {
         tileRenderer.scaleFactor =
             Double(Self.defaultMapPixelSize) / ProgressMapRenderer.designPixelSize
 
-        // dials.mov keeps the full raw timeline (the final composition skips
-        // the telemetry offset itself), but the overview map shows only the
-        // stretch of track the final video plays, and elapsed time and
-        // distance count from its start.
+        // dials.mov runs on the drive's clock: it starts where the drive
+        // starts and cuts straight from each segment to the next, so the
+        // final composition lays it under the footage as is. Elapsed time
+        // and distance count from its start.
+        let drive = try driveFrames(from: records)
         let renderer = TelemetryVideoRenderer(
-            records: records,
-            syncedRecords: try syncedRecords(from: records),
+            records: drive,
+            syncedRecords: drive,
             dialPixelSize: Self.defaultDialPixelSize,
             mapPixelSize: Self.defaultMapPixelSize,
             tileRenderer: tileRenderer)
         let url = outputDirectory.appending(path: "dials.mov")
+        let limit =
+            dialsSecondsLimit.map {
+                Int(($0 * Double(ProgressMapZoomedRenderer.framesPerSecond)).rounded(.up))
+            } ?? frameLimit
         return try await write(url) {
-            try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
+            try await renderer.writeMovie(to: url, frameLimit: limit, progress: progress)
         }
     }
 
@@ -374,10 +372,10 @@ package struct JourneyRenderer: Sendable {
         progress?(.preparing)
         let outputDirectory = try makeOutputDirectory()
 
-        // Only the stretch of track the final video shows. Each label pops
-        // in when that track passes its reveal location.
+        // Only the drive the final video shows. Each label pops in when the
+        // drive passes its reveal location.
         let allRecords = try self.records()
-        let records = try syncedRecords(from: allRecords)
+        let records = try driveFrames(from: allRecords)
         let placer = try ItemPlacer(store: store, journeyID: journeyID, records: allRecords)
 
         var config = RouteMapConfig()
@@ -482,15 +480,31 @@ package struct JourneyRenderer: Sendable {
         let journeyDirectory = try journeyDirectory()
         let outputDirectory = try makeOutputDirectory()
 
+        // Each segment's footage, beneath the journey's video directory; a
+        // side camera is available only in a segment with its offset, and
+        // an override that uses it then needs its video, like front.mov.
+        let videoDirectory = URL(filePath: journeyDirectory).appending(path: "video")
+        let segments = try store.journeySegments(journeyID: journeyID).map { segment in
+            var footage = FinalVideoComposer.SegmentFootage(
+                frontURL: videoDirectory.appending(path: segment.frontFile),
+                rearURL: videoDirectory.appending(path: segment.rearFile))
+            if segment.startOffsets.left != nil {
+                footage.leftURL = videoDirectory.appending(path: segment.leftFile)
+            }
+            if segment.startOffsets.right != nil {
+                footage.rightURL = videoDirectory.appending(path: segment.rightFile)
+            }
+            footage.startOffsets = segment.startOffsets
+            footage.length = segment.length
+            return footage
+        }
         var composer = FinalVideoComposer(
             introURL: outputDirectory.appending(path: "intro.mov"),
             routeMapURL: outputDirectory.appending(path: "route_map.mov"),
             dialsURL: outputDirectory.appending(path: "dials.mov"),
-            frontFootageURL: URL(filePath: journeyDirectory).appending(path: "video/front.mov"),
-            rearFootageURL: URL(filePath: journeyDirectory).appending(path: "video/rear.mov"),
-            outroURL: outputDirectory.appending(path: "outro.mov"))
-        composer.startOffsets = try store.journeyStartOffsets(journeyID: journeyID) ?? StartOffsets()
-        // Overrides and annotations happen where the track passes their
+            outroURL: outputDirectory.appending(path: "outro.mov"),
+            segments: segments)
+        // Overrides and annotations happen where the drive passes their
         // locations, found here as drive seconds.
         let placer = try ItemPlacer(store: store, journeyID: journeyID, records: try records())
         composer.cameraOverrides = try store.cameraOverrides(journeyID: journeyID).map { override in
@@ -501,16 +515,6 @@ package struct JourneyRenderer: Sendable {
                 end: try placer.driveSeconds(at: override.endLocation, for: "\(item)'s end"),
                 label: override.displayLabel)
         }
-        // A side camera is available only when the journey has its offset;
-        // an override that uses it then needs its video, like front.mov.
-        let videoDirectory = URL(filePath: journeyDirectory).appending(path: "video")
-        if composer.startOffsets.left != nil {
-            composer.leftFootageURL = videoDirectory.appending(path: "left.mov")
-        }
-        if composer.startOffsets.right != nil {
-            composer.rightFootageURL = videoDirectory.appending(path: "right.mov")
-        }
-        composer.driveSegmentLength = try store.journeyLength(journeyID: journeyID)
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
         composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
             FinalVideoComposer.AnnotationClip(
@@ -595,33 +599,12 @@ package struct JourneyRenderer: Sendable {
         try store.records(journeyID: journeyID)
     }
 
-    /// The part of `records` the final video shows: the final composition
-    /// skips the first `telemetry_offset` seconds of the dials to sync them
-    /// with the footage and, when the journey has a `length`, stops that
-    /// many seconds later. Throws if the telemetry is shorter than `length`.
-    private func syncedRecords(from records: [TelemetryRecord]) throws -> [TelemetryRecord] {
-        guard let first = records.first, let last = records.last else { return records }
-        let telemetryOffset =
-            try store.journeyStartOffsets(journeyID: journeyID)?.telemetry ?? 0
-        let syncStart = first.timestamp.addingTimeInterval(telemetryOffset)
-        var synced = records.filter { $0.timestamp >= syncStart }
-
-        if let length = try store.journeyLength(journeyID: journeyID) {
-            // The dials clip holds each sample for one sample interval, so
-            // the telemetry covers up to that much past its last timestamp.
-            let available =
-                last.timestamp.timeIntervalSince(syncStart) + TelemetryRecord.sampleInterval
-            guard available >= length else {
-                throw RenderSetupError(
-                    message: String(
-                        format: "Journey %lld's length is %.1fs, but its telemetry only "
-                            + "has %.1fs after the %.1fs telemetry offset.",
-                        journeyID, length, available, telemetryOffset))
-            }
-            let syncEnd = syncStart.addingTimeInterval(length)
-            synced.removeAll { $0.timestamp > syncEnd }
-        }
-        return synced
+    /// The part of `records` the final video shows: the journey's segments'
+    /// stretches of telemetry as one continuous drive, on a 10 Hz grid from
+    /// its start (see `TelemetryRecord.driveFrames(from:segments:)`).
+    private func driveFrames(from records: [TelemetryRecord]) throws -> [TelemetryRecord] {
+        try TelemetryRecord.driveFrames(
+            from: records, segments: try store.journeySegments(journeyID: journeyID))
     }
 
     private func journeyDirectory() throws -> String {

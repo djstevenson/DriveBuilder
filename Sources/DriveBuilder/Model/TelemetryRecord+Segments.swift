@@ -1,0 +1,194 @@
+import Foundation
+
+enum DriveRecordsError: Error, CustomStringConvertible, Equatable {
+    case noSegments
+    /// Only the last segment may leave its length to its sources: an
+    /// earlier one's length decides where the next starts.
+    case openEndedSegment(position: Int)
+    /// The segment starts before the one before it ends, which would run
+    /// the track backwards.
+    case overlappingSegment(position: Int)
+    case telemetryTooShort(position: Int, length: Double, available: Double, offset: Double)
+
+    var description: String {
+        switch self {
+        case .noSegments:
+            "The journey has no segments."
+        case .openEndedSegment(let position):
+            "Segment \(position + 1) has no length; only the last segment may run to the end "
+                + "of its sources."
+        case .overlappingSegment(let position):
+            "Segment \(position + 1)'s telemetry starts before segment \(position)'s ends."
+        case .telemetryTooShort(let position, let length, let available, let offset):
+            String(
+                format: "Segment %d's length is %.1fs, but its telemetry only has %.1fs "
+                    + "after the %.1fs telemetry offset.",
+                position + 1, length, available, offset)
+        }
+    }
+}
+
+extension TelemetryRecord {
+    /// The part of a journey's `records` the final video shows, as one
+    /// continuous drive: each segment's stretch of telemetry in turn, with
+    /// whatever lies between them cut out.
+    ///
+    /// The first segment keeps its real timestamps and odometer readings;
+    /// each later one is moved back in time to follow straight on from the
+    /// one before, and its odometer continues from there (plus the
+    /// straight-line distance across the join, which is about nothing when
+    /// the drive picks up where it left off). So distances, the route, and
+    /// the clock all read as if the cut-out part never happened.
+    ///
+    /// A segment's stretch starts `startOffsets.telemetry` seconds after the
+    /// first sample and runs for its `length`, or to the end of the
+    /// telemetry for a last segment with none. Throws if any segment but the
+    /// last has no length, if segments overlap, or if the telemetry runs out
+    /// before a segment's length.
+    ///
+    /// `keepingEnds` also keeps the recording before the first segment and
+    /// after the last, as the drive's lead-in (before 0 s) and run-out (past
+    /// its end), so items there place as they did before segments, leaving
+    /// out only what lies between segments.
+    static func driveRecords(
+        from records: [TelemetryRecord], segments: [JourneySegment], keepingEnds: Bool = false
+    ) throws -> [TelemetryRecord] {
+        guard let first = records.first, let last = records.last else { return records }
+        guard let firstSegment = segments.first else { throw DriveRecordsError.noSegments }
+
+        var drive: [TelemetryRecord] = []
+        // Where the next segment starts on the drive clock, which is the
+        // telemetry's own clock through the first segment.
+        var driveStart = first.timestamp.addingTimeInterval(firstSegment.startOffsets.telemetry)
+        var previousEnd: Date?
+
+        for (index, segment) in segments.enumerated() {
+            let isLast = index == segments.count - 1
+            let offset = segment.startOffsets.telemetry
+            let start = first.timestamp.addingTimeInterval(offset)
+            if let previousEnd, start < previousEnd {
+                throw DriveRecordsError.overlappingSegment(position: segment.position)
+            }
+
+            var end: Date?
+            if let length = segment.length {
+                // The dials clip holds each sample for one sample interval,
+                // so the telemetry covers up to that much past its last
+                // timestamp.
+                let available = last.timestamp.timeIntervalSince(start) + sampleInterval
+                guard available >= length else {
+                    throw DriveRecordsError.telemetryTooShort(
+                        position: segment.position, length: length, available: available,
+                        offset: offset)
+                }
+                end = start.addingTimeInterval(length)
+            } else if !isLast {
+                throw DriveRecordsError.openEndedSegment(position: segment.position)
+            }
+
+            // Each segment but the last stops short of its end, where the
+            // next one's first sample takes over.
+            let keepsLeadIn = keepingEnds && index == 0
+            let keepsRunOut = keepingEnds && isLast
+            let kept = records.filter { record in
+                guard keepsLeadIn || record.timestamp >= start else { return false }
+                guard let end, !keepsRunOut else { return true }
+                return isLast ? record.timestamp <= end : record.timestamp < end
+            }
+            // Zero for the first segment, which keeps its real readings.
+            let timeShift = driveStart.timeIntervalSince(start)
+            var odometerShift = 0.0
+            if let joinFrom = drive.last, let joinTo = kept.first {
+                let gap = TelemetrySample.haversineMetres(
+                    latitude1: joinFrom.latitude, longitude1: joinFrom.longitude,
+                    latitude2: joinTo.latitude, longitude2: joinTo.longitude)
+                odometerShift = joinFrom.odometer + gap - joinTo.odometer
+            }
+            drive += kept.map { $0.moved(by: timeShift, odometerBy: odometerShift) }
+
+            driveStart = driveStart.addingTimeInterval(segment.length ?? 0)
+            previousEnd = end
+        }
+        return drive
+    }
+
+    /// The same sample, `seconds` later and `metres` further on.
+    private func moved(by seconds: TimeInterval, odometerBy metres: Double) -> TelemetryRecord {
+        TelemetryRecord(
+            id: id, journeyID: journeyID, timestamp: timestamp.addingTimeInterval(seconds),
+            latitude: latitude, longitude: longitude, altitude: altitude, speed: speed,
+            heading: heading, accelForward: accelForward, accelLateral: accelLateral,
+            speedLimit: speedLimit, file: file, source: source, odometer: odometer + metres)
+    }
+}
+
+extension TelemetryRecord {
+    /// The drive as the dials and route map show it: `driveRecords`
+    /// resampled every `sampleInterval` from the moment the drive starts
+    /// (the first segment's telemetry offset) to its end, so frame `n` of a
+    /// movie drawn one record per sample is exactly `n` samples into the
+    /// drive, joins and all. A drive with every segment's length runs to
+    /// their total; one whose last segment has none runs to the end of the
+    /// telemetry. Throws as `driveRecords` does.
+    static func driveFrames(
+        from records: [TelemetryRecord], segments: [JourneySegment]
+    ) throws -> [TelemetryRecord] {
+        // The lead-in and run-out give the samples either side of the
+        // drive's first and last grid points to interpolate between.
+        let drive = try driveRecords(from: records, segments: segments, keepingEnds: true)
+        guard let first = records.first, let last = drive.last, let firstSegment = segments.first
+        else { return drive }
+        let start = first.timestamp.addingTimeInterval(firstSegment.startOffsets.telemetry)
+        let lengths = segments.compactMap(\.length)
+        guard lengths.count == segments.count else {
+            return resampled(drive, from: start, through: last.timestamp)
+        }
+        // Up to a whole number of samples, so the movie covers a length
+        // that isn't (as far as the telemetry allows).
+        let samples = (lengths.reduce(0, +) / sampleInterval - 1e-6).rounded(.up)
+        return resampled(
+            drive, from: start, through: start.addingTimeInterval(samples * sampleInterval))
+    }
+
+    /// `records` (in timestamp order) every `interval` from `start` through
+    /// `end`, interpolated between the samples either side; a sample already
+    /// on a grid point is kept as is. Grid points outside the records are
+    /// left out.
+    static func resampled(
+        _ records: [TelemetryRecord], from start: Date, through end: Date,
+        interval: TimeInterval = sampleInterval
+    ) -> [TelemetryRecord] {
+        // Timestamps are read from millisecond strings, so a sample within
+        // this of a grid point is on it.
+        let tolerance = 1e-4
+        var result: [TelemetryRecord] = []
+        var index = 0
+        var step = 0
+        while true {
+            // Counting steps rather than adding up intervals keeps the grid
+            // from drifting.
+            let time = start.addingTimeInterval(Double(step) * interval)
+            guard time.timeIntervalSince(end) <= tolerance else { break }
+            step += 1
+            while index + 1 < records.count,
+                records[index + 1].timestamp.timeIntervalSince(time) <= tolerance
+            {
+                index += 1
+            }
+            guard index < records.count else { break }
+            let before = records[index]
+            let lag = time.timeIntervalSince(before.timestamp)
+            if abs(lag) <= tolerance {
+                result.append(before)
+            } else if lag > 0, index + 1 < records.count {
+                let after = records[index + 1]
+                let span = after.timestamp.timeIntervalSince(before.timestamp)
+                result.append(interpolated(from: before, to: after, fraction: lag / span))
+            } else if lag > 0 {
+                break  // past the last sample
+            }
+            // Otherwise the grid point comes before the first sample.
+        }
+        return result
+    }
+}

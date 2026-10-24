@@ -27,7 +27,13 @@ struct TelemetryOptions: ParsableArguments {
         help: "The journey to render.")
     var journeyID: Int64
 
+    /// Points the subcommands at another database for the duration of a
+    /// task, so tests can read a fixture rather than the real, changing
+    /// journeys in the bundled copy.
+    @TaskLocal static var databasePathOverride: String?
+
     static func databasePath() throws -> String {
+        if let databasePathOverride { return databasePathOverride }
         guard let url = Bundle.module.url(forResource: "telemetry", withExtension: "sqlite3")
         else {
             throw ValidationError("Bundled telemetry.sqlite3 resource is missing.")

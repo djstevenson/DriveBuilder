@@ -123,6 +123,17 @@ struct NextBaseExtractor {
     /// injectable so tests don't need the PostGIS database.
     var speedLimits: ([(latitude: Double, longitude: Double)]) throws -> [Int?]
 
+    /// A journey's telemetry, ready to store: the samples from its
+    /// `NextBase/front` clips, with speed limits from the local OSM
+    /// database and the odometer filled in. Slow - exiftool reads every
+    /// clip - so callers should keep it off the main actor.
+    static func journeySamples(directory: String) throws -> [TelemetrySample] {
+        let extractor = NextBaseExtractor(videoPath: directory) { points in
+            try SpeedLimitLookup().limits(for: points)
+        }
+        return TelemetrySample.addingOdometer(to: try extractor.samples())
+    }
+
     func samples() throws -> [TelemetrySample] {
         let frontDirectory = videoPath + "/NextBase/front"
         var isDirectory = ObjCBool(false)

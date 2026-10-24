@@ -11,13 +11,12 @@ private struct AnnotationsLoadKey: Equatable {
 }
 
 /// Keys the journey's placement to everything it depends on: the track
-/// (the journey), its sync offsets, and the rendered intro and route map
-/// (via the outputs version), which decide where final.mov's drive
-/// segment starts.
+/// (the journey), its segments, and the rendered intro and route map (via
+/// the outputs version), which decide where final.mov's drive starts.
 private struct PlacementLoadKey: Equatable {
     let journeyID: Int64
     let outputsVersion: Int
-    let offsets: [Double?]
+    let segments: [JourneySegment]
 }
 
 extension RouteMapLabel {
@@ -38,8 +37,10 @@ struct JourneyDetailView: View {
     @State private var editingAnnotation: Annotation?
     @State private var annotationToDelete: Annotation?
     @State private var deleteError: String?
-    @State private var editingOffsetSource: StartOffsetSource?
-    @State private var editingLength = false
+    @State private var segments: [JourneySegment] = []
+    @State private var editingSegment: SegmentEdit?
+    @State private var segmentToDelete: JourneySegment?
+    @State private var segmentError: String?
     @State private var editingJourney = false
     @State private var confirmingJourneyDelete = false
     @State private var routeMapLabels: [RouteMapLabel] = []
@@ -47,8 +48,14 @@ struct JourneyDetailView: View {
     @State private var editingLabel: RouteMapLabel?
     @State private var labelToDelete: RouteMapLabel?
     /// The journey's track and timeline, for when items happen; nil while
-    /// loading or if the journey has no telemetry.
+    /// loading, or if the journey has no telemetry or its segments can't be
+    /// joined (see `placementError`).
     @State private var placement: JourneyPlacement?
+    @State private var placementError: String?
+    /// The journey whose telemetry is being extracted, if any; by id so the
+    /// spinner stays with that journey if the selection changes meanwhile.
+    @State private var extractingJourneyID: Int64?
+    @State private var extractError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -120,65 +127,12 @@ struct JourneyDetailView: View {
                 } header: {
                     annotationsHeader
                 }
-                Section("Source Video and Telemetry") {
-                    SourceVideoRow(
-                        name: "Front camera",
-                        url: URL(filePath: journey.directory).appending(path: "video/front.mov"),
-                        offset: journey.frontOffset
-                    ) {
-                        editingOffsetSource = .front
+                ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                    Section {
+                        segmentRows(segment, index: index)
+                    } header: {
+                        segmentHeader(segment, index: index)
                     }
-                    SourceVideoRow(
-                        name: "Rear camera",
-                        url: URL(filePath: journey.directory).appending(path: "video/rear.mov"),
-                        offset: journey.rearOffset
-                    ) {
-                        editingOffsetSource = .rear
-                    }
-                    SourceVideoRow(
-                        name: "Left camera",
-                        url: URL(filePath: journey.directory).appending(path: "video/left.mov"),
-                        offset: journey.leftOffset
-                    ) {
-                        editingOffsetSource = .left
-                    }
-                    SourceVideoRow(
-                        name: "Right camera",
-                        url: URL(filePath: journey.directory).appending(path: "video/right.mov"),
-                        offset: journey.rightOffset
-                    ) {
-                        editingOffsetSource = .right
-                    }
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Telemetry")
-                            Text(
-                                "\(telemetryLength ?? "No telemetry") \u{00B7} "
-                                    + SourceVideoRow.offsetText(journey.telemetryOffset))
-                                .font(.appCaption)
-                                .foregroundStyle(
-                                    telemetryLength != nil
-                                        ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-                        }
-                        Spacer()
-                        Button("Edit", systemImage: "pencil") {
-                            editingOffsetSource = .telemetry
-                        }
-                    }
-                    .padding(.vertical, 4)
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Drive segment length")
-                            Text(driveSegmentLength)
-                                .font(.appCaption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Edit", systemImage: "pencil") {
-                            editingLength = true
-                        }
-                    }
-                    .padding(.vertical, 4)
                 }
             }
             if let active = model.activeRender, active.journeyID == journey.id {
@@ -188,19 +142,25 @@ struct JourneyDetailView: View {
             }
         }
         .task(id: AnnotationsLoadKey(journeyID: journey.id, outputsVersion: model.outputsVersion)) {
+            await loadSegments()
             await loadAnnotations()
             await loadRouteMapLabels()
         }
         .task(
             id: PlacementLoadKey(
-                journeyID: journey.id, outputsVersion: model.outputsVersion,
-                offsets: [
-                    journey.frontOffset, journey.rearOffset, journey.telemetryOffset,
-                    journey.leftOffset, journey.rightOffset,
-                ])
+                journeyID: journey.id, outputsVersion: model.outputsVersion, segments: segments)
         ) {
-            placement = try? await JourneyLibrary(databasePath: model.databasePath)
-                .placement(journeyID: journey.id)
+            do {
+                placement = try await JourneyLibrary(databasePath: model.databasePath)
+                    .placement(journeyID: journey.id)
+                placementError = nil
+            } catch {
+                placement = nil
+                // A journey with no telemetry has nothing to place on; that
+                // shows in the header, so isn't repeated here.
+                placementError =
+                    journey.sampleCount > 0 ? String(describing: error) : nil
+            }
         }
         .sheet(isPresented: $addingLabel) {
             RouteMapLabelForm(
@@ -254,15 +214,29 @@ struct JourneyDetailView: View {
                     + "route map labels will be removed from the database. Source videos "
                     + "and rendered output on disk stay put.")
         }
-        .sheet(item: $editingOffsetSource) { source in
-            OffsetForm(journey: journey, databasePath: model.databasePath, source: source) {
-                Task { await model.reload() }
+        .sheet(item: $editingSegment) { edit in
+            SegmentForm(
+                databasePath: model.databasePath, segment: edit.segment, field: edit.field,
+                isLast: edit.segment.id == segments.last?.id
+            ) {
+                Task { await loadSegments() }
             }
         }
-        .sheet(isPresented: $editingLength) {
-            LengthForm(journey: journey, databasePath: model.databasePath) {
-                Task { await model.reload() }
+        .alert(
+            "Delete segment?",
+            isPresented: Binding(
+                get: { segmentToDelete != nil },
+                set: { if !$0 { segmentToDelete = nil } }),
+            presenting: segmentToDelete
+        ) { segment in
+            Button("Delete", role: .destructive) {
+                Task { await changeSegments { try await $0.deleteSegment(segment) } }
             }
+            Button("Cancel", role: .cancel) {}
+        } message: { segment in
+            Text(
+                "Segment \(segment.position + 1) will be removed from the journey. Its "
+                    + "source videos stay on disk.")
         }
         .sheet(item: $editingAnnotation) { annotation in
             AnnotationForm(
@@ -289,6 +263,28 @@ struct JourneyDetailView: View {
                     + "Its rendered movie, if any, stays on disk.")
         }
         .alert(
+            "Could not change the segments",
+            isPresented: Binding(
+                get: { segmentError != nil },
+                set: { if !$0 { segmentError = nil } }),
+            presenting: segmentError
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { message in
+            Text(message)
+        }
+        .alert(
+            "Could not extract telemetry",
+            isPresented: Binding(
+                get: { extractError != nil },
+                set: { if !$0 { extractError = nil } }),
+            presenting: extractError
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { message in
+            Text(message)
+        }
+        .alert(
             "Could not delete",
             isPresented: Binding(
                 get: { deleteError != nil },
@@ -298,6 +294,20 @@ struct JourneyDetailView: View {
             Button("OK", role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+    }
+
+    private func extractTelemetry() async {
+        extractingJourneyID = journey.id
+        defer { extractingJourneyID = nil }
+        do {
+            _ = try await JourneyLibrary(databasePath: model.databasePath)
+                .extractTelemetry(journeyID: journey.id)
+            // Re-reads the journey's sample count, span, and distance, which
+            // hides this button and re-places the journey's items.
+            await model.reload()
+        } catch {
+            extractError = String(describing: error)
         }
     }
 
@@ -331,6 +341,23 @@ struct JourneyDetailView: View {
         } catch {
             deleteError = String(describing: error)
         }
+    }
+
+    private func loadSegments() async {
+        segments =
+            (try? await JourneyLibrary(databasePath: model.databasePath)
+                .segments(journeyID: journey.id)) ?? []
+    }
+
+    /// Runs a change to the journey's segments, then re-reads them (which
+    /// re-places the journey's items on the new drive).
+    private func changeSegments(_ change: (JourneyLibrary) async throws -> Void) async {
+        do {
+            try await change(JourneyLibrary(databasePath: model.databasePath))
+        } catch {
+            segmentError = String(describing: error)
+        }
+        await loadSegments()
     }
 
     private func loadAnnotations() async {
@@ -387,6 +414,20 @@ struct JourneyDetailView: View {
         HStack(alignment: .top) {
             journeySummaryHeader
             Spacer()
+            if journey.sampleCount == 0 {
+                if extractingJourneyID == journey.id {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.trailing, 4)
+                }
+                Button("Extract Telemetry", systemImage: "location") {
+                    Task { await extractTelemetry() }
+                }
+                .help(
+                    "Read the GPS and accelerometer data from the NextBase/front clips in "
+                        + "the journey's directory into the database. Takes a few minutes.")
+                .disabled(extractingJourneyID != nil)
+            }
             Button("Edit", systemImage: "pencil") {
                 editingJourney = true
             }
@@ -468,11 +509,111 @@ struct JourneyDetailView: View {
             .formatted(.time(pattern: .hourMinuteSecond))
     }
 
-    /// The drive-segment length row's caption, in the same format as the
-    /// video lengths.
-    private var driveSegmentLength: String {
-        guard let length = journey.length else { return "Shortest source" }
-        return Duration.seconds(length).formatted(.time(pattern: .hourMinuteSecond))
+    // MARK: - Segments
+
+    /// A segment's section header: its number and where it sits on the
+    /// drive, with buttons to reorder, remove, and (after the last) add.
+    private func segmentHeader(_ segment: JourneySegment, index: Int) -> some View {
+        HStack {
+            Text(segments.count == 1 ? "Source Video and Telemetry" : "Segment \(index + 1)")
+            Spacer()
+            if segments.count > 1 {
+                Button("Move Up", systemImage: "chevron.up") {
+                    Task { await changeSegments { try await $0.moveSegment(segment, earlier: true) } }
+                }
+                .disabled(index == 0)
+                Button("Move Down", systemImage: "chevron.down") {
+                    Task {
+                        await changeSegments { try await $0.moveSegment(segment, earlier: false) }
+                    }
+                }
+                .disabled(index == segments.count - 1)
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    segmentToDelete = segment
+                }
+            }
+            if index == segments.count - 1 {
+                Button("Add Segment", systemImage: "plus") {
+                    Task { await changeSegments { _ = try await $0.addSegment(journeyID: journey.id) } }
+                }
+                .help(
+                    "Add a segment after this one, for footage after a break or a cut-out "
+                        + "detour")
+            }
+        }
+    }
+
+    /// A segment's sources, telemetry, and length; each Edit opens the
+    /// segment's form for just that row. After the last segment, why the segments can't be
+    /// joined, if they can't.
+    @ViewBuilder
+    private func segmentRows(_ segment: JourneySegment, index: Int) -> some View {
+        let video = URL(filePath: journey.directory).appending(path: "video")
+        let offsets = segment.startOffsets
+        let edit = { (field: SegmentField) in editingSegment = SegmentEdit(segment: segment, field: field) }
+        SourceVideoRow(
+            name: "Front camera", file: segment.frontFile,
+            url: video.appending(path: segment.frontFile), offset: offsets.front,
+            onEditOffset: { edit(.front) })
+        SourceVideoRow(
+            name: "Rear camera", file: segment.rearFile,
+            url: video.appending(path: segment.rearFile), offset: offsets.rear,
+            onEditOffset: { edit(.rear) })
+        SourceVideoRow(
+            name: "Left camera", file: segment.leftFile,
+            url: video.appending(path: segment.leftFile), offset: offsets.left,
+            onEditOffset: { edit(.left) })
+        SourceVideoRow(
+            name: "Right camera", file: segment.rightFile,
+            url: video.appending(path: segment.rightFile), offset: offsets.right,
+            onEditOffset: { edit(.right) })
+        captionRow(
+            "Telemetry",
+            caption: "\(telemetryLength ?? "No telemetry") \u{00B7} "
+                + SourceVideoRow.offsetText(offsets.telemetry),
+            dimmed: telemetryLength == nil, onEdit: { edit(.telemetry) })
+        captionRow(
+            "Length", caption: lengthCaption(segment, index: index),
+            onEdit: { edit(.length) })
+        if index == segments.count - 1, let placementError {
+            Text(placementError)
+                .font(.appCallout)
+                .foregroundStyle(.red)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func captionRow(
+        _ title: String, caption: String, dimmed: Bool = false, onEdit: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(caption)
+                    .font(.appCaption)
+                    .foregroundStyle(dimmed ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+            }
+            Spacer()
+            Button("Edit", systemImage: "pencil", action: onEdit)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// The length row's caption: how long the segment plays, and where it
+    /// sits on the drive when there's more than one.
+    private func lengthCaption(_ segment: JourneySegment, index: Int) -> String {
+        func text(_ seconds: Double) -> String {
+            Duration.seconds(seconds).formatted(.time(pattern: .hourMinuteSecond))
+        }
+        let length = segment.length.map(text) ?? "Shortest source"
+        guard segments.count > 1 else { return length }
+        let earlier = segments.prefix(index).map(\.length)
+        guard !earlier.contains(nil) else { return length }
+        let start = earlier.compactMap { $0 }.reduce(0, +)
+        let span =
+            segment.length.map { "drive \(text(start))\u{2013}\(text(start + $0))" }
+            ?? "drive from \(text(start))"
+        return "\(length) \u{00B7} \(span)"
     }
 
     private var summaryLine: String {

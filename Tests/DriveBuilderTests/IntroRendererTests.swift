@@ -325,12 +325,17 @@ private func hasInk(
 }
 
 /// An end-to-end check that the intro command reads the road straight from
-/// the bundled database rather than a command-line option. Journey 1 is the
-/// project's checked-in database, so these numbers only change if that data
-/// is replaced.
+/// the database rather than a command-line option; the fixture database's
+/// journey 1 is the A338 Northbound drive.
 @Test func introUsesTheJourneysRoadFromTheDatabase() throws {
-    let intro = try DriveBuilder.Intro.parse(["-j", "1"])
-    let road = try intro.telemetry.journeyRoad()
-    #expect(road.type == "A")
-    #expect(road.number == 338)
+    let fixture = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appending(path: "Fixtures/A338 Northbound/telemetry.sqlite3")
+        .path(percentEncoded: false)
+    try TelemetryOptions.$databasePathOverride.withValue(fixture) {
+        let intro = try DriveBuilder.Intro.parse(["-j", "1"])
+        let road = try intro.telemetry.journeyRoad()
+        #expect(road.type == "A")
+        #expect(road.number == 338)
+    }
 }

@@ -116,7 +116,7 @@ extension TelemetryStore {
                 item.problem = "journey \(journeyID) has no telemetry"
                 return item
             }
-            guard let location = locator.location(atTelemetrySeconds: telemetrySeconds) else {
+            guard let location = locator.location(atSeconds: telemetrySeconds) else {
                 item.problem =
                     "telemetry \(ClockTime.text(for: telemetrySeconds)) is outside the recorded track"
                 return item
@@ -124,7 +124,7 @@ extension TelemetryStore {
             item.location = location
             do {
                 let fix = try locator.locate(location)
-                let drift = fix.telemetrySeconds - telemetrySeconds
+                let drift = fix.seconds - telemetrySeconds
                 item.driftSeconds = drift
                 if abs(drift) > Self.maximumMigrationDriftSeconds {
                     item.problem = String(
@@ -165,17 +165,7 @@ extension TelemetryStore {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
 
-        var backup: OpaquePointer?
-        guard sqlite3_prepare_v2(database, "VACUUM INTO ?", -1, &backup, nil) == SQLITE_OK else {
-            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
-        }
-        sqlite3_bind_text(backup, 1, backupPath, -1, Self.transient)
-        let backedUp = sqlite3_step(backup)
-        sqlite3_finalize(backup)
-        guard backedUp == SQLITE_DONE else {
-            throw TelemetryStoreError.queryFailed(
-                message: "Could not back up to \(backupPath): \(Self.lastErrorMessage(database))")
-        }
+        try backUp(database, to: backupPath)
 
         try execute(database, "BEGIN IMMEDIATE")
         do {
@@ -281,8 +271,23 @@ extension TelemetryStore {
         }
     }
 
+    /// Copies the open database to `backupPath`, which mustn't exist yet.
+    func backUp(_ database: OpaquePointer?, to backupPath: String) throws {
+        var backup: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "VACUUM INTO ?", -1, &backup, nil) == SQLITE_OK else {
+            throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
+        }
+        sqlite3_bind_text(backup, 1, backupPath, -1, Self.transient)
+        let backedUp = sqlite3_step(backup)
+        sqlite3_finalize(backup)
+        guard backedUp == SQLITE_DONE else {
+            throw TelemetryStoreError.queryFailed(
+                message: "Could not back up to \(backupPath): \(Self.lastErrorMessage(database))")
+        }
+    }
+
     /// Every row `sql` returns, each read by `row`.
-    private func query<T>(
+    func query<T>(
         _ database: OpaquePointer?, _ sql: String, _ row: (OpaquePointer?) -> T
     ) throws -> [T] {
         var statement: OpaquePointer?
