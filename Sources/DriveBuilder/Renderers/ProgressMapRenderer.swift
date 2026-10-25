@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import Synchronization
 
 /// Builds the overview progress map for a journey: a static map covering the
 /// whole route, with the route travelled so far drawn over it in the route
@@ -9,6 +10,12 @@ import Foundation
 ///
 /// Takes the telemetry it needs as a plain array so it can be exercised with
 /// synthetic records, without a database.
+enum ProgressMapError: Error, CustomStringConvertible {
+    case trackLayerFailed
+
+    var description: String { "Could not pre-render the progress map's track" }
+}
+
 struct ProgressMapRenderer: DialRenderer {
     static let dialName = "ProgressMap"
 
@@ -70,24 +77,93 @@ struct ProgressMapRenderer: DialRenderer {
             height: pixelSize)
     }
 
+    /// Track points between cached track layers (see `Artwork.trackLayers`):
+    /// 20 seconds of 30 fps records, so a frame strokes at most this many
+    /// points live.
+    static let trackLayerInterval = 600
+
+    /// The travelled track up to one point, pre-stroked: the casing and the
+    /// bright line as separate full-frame layers, so a frame can slot the
+    /// rest of the track's casing in beneath all of the line, just as
+    /// stroking the whole track at once would.
+    struct TrackLayers {
+        let casing: CGImage
+        let line: CGImage
+    }
+
     /// Artwork rasterized once and reused for every frame: the route-covering
-    /// base map, and the pixel position of every telemetry record in order,
-    /// so each frame just strokes a prefix of the list.
+    /// base map, the pixel position of every telemetry record in order, and
+    /// the track pre-stroked up to every `trackLayerInterval`th point.
+    ///
+    /// Stroking the whole travelled prefix every frame made each frame's
+    /// cost grow with the distance covered, and the whole render quadratic
+    /// in the journey's length; with the layers a frame strokes only the
+    /// tail since the last one. `trackLayers[k]` covers points
+    /// `0...(k + 1) * trackLayerInterval`.
     struct Artwork {
         let map: CGImage
         let bbox: MapBBox
         let trackPoints: [CGPoint]
+        let trackLayers: [TrackLayers]
     }
 
     func makeArtwork() throws -> Artwork {
         let bbox = routeBBox
+        let trackPoints = records.map { record in
+            bbox.pixelPosition(
+                of: OSGB.gridPoint(latitude: record.latitude, longitude: record.longitude))
+        }
         return Artwork(
             map: try tileRenderer.renderMap(bbox),
             bbox: bbox,
-            trackPoints: records.map { record in
-                bbox.pixelPosition(
-                    of: OSGB.gridPoint(latitude: record.latitude, longitude: record.longitude))
-            })
+            trackPoints: trackPoints,
+            trackLayers: try makeTrackLayers(trackPoints))
+    }
+
+    /// Strokes every cached track layer, in parallel: each is independent,
+    /// and a long journey has a few hundred.
+    private func makeTrackLayers(_ trackPoints: [CGPoint]) throws -> [TrackLayers] {
+        let count = max(0, (trackPoints.count - 1) / Self.trackLayerInterval)
+        let (pixelSize, scale) = (pixelSize, scale)
+        let layers = Mutex([TrackLayers?](repeating: nil, count: count))
+        DispatchQueue.concurrentPerform(iterations: count) { index in
+            let points = trackPoints[0...(index + 1) * Self.trackLayerInterval]
+            guard
+                let casing = Self.trackLayer(
+                    points, colour: RouteMapRenderer.trackCasingColour,
+                    width: RouteMapRenderer.trackCasingWidth * scale, pixelSize: pixelSize),
+                let line = Self.trackLayer(
+                    points, colour: RouteMapRenderer.trackColour,
+                    width: RouteMapRenderer.trackLineWidth * scale, pixelSize: pixelSize)
+            else { return }
+            layers.withLock { $0[index] = TrackLayers(casing: casing, line: line) }
+        }
+        let built = layers.withLock { $0.compactMap { $0 } }
+        guard built.count == count else { throw ProgressMapError.trackLayerFailed }
+        return built
+    }
+
+    /// One pass of the track, alone on a transparent frame-sized image.
+    private static func trackLayer(
+        _ points: ArraySlice<CGPoint>, colour: CGColor, width: Double, pixelSize: Int
+    ) -> CGImage? {
+        guard
+            let context = CGContext(
+                data: nil, width: pixelSize, height: pixelSize, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                    | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        flipToTrackSpace(context, pixelSize: pixelSize)
+        RouteMapRenderer.strokeTrack(points, colour: colour, width: width, into: context)
+        return context.makeImage()
+    }
+
+    /// Track points follow the top-left-origin frame geometry, so flip
+    /// once and draw in that space, as the route map does.
+    private static func flipToTrackSpace(_ context: CGContext, pixelSize: Int) {
+        context.translateBy(x: 0, y: Double(pixelSize))
+        context.scaleBy(x: 1, y: -1)
     }
 
     /// Draws one frame into `context`: the static map, then the route
@@ -97,22 +173,44 @@ struct ProgressMapRenderer: DialRenderer {
         LayerCompositor.draw(
             [.init(artwork.map)], into: context, width: pixelSize, height: pixelSize)
 
-        // Track points follow the top-left-origin frame geometry, so flip
-        // once and draw in that space, as the route map does.
-        context.saveGState()
-        context.translateBy(x: 0, y: Double(pixelSize))
-        context.scaleBy(x: 1, y: -1)
-        let travelled = artwork.trackPoints[0..<travelledCount(at: record)]
-        RouteMapRenderer.drawTrack(
-            travelled,
-            markerRadius: Self.markerRadius * scale,
-            markerBorderWidth: Self.markerBorderWidth * scale,
-            lineWidth: RouteMapRenderer.trackLineWidth * scale,
-            casingWidth: RouteMapRenderer.trackCasingWidth * scale,
-            into: context)
-        if let head = travelled.last {
-            drawHeadingArrow(at: head, headingDegrees: record.heading, into: context)
+        let travelledCount = travelledCount(at: record)
+        guard travelledCount > 0 else { return }
+
+        // The latest cached layer behind the head, if any, and the tail of
+        // points since it (sharing its last point, so the strokes join).
+        // Artwork without layers just strokes the whole track live.
+        let layerIndex = min(
+            (travelledCount - 1) / Self.trackLayerInterval - 1, artwork.trackLayers.count - 1)
+        let layer = layerIndex >= 0 ? artwork.trackLayers[layerIndex] : nil
+        let tailStart = (layerIndex + 1) * Self.trackLayerInterval
+        let tail = artwork.trackPoints[tailStart..<travelledCount]
+        let frame = CGRect(x: 0, y: 0, width: pixelSize, height: pixelSize)
+
+        // Casing beneath line throughout, as `RouteMapRenderer.drawTrack`
+        // strokes it in one go.
+        if let layer { context.draw(layer.casing, in: frame) }
+        inTrackSpace(context) {
+            RouteMapRenderer.strokeTrack(
+                tail, colour: RouteMapRenderer.trackCasingColour,
+                width: RouteMapRenderer.trackCasingWidth * scale, into: $0)
         }
+        if let layer { context.draw(layer.line, in: frame) }
+        inTrackSpace(context) {
+            RouteMapRenderer.strokeTrack(
+                tail, colour: RouteMapRenderer.trackColour,
+                width: RouteMapRenderer.trackLineWidth * scale, into: $0)
+            let head = artwork.trackPoints[travelledCount - 1]
+            RouteMapRenderer.drawHeadMarker(
+                at: head, radius: Self.markerRadius * scale,
+                borderWidth: Self.markerBorderWidth * scale, into: $0)
+            drawHeadingArrow(at: head, headingDegrees: record.heading, into: $0)
+        }
+    }
+
+    private func inTrackSpace(_ context: CGContext, _ body: (CGContext) -> Void) {
+        context.saveGState()
+        Self.flipToTrackSpace(context, pixelSize: pixelSize)
+        body(context)
         context.restoreGState()
     }
 
