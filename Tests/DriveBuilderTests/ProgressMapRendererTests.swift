@@ -177,3 +177,52 @@ private func isArrowBlack(_ colour: NSColor?) -> Bool {
     let end = position(records[2])
     #expect(!isTrackOrange(frame.colorAt(x: Int(end.x.rounded()), y: Int(end.y.rounded()))))
 }
+
+@Test func cachedTrackLayersDrawTheSameTrackAsStrokingItWhole() throws {
+    // A looping route that crosses itself, long enough for several cached
+    // layers, so a crossing's casing has to stay beneath the older line.
+    let count = 3 * ProgressMapRenderer.trackLayerInterval + 100
+    let records = (0..<count).map { index in
+        let angle = Double(index) / Double(count) * 6 * .pi
+        return record(
+            latitude: 51.0 + 0.01 * sin(angle) + 0.000002 * Double(index),
+            longitude: -1.5 + 0.015 * sin(angle / 3 * 2),
+            heading: Double(index % 360),
+            timestamp: Date(timeIntervalSinceReferenceDate: Double(index)))
+    }
+    let renderer = ProgressMapRenderer(
+        records: records, pixelSize: 420, tileRenderer: BlankTileRenderer())
+    let artwork = try renderer.makeArtwork()
+    #expect(artwork.trackLayers.count == 3)
+    let uncached = ProgressMapRenderer.Artwork(
+        map: artwork.map, bbox: artwork.bbox, trackPoints: artwork.trackPoints, trackLayers: [])
+
+    // Before the first layer, just past a layer boundary, mid-tail, and on
+    // the last record. Where a cached layer and the live tail overlap (at
+    // their join, and where the tail crosses older track) their two
+    // antialiased casing edges composite a shade darker than one stroke's
+    // would, so allow a handful of fringe pixels to differ.
+    for index in [0, 601, 1300, count - 1] {
+        let cachedFrame = try renderer.frame(for: records[index], artwork: artwork)
+        let liveFrame = try renderer.frame(for: records[index], artwork: uncached)
+        let differing = pixelsDiffering(cachedFrame, liveFrame, byMoreThan: 2)
+        #expect(differing <= 420 * 420 / 1000, "frame \(index): \(differing) pixels differ")
+    }
+}
+
+/// How many pixels of two same-sized frames differ by more than `tolerance`
+/// (out of 255) in any channel.
+private func pixelsDiffering(
+    _ a: NSBitmapImageRep, _ b: NSBitmapImageRep, byMoreThan tolerance: Int
+) -> Int {
+    guard let aData = a.bitmapData, let bData = b.bitmapData else { return .max }
+    let bytesPerPixel = a.bitsPerPixel / 8
+    var differing = 0
+    for pixel in stride(from: 0, to: a.bytesPerRow * a.pixelsHigh, by: bytesPerPixel) {
+        let channels = pixel..<(pixel + bytesPerPixel)
+        if channels.contains(where: { abs(Int(aData[$0]) - Int(bData[$0])) > tolerance }) {
+            differing += 1
+        }
+    }
+    return differing
+}

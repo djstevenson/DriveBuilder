@@ -297,27 +297,36 @@ struct RouteMapRenderer {
     ) {
         guard let head = points.last else { return }
 
-        if points.count >= 2 {
-            let path = CGMutablePath()
-            path.addLines(between: Array(points))
+        // Dark casing first, so the track stays visible over any background
+        // colour, then the bright track colour on top.
+        strokeTrack(points, colour: trackCasingColour, width: casingWidth, into: context)
+        strokeTrack(points, colour: trackColour, width: lineWidth, into: context)
+        drawHeadMarker(
+            at: head, radius: markerRadius, borderWidth: markerBorderWidth, into: context)
+    }
 
-            context.setLineJoin(.round)
-            context.setLineCap(.round)
+    /// One pass of `drawTrack`'s line: the casing or the bright track on
+    /// top. Does nothing for fewer than two points.
+    static func strokeTrack(
+        _ points: ArraySlice<CGPoint>, colour: CGColor, width: Double, into context: CGContext
+    ) {
+        guard points.count >= 2 else { return }
+        let path = CGMutablePath()
+        path.addLines(between: Array(points))
 
-            // Dark casing first, so the track stays visible over any background
-            // colour, then the bright track colour on top.
-            context.addPath(path)
-            context.setStrokeColor(trackCasingColour)
-            context.setLineWidth(casingWidth)
-            context.strokePath()
+        context.setLineJoin(.round)
+        context.setLineCap(.round)
+        context.addPath(path)
+        context.setStrokeColor(colour)
+        context.setLineWidth(width)
+        context.strokePath()
+    }
 
-            context.addPath(path)
-            context.setStrokeColor(trackColour)
-            context.setLineWidth(lineWidth)
-            context.strokePath()
-        }
-
-        // Circular marker at the leading edge of the track.
+    /// `drawTrack`'s circular marker at the leading edge of the track.
+    static func drawHeadMarker(
+        at head: CGPoint, radius markerRadius: Double, borderWidth markerBorderWidth: Double,
+        into context: CGContext
+    ) {
         let headRect = CGRect(
             x: head.x - markerRadius,
             y: head.y - markerRadius,

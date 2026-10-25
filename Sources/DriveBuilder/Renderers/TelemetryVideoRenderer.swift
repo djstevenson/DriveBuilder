@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import Synchronization
 
 /// Composites every telemetry dial into a single movie, frame by frame,
 /// replacing the ffmpeg overlay pass that used to stitch the individual dial
@@ -148,19 +149,39 @@ struct TelemetryVideoRenderer {
         let zoomedFrames = frames.map(ProgressMapZoomedRenderer.frame(for:))
         let (tileBoxes, frameTile) = progressMapZoomed.tileSchedule(for: zoomedFrames)
 
-        var tiles: [CGImage] = []
-        for (index, bbox) in tileBoxes.enumerated() {
+        // Each tile is a separate Mapnik process taking several seconds, so
+        // render them all at once, alongside the overview map. The tile
+        // renderer isn't Sendable, but each call only reads its settings
+        // and runs its own child process.
+        nonisolated(unsafe) let tileRenderer = progressMapZoomed.tileRenderer
+        let notRendered = Result<CGImage, any Error>.failure(MapTileError.notRendered)
+        let results = Mutex([Result<CGImage, any Error>](
+            repeating: notRendered, count: tileBoxes.count))
+        let remaining = Atomic(tileBoxes.count)
+        nonisolated(unsafe) var progressMapArtwork =
+            Result<ProgressMapRenderer.Artwork, any Error>.failure(MapTileError.notRendered)
+        nonisolated(unsafe) let progressMap = progressMap
+        DispatchQueue.concurrentPerform(iterations: tileBoxes.count + 1) { index in
+            // The last iteration is the overview map, which also strokes
+            // its cached track layers.
+            guard index < tileBoxes.count else {
+                progressMapArtwork = Result { try progressMap.makeArtwork() }
+                return
+            }
+            let tile = Result { try tileRenderer.renderMap(tileBoxes[index]) }
+            results.withLock { $0[index] = tile }
+            let left = remaining.subtract(1, ordering: .relaxed).newValue
             FileHandle.standardError.write(
-                Data("  rendering tile \(index + 1)/\(tileBoxes.count)\n".utf8))
-            tiles.append(try progressMapZoomed.tileRenderer.renderMap(bbox))
+                Data("  rendered tile \(tileBoxes.count - left)/\(tileBoxes.count)\n".utf8))
         }
+        let tiles = try results.withLock { try $0.map { try $0.get() } }
 
         return Artwork(
             speedo: try speedo.makeArtwork(),
             gforce: try gforce.makeArtwork(),
             compass: try compass.makeArtwork(),
             altitude: try altitude.makeArtwork(),
-            progressMap: try progressMap.makeArtwork(),
+            progressMap: try progressMapArtwork.get(),
             records: frames,
             zoomedTileBoxes: tileBoxes,
             zoomedFrameTile: frameTile,

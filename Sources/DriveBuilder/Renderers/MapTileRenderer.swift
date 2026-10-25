@@ -34,6 +34,9 @@ protocol MapTileRenderer {
 enum MapTileError: Error, CustomStringConvertible {
     case renderFailed(status: Int32)
     case undecodableImage
+    /// A placeholder for a tile still to be rendered; never seen once a
+    /// render completes.
+    case notRendered
 
     var description: String {
         switch self {
@@ -41,6 +44,8 @@ enum MapTileError: Error, CustomStringConvertible {
             "maprender.py exited with status \(status)"
         case .undecodableImage:
             "maprender.py output could not be decoded as an image"
+        case .notRendered:
+            "The map tile was never rendered"
         }
     }
 }
