@@ -32,6 +32,10 @@ final class StudioModel {
     /// the first 30 seconds of drive for the dials and the final video.
     var quickPreview = false
 
+    /// How many times faster than real time the fast final video's drive
+    /// plays.
+    var fastDriveSpeed = JourneyRenderer.defaultFastDriveSpeed
+
     private(set) var activeRender: ActiveRender?
     var renderError: RenderFailure?
 
@@ -74,6 +78,7 @@ final class StudioModel {
         }
         let kind = component.kind
         let name = component.name
+        let fastDriveSpeed = fastDriveSpeed
 
         renderTask = Task {
             let progress: RenderProgressHandler = { update in
@@ -98,6 +103,10 @@ final class StudioModel {
                 case .final:
                     _ = try await renderer.renderFinal(
                         driveSegmentSeconds: driveSegmentSeconds, progress: progress)
+                case .fastFinal:
+                    _ = try await renderer.renderFastFinal(
+                        driveSpeed: fastDriveSpeed, driveSegmentSeconds: driveSegmentSeconds,
+                        progress: progress)
                 case .project:
                     _ = try await renderer.renderProject(
                         driveSegmentSeconds: driveSegmentSeconds, progress: progress)

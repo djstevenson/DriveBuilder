@@ -71,6 +71,14 @@ struct ContentView: View {
         .navigationTitle("DriveBuilder Studio")
         .toolbar {
             ToolbarItem {
+                Picker("Fast speed", selection: $model.fastDriveSpeed) {
+                    ForEach([2.0, 3, 4, 5, 6, 8, 10], id: \.self) { speed in
+                        Text("\(Int(speed))\u{00D7}").tag(speed)
+                    }
+                }
+                .help("How much faster than real time the fast final video's drive plays.")
+            }
+            ToolbarItem {
                 Toggle("Quick preview", isOn: $model.quickPreview)
                     .help(
                         "Render only the first 300 frames of a clip (and a 30-second "
