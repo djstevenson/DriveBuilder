@@ -476,6 +476,47 @@ package struct JourneyRenderer: Sendable {
     package func renderFinal(
         driveSegmentSeconds: Double? = nil, progress: RenderProgressHandler? = nil
     ) async throws -> URL {
+        try await assembleFinal(
+            named: "final", driveSpeed: 1, driveSegmentSeconds: driveSegmentSeconds,
+            progress: progress)
+    }
+
+    /// The fast final video's default drive speed, as a multiple of real time.
+    package static let defaultFastDriveSpeed = 5.0
+
+    /// The fast final video's route map speed, as a multiple of real time.
+    package static let fastRouteMapSpeed = 2.0
+
+    /// A sped-up version of the final video: `output/final_fast.mov`. The
+    /// intro and outro play at real time, the route map at
+    /// `fastRouteMapSpeed`, and the drive at `driveSpeed`, silently and
+    /// without annotation banners, which would scroll past too fast to
+    /// read. Requires intro.mov, route_map.mov, dials.mov, and outro.mov to
+    /// have been rendered already.
+    ///
+    /// `driveSegmentSeconds` caps the drive for a quick check, as for
+    /// `renderFinal`; it counts seconds of the drive, before speeding up.
+    @concurrent
+    package func renderFastFinal(
+        driveSpeed: Double = defaultFastDriveSpeed, driveSegmentSeconds: Double? = nil,
+        progress: RenderProgressHandler? = nil
+    ) async throws -> URL {
+        guard driveSpeed > 0 else {
+            throw RenderSetupError(message: "The drive speed must be a positive multiple.")
+        }
+        return try await assembleFinal(
+            named: "final_fast", driveSpeed: driveSpeed, routeMapSpeed: Self.fastRouteMapSpeed,
+            annotations: false, driveSegmentSeconds: driveSegmentSeconds, progress: progress)
+    }
+
+    /// Assembles the rendered clips into `output/<name>.mov`, the route map
+    /// and drive sped up by the given multiples, with or without the
+    /// annotation banners.
+    private func assembleFinal(
+        named name: String, driveSpeed: Double, routeMapSpeed: Double = 1,
+        annotations: Bool = true, driveSegmentSeconds: Double?,
+        progress: RenderProgressHandler?
+    ) async throws -> URL {
         progress?(.preparing)
         let journeyDirectory = try journeyDirectory()
         let outputDirectory = try makeOutputDirectory()
@@ -516,16 +557,21 @@ package struct JourneyRenderer: Sendable {
                 label: override.displayLabel)
         }
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
-        composer.annotationClips = try store.annotations(journeyID: journeyID).map { annotation in
-            FinalVideoComposer.AnnotationClip(
-                url: outputDirectory.appending(path: "\(annotation.video).mov"),
-                endSeconds: try placer.driveSeconds(
-                    at: annotation.endLocation, for: "Annotation \"\(annotation.video)\""))
+        composer.driveSpeed = driveSpeed
+        composer.routeMapSpeed = routeMapSpeed
+        if annotations {
+            composer.annotationClips = try store.annotations(journeyID: journeyID).map {
+                annotation in
+                FinalVideoComposer.AnnotationClip(
+                    url: outputDirectory.appending(path: "\(annotation.video).mov"),
+                    endSeconds: try placer.driveSeconds(
+                        at: annotation.endLocation, for: "Annotation \"\(annotation.video)\""))
+            }
         }
         if let progress {
             composer.progressHandler = { fraction in progress(.fraction(fraction)) }
         }
-        let url = outputDirectory.appending(path: "final.mov")
+        let url = outputDirectory.appending(path: "\(name).mov")
         return try await write(url) {
             try await composer.writeMovie(to: url)
         }

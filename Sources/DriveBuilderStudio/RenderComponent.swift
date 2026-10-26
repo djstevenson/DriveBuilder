@@ -13,6 +13,8 @@ struct RenderComponent: Identifiable, Equatable {
         case allAnnotations
         case outro
         case final
+        /// The sped-up final video, at `StudioModel.fastDriveSpeed`.
+        case fastFinal
         /// Every component in programme order, then the final assembly.
         case project
     }
@@ -62,6 +64,8 @@ struct RenderComponent: Identifiable, Equatable {
         RenderComponent(kind: .dials, name: "Dials", relativePath: "output/dials.mov"),
         RenderComponent(kind: .outro, name: "Outro", relativePath: "output/outro.mov"),
         RenderComponent(kind: .final, name: "Final video", relativePath: "output/final.mov"),
+        RenderComponent(
+            kind: .fastFinal, name: "Fast final video", relativePath: "output/final_fast.mov"),
     ]
 }
 

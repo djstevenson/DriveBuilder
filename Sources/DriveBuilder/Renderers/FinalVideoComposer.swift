@@ -138,6 +138,18 @@ struct FinalVideoComposer {
     /// always play in full; `nil` renders the drive segment at full length.
     var maxDriveSegmentSeconds: Double?
 
+    /// How many times faster than real time the route map plays: 1 for the
+    /// normal final video, more for a sped-up version.
+    var routeMapSpeed = 1.0
+
+    /// How many times faster than real time the drive plays - its footage,
+    /// dials, camera overrides, and annotations together - for a sped-up
+    /// version; 1 for the normal final video. The intro, outro, cross-fades,
+    /// join dips, and camera-slot transitions keep their real-time lengths.
+    /// A sped-up drive is silent: its sound would be a garble.
+    /// `maxDriveSegmentSeconds` still counts drive (not final-video) seconds.
+    var driveSpeed = 1.0
+
     /// One rendered annotation banner (see `Annotations`) to composite over
     /// the drive segment.
     struct AnnotationClip {
@@ -216,7 +228,12 @@ struct FinalVideoComposer {
         /// Where in each source the segment's synced start lies.
         let frontSourceStart: CMTime
         let rearSourceStart: CMTime
-        /// Where it starts in the final video, and how long it plays.
+        /// Where it starts on the drive (and so in dials.mov), and how much
+        /// of each source it plays from its synced start.
+        let driveStart: CMTime
+        let sourceDuration: CMTime
+        /// Where it starts in the final video, and how long it plays there:
+        /// `sourceDuration` sped up by `driveSpeed`.
         let start: CMTime
         var duration: CMTime
         var end: CMTime { start + duration }
@@ -227,9 +244,11 @@ struct FinalVideoComposer {
         let override: PlacedCameraOverride
         let range: CMTimeRange
         /// The side camera filling the slot, and where in its source the
-        /// window starts; nil for a relabelled rear view.
+        /// window starts and how much of it plays (more than `range` when
+        /// the drive is sped up); nil for a relabelled rear view.
         let side: SideCamera?
         let sourceStart: CMTime
+        let sourceDuration: CMTime
     }
 
     private struct Clip {
@@ -262,6 +281,36 @@ struct FinalVideoComposer {
             duration: timeRange.duration, naturalSize: displaySize, preferredTransform: transform)
     }
 
+    /// `duration` played `speed` times faster than real time.
+    private static func scaled(_ duration: CMTime, by speed: Double) -> CMTime {
+        speed == 1 ? duration : CMTimeMultiplyByFloat64(duration, multiplier: 1 / speed)
+    }
+
+    /// Inserts `sourceRange` of `source` into `track` at `start`, sped up
+    /// (or slowed) to play for `duration`.
+    private static func insert(
+        _ sourceRange: CMTimeRange, of source: AVAssetTrack, at start: CMTime,
+        lasting duration: CMTime, into track: AVMutableCompositionTrack
+    ) throws {
+        try track.insertTimeRange(sourceRange, of: source, at: start)
+        if duration != sourceRange.duration {
+            track.scaleTimeRange(
+                CMTimeRange(start: start, duration: sourceRange.duration), toDuration: duration)
+        }
+    }
+
+    /// Where `driveSeconds` into the drive falls in the final video, through
+    /// whichever of `segments` plays it.
+    private func finalTime(
+        atDriveSeconds driveSeconds: Double, in segments: [PlacedSegment],
+        timescale: CMTimeScale
+    ) -> CMTime {
+        let drive = CMTime(seconds: driveSeconds, preferredTimescale: timescale)
+        guard let segment = segments.last(where: { $0.driveStart <= drive }) ?? segments.first
+        else { return drive }
+        return segment.start + Self.scaled(drive - segment.driveStart, by: driveSpeed)
+    }
+
     func writeMovie(to url: URL) async throws {
         let started = ContinuousClock.now
 
@@ -287,17 +336,26 @@ struct FinalVideoComposer {
         // beneath them run together through every segment.
         let introEnd = intro.duration
         let routeStart = introEnd - fade
-        let routeEnd = routeStart + routeMap.duration
+        let routeMapDuration = Self.scaled(routeMap.duration, by: routeMapSpeed)
+        let routeEnd = routeStart + routeMapDuration
+        // The route map must outlast its fades in and out, or the drive
+        // would start before the intro ends.
+        guard routeMapDuration >= fade + fade else {
+            throw CompositionError(
+                message: String(
+                    format: "route_map.mov plays for %.1fs, too short for its %.1fs "
+                        + "cross-fades in and out.",
+                    routeMapDuration.seconds, crossFadeSeconds))
+        }
         let dialsStart = JourneyTimeline.driveSegmentStart(
-            introDuration: intro.duration, routeMapDuration: routeMap.duration, crossFade: fade)
+            introDuration: intro.duration, routeMapDuration: routeMapDuration, crossFade: fade)
 
         let placed = try await placeSegments(
             dials: dials, dialsStart: dialsStart, timescale: timescale)
         guard let firstSegment = placed.first, let lastSegment = placed.last else {
             throw CompositionError(message: "The journey has no segments to play.")
         }
-        let dialsSegmentDuration = lastSegment.end - dialsStart
-        let dialsEnd = dialsStart + dialsSegmentDuration
+        let dialsEnd = lastSegment.end
         let outroStart = dialsEnd - fade
         let outroEnd = outroStart + outro.duration
 
@@ -312,7 +370,7 @@ struct FinalVideoComposer {
                     message: String(
                         format: "Segment %d starts %.1fs into the drive, too soon after the "
                             + "route map for its fade to black.",
-                        segment.index + 1, (join - dialsStart).seconds))
+                        segment.index + 1, segment.driveStart.seconds))
             }
             if join + joinFade > outroStart {
                 guard maxDriveSegmentSeconds == nil else { continue }
@@ -370,26 +428,31 @@ struct FinalVideoComposer {
         try trackA.insertTimeRange(
             CMTimeRange(start: .zero, duration: intro.duration),
             of: intro.track, at: .zero)
-        try trackB.insertTimeRange(
+        // Each piece is inserted and then sped up in place (a no-op at
+        // real time), so that track's later pieces land after it.
+        try Self.insert(
             CMTimeRange(start: .zero, duration: routeMap.duration),
-            of: routeMap.track, at: routeStart)
-        try trackA.insertTimeRange(
-            CMTimeRange(start: .zero, duration: dialsSegmentDuration),
-            of: dials.track, at: dialsStart)
+            of: routeMap.track, at: routeStart, lasting: routeMapDuration, into: trackB)
         for segment in placed {
-            try footageTrack.insertTimeRange(
-                CMTimeRange(start: segment.frontSourceStart, duration: segment.duration),
-                of: segment.front.track, at: segment.start)
-            try rearTrack.insertTimeRange(
-                CMTimeRange(start: segment.rearSourceStart, duration: segment.duration),
-                of: segment.rear.track, at: segment.start)
+            try Self.insert(
+                CMTimeRange(start: segment.driveStart, duration: segment.sourceDuration),
+                of: dials.track, at: segment.start, lasting: segment.duration, into: trackA)
+            try Self.insert(
+                CMTimeRange(start: segment.frontSourceStart, duration: segment.sourceDuration),
+                of: segment.front.track, at: segment.start, lasting: segment.duration,
+                into: footageTrack)
+            try Self.insert(
+                CMTimeRange(start: segment.rearSourceStart, duration: segment.sourceDuration),
+                of: segment.rear.track, at: segment.start, lasting: segment.duration,
+                into: rearTrack)
         }
         for window in cameraWindows {
             guard let side = window.side, let track = sideTracks[window.override.camera]
             else { continue }
-            try track.insertTimeRange(
-                CMTimeRange(start: window.sourceStart, duration: window.range.duration),
-                of: side.clip.track, at: window.range.start)
+            try Self.insert(
+                CMTimeRange(start: window.sourceStart, duration: window.sourceDuration),
+                of: side.clip.track, at: window.range.start, lasting: window.range.duration,
+                into: track)
         }
         try trackB.insertTimeRange(
             CMTimeRange(start: .zero, duration: outro.duration),
@@ -399,10 +462,13 @@ struct FinalVideoComposer {
         // inserted in the same synced, truncated window as its picture,
         // fading in and out with the video cross-fades either side and
         // dipping with the picture at each join. The rest of the programme
-        // stays silent.
+        // stays silent, as does a sped-up drive.
         var audioMix: AVAudioMix?
         var frontAudio: [(segment: PlacedSegment, track: AVAssetTrack)] = []
-        for segment in placed {
+        if driveSpeed != 1 {
+            print("final: the drive is sped up \(driveSpeed)x, so it will be silent.")
+        }
+        for segment in placed where driveSpeed == 1 {
             if let track = try await segment.front.asset.loadTracks(withMediaType: .audio).first {
                 frontAudio.append((segment, track))
             } else {
@@ -766,8 +832,8 @@ struct FinalVideoComposer {
         // fades if it overlaps a join's dip to black.
         for annotationClip in annotationClips {
             let clip = try await loadClip(at: annotationClip.url)
-            let end =
-                dialsStart + CMTime(seconds: annotationClip.endSeconds, preferredTimescale: timescale)
+            let end = finalTime(
+                atDriveSeconds: annotationClip.endSeconds, in: placed, timescale: timescale)
             let start = end - clip.duration
             guard start >= dialsStart, end <= dialsEnd else {
                 print(
@@ -882,13 +948,16 @@ struct FinalVideoComposer {
         }
         // A capped (test) render also stops where dials.mov does: a quick
         // preview's dials only cover its first few seconds of the drive.
+        // `driveStart` follows the drive's clock (and dials.mov's), `start`
+        // the final video's, which runs faster when the drive is sped up.
         let capEnd = maxDriveSegmentSeconds.map { seconds in
-            dialsStart + min(time(seconds), dials.duration)
+            min(time(seconds), dials.duration)
         }
         var placed: [PlacedSegment] = []
+        var driveStart = CMTime.zero
         var start = dialsStart
         for (index, footage) in segments.enumerated() {
-            if let capEnd, start >= capEnd { break }
+            if let capEnd, driveStart >= capEnd { break }
             let isLast = index == segments.count - 1
             let name = segments.count > 1 ? "Segment \(index + 1)'s" : "The journey's"
             let front = try await loadClip(at: footage.frontURL)
@@ -927,7 +996,7 @@ struct FinalVideoComposer {
             // set length is checked against dials.mov once the drive's
             // total (after any cap) is known, below.
             if isLast, footage.length == nil {
-                sources.append(("dials.mov", dials.duration - (start - dialsStart)))
+                sources.append(("dials.mov", dials.duration - driveStart))
             }
 
             var duration: CMTime
@@ -961,12 +1030,12 @@ struct FinalVideoComposer {
                     message: "dials.mov ends before segment \(index + 1) starts; render the "
                         + "dials again.")
             }
-            if let capEnd, start + duration > capEnd {
+            if let capEnd, driveStart + duration > capEnd {
                 print(
                     String(
                         format: "final: capping the drive segment to %.1fs for a test render.",
-                        (capEnd - dialsStart).seconds))
-                duration = capEnd - start
+                        capEnd.seconds))
+                duration = capEnd - driveStart
             }
 
             let offsets = footage.startOffsets
@@ -982,15 +1051,18 @@ struct FinalVideoComposer {
                 "final: \(name.lowercased()) start offsets "
                     + "\(descriptions.joined(separator: ", ")).")
 
+            let finalDuration = Self.scaled(duration, by: driveSpeed)
             placed.append(
                 PlacedSegment(
                     index: index, footage: footage, front: front, rear: rear,
                     frontSourceStart: frontSourceStart, rearSourceStart: rearSourceStart,
-                    start: start, duration: duration))
-            start = start + duration
+                    driveStart: driveStart, sourceDuration: duration,
+                    start: start, duration: finalDuration))
+            driveStart = driveStart + duration
+            start = start + finalDuration
         }
 
-        let total = start - dialsStart
+        let total = driveStart
         if dials.duration < total {
             throw CompositionError(
                 message: String(
@@ -1029,14 +1101,14 @@ struct FinalVideoComposer {
                     + "only one camera can fill the slot at a time.")
         }
 
-        guard let dialsStart = segments.first?.start else { return [] }
+        guard !segments.isEmpty else { return [] }
         let minimum = CMTime(
             seconds: Self.minimumCameraWindowSeconds, preferredTimescale: timescale)
         var clips: [URL: Clip] = [:]
         var windows: [CameraWindow] = []
         for override in overrides {
             func finalTime(_ driveSeconds: Double) -> CMTime {
-                dialsStart + CMTime(seconds: driveSeconds, preferredTimescale: timescale)
+                self.finalTime(atDriveSeconds: driveSeconds, in: segments, timescale: timescale)
             }
             let start = max(finalTime(override.start), visibleRange.start)
             let end = min(finalTime(override.end), visibleRange.end)
@@ -1074,13 +1146,21 @@ struct FinalVideoComposer {
                         + "override for each segment.")
             }
 
+            // The side camera's source runs `driveSpeed` times as fast as
+            // the window does.
+            func sourceTime(_ finalDuration: CMTime) -> CMTime {
+                driveSpeed == 1
+                    ? finalDuration : CMTimeMultiplyByFloat64(finalDuration, multiplier: driveSpeed)
+            }
             var sourceStart = CMTime.zero
+            let sourceDuration = sourceTime(end - start)
             if let side {
                 let offsets = segment.footage.startOffsets
                 let offset = (override.camera == .left ? offsets.left : offsets.right) ?? 0
                 sourceStart =
-                    CMTime(seconds: offset, preferredTimescale: timescale) + (start - segment.start)
-                if sourceStart + (end - start) > side.clip.duration {
+                    CMTime(seconds: offset, preferredTimescale: timescale)
+                    + sourceTime(start - segment.start)
+                if sourceStart + sourceDuration > side.clip.duration {
                     throw CompositionError(
                         message: "\(describe(override)) runs past the end of "
                             + "\(side.url.lastPathComponent).")
@@ -1089,7 +1169,7 @@ struct FinalVideoComposer {
             windows.append(
                 CameraWindow(
                     override: override, range: CMTimeRange(start: start, end: end), side: side,
-                    sourceStart: sourceStart))
+                    sourceStart: sourceStart, sourceDuration: sourceDuration))
         }
         return windows
     }

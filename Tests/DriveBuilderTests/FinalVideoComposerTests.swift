@@ -395,3 +395,37 @@ func segmentsThatCantBeJoinedFailTheRender() async throws {
         await failure { $0.segments[1].rearURL = directory.appending(path: "small-rear.mov") }
             .contains("same size"))
 }
+
+@Test(.timeLimit(.minutes(2)))
+func aSpedUpRenderPlaysTheRouteMapAndDriveFaster() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var composer = try await twoSegmentComposer(in: directory)
+    // Long enough for its cross-fades once sped up.
+    try await writeClip(
+        directory.appending(path: "route_map.mov"), width: 3840, height: 2160, seconds: 2
+    ) { _ in grey }
+    composer.routeMapSpeed = 2
+    composer.driveSpeed = 2
+
+    let output = directory.appending(path: "final.mov")
+    try await composer.writeMovie(to: output)
+
+    // The route map's 2 s takes 1 s, so the drive starts at 1 s; its 3 s
+    // and 4 s segments take 1.5 s and 2 s, joining at 2.5 s and ending at
+    // 4.5 s, half a second into the outro's 1 s.
+    let duration = try await AVURLAsset(url: output).load(.duration).seconds
+    #expect(abs(duration - 5) < 0.05, "duration \(duration)")
+
+    let first = try await frame(of: output, at: 1.75)
+    #expect(isClose(try rgb(first, backdrop.0, backdrop.1), to: [204, 204, 204]), "front.mov")
+    #expect(isClose(try rgb(first, slotMiddle.0, slotMiddle.1), to: [0, 0, 255]), "rear.mov early")
+    let join = try await frame(of: output, at: 2.5)
+    #expect(isClose(try rgb(join, backdrop.0, backdrop.1), to: [0, 0, 0]), "black at the join")
+
+    // 1 s of final video is 2 s of the second segment: front-2.mov 3 s in,
+    // rear.mov 6 s in.
+    let second = try await frame(of: output, at: 3.5)
+    #expect(isClose(try rgb(second, backdrop.0, backdrop.1), to: [255, 255, 0]), "front-2.mov")
+    #expect(isClose(try rgb(second, slotMiddle.0, slotMiddle.1), to: [0, 255, 255]), "rear.mov later")
+}
