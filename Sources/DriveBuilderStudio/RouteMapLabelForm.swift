@@ -38,7 +38,7 @@ struct RouteMapLabelForm: View {
         _title = State(initialValue: label?.title ?? "")
         _subtitle = State(initialValue: label?.subtitle ?? "")
         _locationText = State(initialValue: label?.revealLocation.text ?? "")
-        _location = State(initialValue: label?.location ?? .right)
+        _location = State(initialValue: label?.location ?? .e)
         _distanceText = State(initialValue: label?.distance.map { String($0) } ?? "")
     }
 
@@ -71,12 +71,10 @@ struct RouteMapLabelForm: View {
                     help: "Where the track reveals the sign: latitude, longitude, as copied "
                         + "from a map",
                     placement: placement, identifier: "route-map-label")
-                Picker("Side", selection: $location) {
-                    Text("Left").tag(RouteMapLabel.Location.left)
-                    Text("Right").tag(RouteMapLabel.Location.right)
+                LabeledContent("Side") {
+                    SidePicker(selection: $location)
                 }
-                .pickerStyle(.menu)
-                .help("Which side of the track the sign sits on")
+                .help("Where the sign sits relative to the track point (the map is north-up)")
                 TextField("Distance", text: $distanceText, prompt: Text("default"))
                     .help("Gap between the track point and the sign; blank for the default")
             }
@@ -141,4 +139,73 @@ struct RouteMapLabelForm: View {
             }
         }
     }
+
+    /// Full wording for each compass placement, for VoiceOver and tooltips.
+    fileprivate static func title(for location: RouteMapLabel.Location) -> String {
+        switch location {
+        case .n: "N (above)"
+        case .ne: "NE (above right)"
+        case .e: "E (right)"
+        case .se: "SE (below right)"
+        case .s: "S (below)"
+        case .sw: "SW (below left)"
+        case .w: "W (left)"
+        case .nw: "NW (above left)"
+        }
+    }
 }
+
+/// A 3×3 grid of compass buttons around a dot standing in for the track
+/// point: click the cell where the sign should go.
+private struct SidePicker: View {
+    @Binding var selection: RouteMapLabel.Location
+
+    /// The grid's rows, north at the top; nil is the centre cell.
+    private static let rows: [[RouteMapLabel.Location?]] = [
+        [.nw, .n, .ne],
+        [.w, nil, .e],
+        [.sw, .s, .se],
+    ]
+
+    var body: some View {
+        Grid(horizontalSpacing: 4, verticalSpacing: 4) {
+            ForEach(Self.rows.indices, id: \.self) { row in
+                GridRow {
+                    ForEach(Self.rows[row].indices, id: \.self) { column in
+                        if let location = Self.rows[row][column] {
+                            cell(for: location)
+                        } else {
+                            Circle()
+                                .fill(.secondary)
+                                .frame(width: 10, height: 10)
+                                .frame(width: 44, height: 30)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func cell(for location: RouteMapLabel.Location) -> some View {
+        let isSelected = location == selection
+        return Button {
+            selection = location
+        } label: {
+            Text(location.rawValue.uppercased())
+                .font(.appCallout.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .frame(width: 44, height: 30)
+                .background(
+                    isSelected ? Color.accentColor : Color.secondary.opacity(0.15),
+                    in: .rect(cornerRadius: 6))
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(RouteMapLabelForm.title(for: location))
+        .accessibilityLabel(RouteMapLabelForm.title(for: location))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityIdentifier("route-map-label-side-\(location.rawValue)")
+    }
+}
+

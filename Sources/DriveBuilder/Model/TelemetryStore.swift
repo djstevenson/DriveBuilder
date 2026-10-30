@@ -161,7 +161,7 @@ struct TelemetryStore {
                     title: Self.string(statement, column: 4) ?? "",
                     subtitle: Self.string(statement, column: 5) ?? "",
                     location: RouteMapLabel.Location(
-                        rawValue: Self.string(statement, column: 6) ?? "") ?? .right,
+                        rawValue: Self.string(statement, column: 6) ?? "") ?? .e,
                     distance: Self.double(statement, column: 7)))
         }
         return labels

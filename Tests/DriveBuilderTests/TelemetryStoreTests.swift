@@ -158,29 +158,29 @@ private let salisbury = TrackLocation(latitude: 51.07412, longitude: -1.78681)
 
     try store.insertRouteMapLabel(
         journeyID: 1, revealLocation: ringwood, title: "A31 Near Ringwood",
-        subtitle: "A338/A31 multiplex", location: .left, distance: 75.0)
+        subtitle: "A338/A31 multiplex", location: .w, distance: 75.0)
     try store.insertRouteMapLabel(
         journeyID: 1, revealLocation: bournemouth, title: "A338 Start",
-        subtitle: "", location: .right, distance: nil)
+        subtitle: "", location: .e, distance: nil)
 
     // Reads back in the order added, with the nil distance kept as nil.
     var labels = try store.routeMapLabels(journeyID: 1)
     #expect(labels.map(\.title) == ["A31 Near Ringwood", "A338 Start"])
     #expect(labels.map(\.revealLocation) == [ringwood, bournemouth])
-    #expect(labels[0].location == .left)
+    #expect(labels[0].location == .w)
     #expect(labels[0].distance == 75.0)
-    #expect(labels[1].location == .right)
+    #expect(labels[1].location == .e)
     #expect(labels[1].distance == nil)
     #expect(try store.routeMapLabels(journeyID: 999).isEmpty)
 
     try store.updateRouteMapLabel(
         id: labels[1].id, revealLocation: salisbury, title: "A338",
-        subtitle: "Near Bournemouth", location: .left, distance: 40.0)
+        subtitle: "Near Bournemouth", location: .w, distance: 40.0)
     labels = try store.routeMapLabels(journeyID: 1)
     #expect(labels[1].title == "A338")
     #expect(labels[1].revealLocation == salisbury)
     #expect(labels[1].subtitle == "Near Bournemouth")
-    #expect(labels[1].location == .left)
+    #expect(labels[1].location == .w)
     #expect(labels[1].distance == 40.0)
 
     try store.deleteRouteMapLabel(id: labels[1].id)

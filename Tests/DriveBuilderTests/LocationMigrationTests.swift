@@ -80,7 +80,7 @@ private func isNear(_ location: TrackLocation?, _ record: TelemetryRecord) -> Bo
             INSERT INTO annotations VALUES (1, 1, 'A27 On', 'We multiplex.', \(annotationEnd));
             INSERT INTO camera_overrides VALUES
                 (1, 1, 'left', \(overrideStart), \(overrideEnd), 'Looking left');
-            INSERT INTO route_map_labels VALUES (1, 1, \(labelReveal), 'Salisbury', '', 'left', 40);
+            INSERT INTO route_map_labels VALUES (1, 1, \(labelReveal), 'Salisbury', '', 'w', 40);
             """)
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = TelemetryStore(path: path)
@@ -108,7 +108,7 @@ private func isNear(_ location: TrackLocation?, _ record: TelemetryRecord) -> Bo
     #expect(isNear(override.endLocation, records[22_000]))
 
     let label = try #require(try store.routeMapLabels(journeyID: 1).first)
-    #expect(label.title == "Salisbury" && label.location == .left && label.distance == 40)
+    #expect(label.title == "Salisbury" && label.location == .w && label.distance == 40)
     #expect(isNear(label.revealLocation, records[30_000]))
 
     // And they place back at the times they were stored at.
