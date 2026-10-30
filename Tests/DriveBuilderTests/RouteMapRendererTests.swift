@@ -167,3 +167,44 @@ private func smallConfig(labels: [RouteMapConfig.Label] = []) -> RouteMapConfig 
     #expect(yellowNearAnchor[0] > 50)
     #expect(yellowNearAnchor[1] > 50)
 }
+
+@Test(arguments: [RouteMapLabel.Location.top, .bottom])
+func topAndBottomLabelsSitAboveAndBelowTheirAnchor(location: RouteMapLabel.Location) throws {
+    let label = RouteMapConfig.Label(
+        offset: 20, title: "A338", subtitle: "Salisbury", location: location, distance: nil)
+    let renderer = RouteMapRenderer(
+        records: testRecords(count: 5),
+        tileRenderer: WhiteTileRenderer(),
+        config: smallConfig(labels: [label]))
+    let artwork = try renderer.makeArtwork()
+
+    let canvas = try SVGRasterizer.blankBitmap(width: 640, height: 360)
+    let context = try #require(NSGraphicsContext(bitmapImageRep: canvas))
+    renderer.draw(
+        RouteMapRenderer.FrameSpec(pointCount: 5, videoTime: 2),
+        artwork: artwork, into: context.cgContext)
+
+    // Title-yellow (#cccc00) ink should be horizontally centred on the
+    // anchor and entirely on the requested side of it.
+    let anchor = artwork.labels[0].point
+    var xs: [Double] = []
+    var ys: [Double] = []
+    for y in 0..<360 {
+        for x in 0..<640 {
+            guard let colour = canvas.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                colour.redComponent > 0.6, colour.greenComponent > 0.6,
+                colour.blueComponent < 0.3
+            else { continue }
+            xs.append(Double(x))
+            ys.append(Double(y))
+        }
+    }
+    try #require(xs.count > 50)
+    let meanX = xs.reduce(0, +) / Double(xs.count)
+    #expect(abs(meanX - anchor.x) < 10)
+    if location == .top {
+        #expect(ys.max()! < anchor.y)
+    } else {
+        #expect(ys.min()! > anchor.y)
+    }
+}

@@ -74,9 +74,11 @@ struct RouteMapLabelForm: View {
                 Picker("Side", selection: $location) {
                     Text("Left").tag(RouteMapLabel.Location.left)
                     Text("Right").tag(RouteMapLabel.Location.right)
+                    Text("Top").tag(RouteMapLabel.Location.top)
+                    Text("Bottom").tag(RouteMapLabel.Location.bottom)
                 }
                 .pickerStyle(.menu)
-                .help("Which side of the track the sign sits on")
+                .help("Which side of the track point the sign sits on")
                 TextField("Distance", text: $distanceText, prompt: Text("default"))
                     .help("Gap between the track point and the sign; blank for the default")
             }

@@ -6,10 +6,13 @@ import Foundation
 /// position it relative to that track point; a nil `distance` means the
 /// renderer's default gap.
 package struct RouteMapLabel: Identifiable, Sendable {
-    /// Which side of the track point the sign sits on.
+    /// Which side of the track point the sign sits on (above/below for
+    /// `top`/`bottom`, horizontally centred on the point).
     package enum Location: String, Sendable, CaseIterable {
         case left
         case right
+        case top
+        case bottom
     }
 
     package let id: Int64

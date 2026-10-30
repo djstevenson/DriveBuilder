@@ -341,7 +341,7 @@ struct RouteMapRenderer {
 
     /// A small road-sign-green placard offset to the side of the label's
     /// location: an anchor dot marks the exact point, the sign itself
-    /// (sized to fit its text) sits to its "location" side, and the whole
+    /// (sized to fit its text) sits on its "location" side, and the whole
     /// thing pops in from the anchor with a bit of overshoot.
     private func drawLabel(_ placed: PlacedLabel, videoTime: Double, into context: CGContext) {
         let point = placed.point
@@ -369,25 +369,37 @@ struct RouteMapRenderer {
 
         let distance = placed.label.distance ?? Self.labelPointGap
 
-        // The edge of the box nearest the point (where the connector
-        // attaches) is its left edge when the sign sits to the right of the
-        // point, or its right edge when it sits to the left.
+        // The edge of the box nearest the point is where the connector
+        // attaches: e.g. its left edge when the sign sits to the right of
+        // the point, or its bottom edge when it sits above. The frame has a
+        // top-left origin, so "top" means smaller y.
         let boxX: Double
-        let arrowBaseX: Double
-        if placed.label.location == .left {
-            boxX = point.x - distance - boxWidth
-            arrowBaseX = boxX + boxWidth
-        } else {
-            boxX = point.x + distance
-            arrowBaseX = boxX
+        let boxY: Double
+        let arrowBase: (CGPoint, CGPoint)
+        let halfBase = Self.labelArrowBaseWidth / 2
+        let location = placed.label.location ?? .right
+        switch location {
+        case .left, .right:
+            boxX = location == .left ? point.x - distance - boxWidth : point.x + distance
+            boxY = point.y - boxHeight / 2
+            let baseX = location == .left ? boxX + boxWidth : boxX
+            arrowBase = (
+                CGPoint(x: baseX, y: point.y - halfBase), CGPoint(x: baseX, y: point.y + halfBase)
+            )
+        case .top, .bottom:
+            boxX = point.x - boxWidth / 2
+            boxY = location == .top ? point.y - distance - boxHeight : point.y + distance
+            let baseY = location == .top ? boxY + boxHeight : boxY
+            arrowBase = (
+                CGPoint(x: point.x - halfBase, y: baseY), CGPoint(x: point.x + halfBase, y: baseY)
+            )
         }
-        let boxY = point.y - boxHeight / 2
 
         // Tapered connector from the sign to the exact point - drawn first
         // so the circle and box (drawn next) tuck over its ends.
         let connector = CGMutablePath()
-        connector.move(to: CGPoint(x: arrowBaseX, y: point.y - Self.labelArrowBaseWidth / 2))
-        connector.addLine(to: CGPoint(x: arrowBaseX, y: point.y + Self.labelArrowBaseWidth / 2))
+        connector.move(to: arrowBase.0)
+        connector.addLine(to: arrowBase.1)
         connector.addLine(to: point)
         connector.closeSubpath()
         fillAndStroke(
