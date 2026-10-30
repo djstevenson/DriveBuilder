@@ -71,12 +71,9 @@ struct RouteMapLabelForm: View {
                     help: "Where the track reveals the sign: latitude, longitude, as copied "
                         + "from a map",
                     placement: placement, identifier: "route-map-label")
-                Picker("Side", selection: $location) {
-                    ForEach(RouteMapLabel.Location.allCases, id: \.self) { location in
-                        Text(Self.title(for: location)).tag(location)
-                    }
+                LabeledContent("Side") {
+                    SidePicker(selection: $location)
                 }
-                .pickerStyle(.menu)
                 .help("Where the sign sits relative to the track point (the map is north-up)")
                 TextField("Distance", text: $distanceText, prompt: Text("default"))
                     .help("Gap between the track point and the sign; blank for the default")
@@ -143,8 +140,8 @@ struct RouteMapLabelForm: View {
         }
     }
 
-    /// The picker's wording for each compass placement.
-    private static func title(for location: RouteMapLabel.Location) -> String {
+    /// Full wording for each compass placement, for VoiceOver and tooltips.
+    fileprivate static func title(for location: RouteMapLabel.Location) -> String {
         switch location {
         case .n: "N (above)"
         case .ne: "NE (above right)"
@@ -157,3 +154,58 @@ struct RouteMapLabelForm: View {
         }
     }
 }
+
+/// A 3×3 grid of compass buttons around a dot standing in for the track
+/// point: click the cell where the sign should go.
+private struct SidePicker: View {
+    @Binding var selection: RouteMapLabel.Location
+
+    /// The grid's rows, north at the top; nil is the centre cell.
+    private static let rows: [[RouteMapLabel.Location?]] = [
+        [.nw, .n, .ne],
+        [.w, nil, .e],
+        [.sw, .s, .se],
+    ]
+
+    var body: some View {
+        Grid(horizontalSpacing: 4, verticalSpacing: 4) {
+            ForEach(Self.rows.indices, id: \.self) { row in
+                GridRow {
+                    ForEach(Self.rows[row].indices, id: \.self) { column in
+                        if let location = Self.rows[row][column] {
+                            cell(for: location)
+                        } else {
+                            Circle()
+                                .fill(.secondary)
+                                .frame(width: 10, height: 10)
+                                .frame(width: 44, height: 30)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func cell(for location: RouteMapLabel.Location) -> some View {
+        let isSelected = location == selection
+        return Button {
+            selection = location
+        } label: {
+            Text(location.rawValue.uppercased())
+                .font(.appCallout.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .frame(width: 44, height: 30)
+                .background(
+                    isSelected ? Color.accentColor : Color.secondary.opacity(0.15),
+                    in: .rect(cornerRadius: 6))
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(RouteMapLabelForm.title(for: location))
+        .accessibilityLabel(RouteMapLabelForm.title(for: location))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityIdentifier("route-map-label-side-\(location.rawValue)")
+    }
+}
+
