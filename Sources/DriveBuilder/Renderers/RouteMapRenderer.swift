@@ -24,7 +24,7 @@ struct RouteMapConfig: Sendable {
     /// (seconds from the start of the records given to the renderer, i.e.
     /// after the journey's telemetry offset) and left up thereafter.
     /// `location`/`distance` position it relative to that point; omitted
-    /// means right, at the default gap.
+    /// means east (to the right), at the default gap.
     struct Label: Sendable {
         /// Drive seconds (into the synced track) at which the label pops
         /// in: when the track passes the label's reveal location.
@@ -369,29 +369,51 @@ struct RouteMapRenderer {
 
         let distance = placed.label.distance ?? Self.labelPointGap
 
-        // The edge of the box nearest the point is where the connector
-        // attaches: e.g. its left edge when the sign sits to the right of
-        // the point, or its bottom edge when it sits above. The frame has a
-        // top-left origin, so "top" means smaller y.
-        let boxX: Double
-        let boxY: Double
-        let arrowBase: (CGPoint, CGPoint)
+        // Unit steps from the point towards the sign, in frame coordinates
+        // (top-left origin, so north is -y). A diagonal sign keeps the same
+        // straight-line gap, split equally between the two axes.
+        let (stepX, stepY) = Self.steps(towards: placed.label.location ?? .e)
+        let isDiagonal = stepX != 0 && stepY != 0
+        let gap = isDiagonal ? distance / 2.0.squareRoot() : distance
+        let boxX = Self.boxOrigin(
+            point: point.x, step: stepX, gap: gap, size: boxWidth)
+        let boxY = Self.boxOrigin(
+            point: point.y, step: stepY, gap: gap, size: boxHeight)
+
+        // The connector's base sits on the edge (or corner) of the box
+        // nearest the point. The box is drawn over it, hiding the join.
+        let nearX = stepX > 0 ? boxX : stepX < 0 ? boxX + boxWidth : point.x
+        let nearY = stepY > 0 ? boxY : stepY < 0 ? boxY + boxHeight : point.y
         let halfBase = Self.labelArrowBaseWidth / 2
-        let location = placed.label.location ?? .right
-        switch location {
-        case .left, .right:
-            boxX = location == .left ? point.x - distance - boxWidth : point.x + distance
-            boxY = point.y - boxHeight / 2
-            let baseX = location == .left ? boxX + boxWidth : boxX
+        let arrowBase: (CGPoint, CGPoint)
+        if isDiagonal {
+            // Push the base into the rounded corner along the diagonal, far
+            // enough that both its ends fall inside the box's outline (a
+            // base merely touching the curve would poke out either side).
+            let radius = Self.labelBoxRadius
+            let depth =
+                max(
+                    halfBase,
+                    radius * 2.0.squareRoot()
+                        - (max(0, radius * radius - halfBase * halfBase)).squareRoot())
+                + Self.labelBorderWidth
+            let centre = CGPoint(
+                x: nearX + stepX * depth / 2.0.squareRoot(),
+                y: nearY + stepY * depth / 2.0.squareRoot())
+            // Perpendicular to the diagonal.
+            let perpX = -stepY * halfBase / 2.0.squareRoot()
+            let perpY = stepX * halfBase / 2.0.squareRoot()
             arrowBase = (
-                CGPoint(x: baseX, y: point.y - halfBase), CGPoint(x: baseX, y: point.y + halfBase)
+                CGPoint(x: centre.x + perpX, y: centre.y + perpY),
+                CGPoint(x: centre.x - perpX, y: centre.y - perpY)
             )
-        case .top, .bottom:
-            boxX = point.x - boxWidth / 2
-            boxY = location == .top ? point.y - distance - boxHeight : point.y + distance
-            let baseY = location == .top ? boxY + boxHeight : boxY
+        } else if stepX != 0 {
             arrowBase = (
-                CGPoint(x: point.x - halfBase, y: baseY), CGPoint(x: point.x + halfBase, y: baseY)
+                CGPoint(x: nearX, y: point.y - halfBase), CGPoint(x: nearX, y: point.y + halfBase)
+            )
+        } else {
+            arrowBase = (
+                CGPoint(x: point.x - halfBase, y: nearY), CGPoint(x: point.x + halfBase, y: nearY)
             )
         }
 
@@ -435,6 +457,31 @@ struct RouteMapRenderer {
             into: context)
 
         context.restoreGState()
+    }
+
+    /// Unit steps from a label's point towards its sign, in frame
+    /// coordinates (y grows downwards, so north is -1).
+    static func steps(towards location: RouteMapLabel.Location) -> (x: Double, y: Double) {
+        switch location {
+        case .n: (0, -1)
+        case .ne: (1, -1)
+        case .e: (1, 0)
+        case .se: (1, 1)
+        case .s: (0, 1)
+        case .sw: (-1, 1)
+        case .w: (-1, 0)
+        case .nw: (-1, -1)
+        }
+    }
+
+    /// The box's origin along one axis: beyond the point by `gap` on the
+    /// `step` side, or centred on it when `step` is 0.
+    private static func boxOrigin(point: Double, step: Double, gap: Double, size: Double)
+        -> Double
+    {
+        if step > 0 { return point + gap }
+        if step < 0 { return point - gap - size }
+        return point - size / 2
     }
 
     private func fillAndStroke(_ path: CGPath, strokeWidth: Double, into context: CGContext) {

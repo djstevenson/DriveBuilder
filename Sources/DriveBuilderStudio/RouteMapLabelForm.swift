@@ -38,7 +38,7 @@ struct RouteMapLabelForm: View {
         _title = State(initialValue: label?.title ?? "")
         _subtitle = State(initialValue: label?.subtitle ?? "")
         _locationText = State(initialValue: label?.revealLocation.text ?? "")
-        _location = State(initialValue: label?.location ?? .right)
+        _location = State(initialValue: label?.location ?? .e)
         _distanceText = State(initialValue: label?.distance.map { String($0) } ?? "")
     }
 
@@ -72,13 +72,12 @@ struct RouteMapLabelForm: View {
                         + "from a map",
                     placement: placement, identifier: "route-map-label")
                 Picker("Side", selection: $location) {
-                    Text("Left").tag(RouteMapLabel.Location.left)
-                    Text("Right").tag(RouteMapLabel.Location.right)
-                    Text("Top").tag(RouteMapLabel.Location.top)
-                    Text("Bottom").tag(RouteMapLabel.Location.bottom)
+                    ForEach(RouteMapLabel.Location.allCases, id: \.self) { location in
+                        Text(Self.title(for: location)).tag(location)
+                    }
                 }
                 .pickerStyle(.menu)
-                .help("Which side of the track point the sign sits on")
+                .help("Where the sign sits relative to the track point (the map is north-up)")
                 TextField("Distance", text: $distanceText, prompt: Text("default"))
                     .help("Gap between the track point and the sign; blank for the default")
             }
@@ -141,6 +140,20 @@ struct RouteMapLabelForm: View {
                 saveError = String(describing: error)
                 isSaving = false
             }
+        }
+    }
+
+    /// The picker's wording for each compass placement.
+    private static func title(for location: RouteMapLabel.Location) -> String {
+        switch location {
+        case .n: "N (above)"
+        case .ne: "NE (above right)"
+        case .e: "E (right)"
+        case .se: "SE (below right)"
+        case .s: "S (below)"
+        case .sw: "SW (below left)"
+        case .w: "W (left)"
+        case .nw: "NW (above left)"
         }
     }
 }

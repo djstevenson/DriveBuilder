@@ -121,7 +121,7 @@ private func smallConfig(labels: [RouteMapConfig.Label] = []) -> RouteMapConfig 
         RouteMapConfig.Label(
             offset: 10, title: "A338", subtitle: "Bournemouth", location: nil, distance: nil),
         RouteMapConfig.Label(
-            offset: 20, title: "A345", subtitle: "Salisbury", location: .left, distance: nil),
+            offset: 20, title: "A345", subtitle: "Salisbury", location: .w, distance: nil),
     ]
     let renderer = RouteMapRenderer(
         records: testRecords(count: 5),
@@ -168,8 +168,8 @@ private func smallConfig(labels: [RouteMapConfig.Label] = []) -> RouteMapConfig 
     #expect(yellowNearAnchor[1] > 50)
 }
 
-@Test(arguments: [RouteMapLabel.Location.top, .bottom])
-func topAndBottomLabelsSitAboveAndBelowTheirAnchor(location: RouteMapLabel.Location) throws {
+@Test(arguments: RouteMapLabel.Location.allCases)
+func labelsSitOnTheirCompassSideOfTheAnchor(location: RouteMapLabel.Location) throws {
     let label = RouteMapConfig.Label(
         offset: 20, title: "A338", subtitle: "Salisbury", location: location, distance: nil)
     let renderer = RouteMapRenderer(
@@ -178,33 +178,60 @@ func topAndBottomLabelsSitAboveAndBelowTheirAnchor(location: RouteMapLabel.Locat
         config: smallConfig(labels: [label]))
     let artwork = try renderer.makeArtwork()
 
-    let canvas = try SVGRasterizer.blankBitmap(width: 640, height: 360)
+    // A large canvas with the anchor in the middle, so the sign fits on
+    // the page whichever side it goes.
+    let canvas = try SVGRasterizer.blankBitmap(width: 1600, height: 1000)
     let context = try #require(NSGraphicsContext(bitmapImageRep: canvas))
+    let anchor = artwork.labels[0].point
+    context.cgContext.translateBy(x: 800 - anchor.x, y: 500 - anchor.y)
     renderer.draw(
         RouteMapRenderer.FrameSpec(pointCount: 5, videoTime: 2),
         artwork: artwork, into: context.cgContext)
 
-    // Title-yellow (#cccc00) ink should be horizontally centred on the
-    // anchor and entirely on the requested side of it.
-    let anchor = artwork.labels[0].point
+    // Title-yellow (#cccc00) ink should lie entirely on the requested side
+    // of the anchor on each axis, or be centred on it where that axis's
+    // step is 0.
     var xs: [Double] = []
     var ys: [Double] = []
-    for y in 0..<360 {
-        for x in 0..<640 {
+    for y in 0..<1000 {
+        for x in 0..<1600 {
             guard let colour = canvas.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
                 colour.redComponent > 0.6, colour.greenComponent > 0.6,
                 colour.blueComponent < 0.3
             else { continue }
-            xs.append(Double(x))
-            ys.append(Double(y))
+            xs.append(Double(x) - 800)
+            ys.append(Double(y) - 500)
         }
     }
     try #require(xs.count > 50)
+    let step = RouteMapRenderer.steps(towards: location)
+    for (values, step) in [(xs, step.x), (ys, step.y)] {
+        if step > 0 {
+            #expect(values.min()! > 0)
+        } else if step < 0 {
+            #expect(values.max()! < 0)
+        }
+    }
+
+    // Centring: the title is horizontally centred in the box, so its ink
+    // is too. It sits in the box's top half, though, so vertical centring
+    // is measured on the green box itself, down the column through the
+    // middle of the text (clear of the anchor and connector).
     let meanX = xs.reduce(0, +) / Double(xs.count)
-    #expect(abs(meanX - anchor.x) < 10)
-    if location == .top {
-        #expect(ys.max()! < anchor.y)
-    } else {
-        #expect(ys.min()! > anchor.y)
+    if step.x == 0 {
+        #expect(abs(meanX) < 10)
+    }
+    if step.y == 0 {
+        let column = Int(meanX.rounded()) + 800
+        let greenRows = (0..<1000).filter { y in
+            guard let colour = canvas.colorAt(x: column, y: y)?.usingColorSpace(.deviceRGB)
+            else { return false }
+            return abs(colour.redComponent - 0x35 / 255) < 0.05
+                && abs(colour.greenComponent - 0x6b / 255) < 0.05
+                && abs(colour.blueComponent - 0x4b / 255) < 0.05
+        }
+        try #require(!greenRows.isEmpty)
+        let boxCentre = Double(greenRows.min()! + greenRows.max()!) / 2 - 500
+        #expect(abs(boxCentre) < 3)
     }
 }
