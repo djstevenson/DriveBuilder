@@ -85,15 +85,31 @@ private func hasInk(
     return false
 }
 
-@Test func wideScreenSizeIs80PercentOf4KWidePreservingAspectRatio() {
+@Test func wideScreenSizeIsA4KFrameWithTheSignAt80PercentWidth() {
     let size = IntroRenderer.wideScreenSize
-    #expect(size.width == 3072)
-    #expect(size.height == IntroRenderer.height(forWidth: 3072))
-    // Matches the sign's 840:526 design ratio to within a rounded pixel.
-    #expect(
-        abs(
-            Double(size.width) / Double(size.height)
-                - IntroRenderer.designWidth / IntroRenderer.designHeight) < 0.001)
+    #expect(size.width == 3840)
+    #expect(size.height == 2160)
+    #expect(size.signWidth == 3072)
+    // The sign's own height must fit inside the frame.
+    #expect(IntroRenderer.height(forWidth: size.signWidth) <= size.height)
+}
+
+@Test func signIsCentredOnACanvasWiderThanIt() throws {
+    // A design-sized sign on a canvas 200px wider and 100px taller should
+    // sit 100px in from the left and 50px up from the bottom.
+    var renderer = IntroRenderer(roadType: "A", roadNumber: 3088, title: "Test Drive")
+    renderer.width = 1040
+    renderer.height = 626
+    renderer.signWidth = 840
+    let artwork = try renderer.makeArtwork()
+    let frame = try renderer.frame(at: IntroRenderer.fadeInFrames - 1, artwork: artwork)
+
+    // y=313 is the canvas's vertical centre. The badge's outer stroke
+    // starts at design x=25, so 125 here; 1040-125 on the right.
+    #expect(isBackground(colour(frame, 110, 313)))
+    #expect(isGreen(colour(frame, 127, 313)))
+    #expect(isGreen(colour(frame, 912, 313)))
+    #expect(isBackground(colour(frame, 930, 313)))
 }
 
 @Test func badgeScalesUpWithTheCanvasSize() throws {

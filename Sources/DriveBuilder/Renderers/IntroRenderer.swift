@@ -12,7 +12,7 @@ import Foundation
 /// destination lines (split from the journey's "X to Y" title) fade in with
 /// the spin, and a credit line fades in below those a little after the
 /// final road is revealed. The whole sign is centred both horizontally and
-/// vertically on the canvas, over a full-bleed background image (the bundled
+/// vertically on the canvas (optionally smaller than it, via `signWidth`), over a full-bleed background image (the bundled
 /// car line art, aspect-filled to cover the whole canvas), so every frame is
 /// fully opaque.
 ///
@@ -49,6 +49,9 @@ struct IntroRenderer {
 
     var width = 840
     var height = 526
+    /// How wide the sign is drawn, centred on the canvas; `nil` fills the
+    /// canvas width. See `RoadSignArtwork.signWidth`.
+    var signWidth: Int? = nil
     var framesPerSecond: Int32 = 30
 
     static let fadeInFrames = 10
@@ -65,14 +68,18 @@ struct IntroRenderer {
         Self.fadeInFrames + Self.spinFrames + Self.revealFrames
     }
 
-    private var sign: RoadSignArtwork { RoadSignArtwork(width: width, height: height) }
+    private var sign: RoadSignArtwork {
+        RoadSignArtwork(width: width, height: height, signWidth: signWidth)
+    }
 
     static var designWidth: Double { RoadSignArtwork.designWidth }
     static var designHeight: Double { RoadSignArtwork.designHeight }
 
-    /// Width and height for rendering at 80% of a 4K screen's width, with
-    /// height scaled to preserve the sign's design aspect ratio.
-    static var wideScreenSize: (width: Int, height: Int) { RoadSignArtwork.wideScreenSize }
+    /// Canvas size for a full 4K frame, with the sign drawn at 80% of its
+    /// width and centred.
+    static var wideScreenSize: (width: Int, height: Int, signWidth: Int) {
+        RoadSignArtwork.wideScreenSize
+    }
 
     /// The height that preserves the design aspect ratio for a given width.
     static func height(forWidth width: Int) -> Int { RoadSignArtwork.height(forWidth: width) }

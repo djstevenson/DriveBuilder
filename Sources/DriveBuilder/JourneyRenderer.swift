@@ -301,12 +301,13 @@ package struct JourneyRenderer: Sendable {
                     roadText: $0.roadName, title: "\($0.startName) to \($0.endName)")
             }
 
-        // Rendered nearly full-screen, so sized well above the 420px
-        // dials: 80% of a 4K screen's width.
+        // Rendered as a full 4K frame, so the background image isn't
+        // cropped or pillarboxed, with the sign at 80% of its width.
         let size = IntroRenderer.wideScreenSize
         let renderer = IntroRenderer(
             roadType: road.type, roadNumber: road.number, title: title,
-            spinEntries: spinEntries, width: size.width, height: size.height)
+            spinEntries: spinEntries, width: size.width, height: size.height,
+            signWidth: size.signWidth)
         let url = outputDirectory.appending(path: "intro.mov")
         return try await write(url) {
             try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
@@ -326,7 +327,7 @@ package struct JourneyRenderer: Sendable {
         let size = IntroRenderer.wideScreenSize
         let renderer = OutroRenderer(
             roadType: road.type, roadNumber: road.number, title: title,
-            width: size.width, height: size.height)
+            width: size.width, height: size.height, signWidth: size.signWidth)
         let url = outputDirectory.appending(path: "outro.mov")
         return try await write(url) {
             try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
