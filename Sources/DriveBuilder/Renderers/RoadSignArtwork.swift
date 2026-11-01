@@ -11,28 +11,38 @@ struct RoadSignArtwork {
     var width: Int
     var height: Int
 
+    /// How wide the sign's design canvas is drawn, centred on the
+    /// `width`x`height` canvas. `nil` fills the canvas width, so the canvas
+    /// should then have the design aspect ratio; set it smaller than `width`
+    /// to put a sign of that size on a wider canvas (e.g. a full 16:9 frame,
+    /// so the background image isn't cropped to the sign's shape).
+    var signWidth: Int? = nil
+
     /// Shown below the destination lines, smaller, in the same white as the
     /// rest of the sign's text.
     static let creditText = "By Mekydro"
 
-    /// The canvas the layout below was designed at. `width`/`height` can be
-    /// set to any size (e.g. to render nearly full-screen); everything is
-    /// scaled from this reference so the sign keeps its proportions. Taller
+    /// The canvas the layout below was designed at. `signWidth` (or `width`)
+    /// can be set to any size (e.g. to render nearly full-screen); everything
+    /// is scaled from this reference so the sign keeps its proportions. Taller
     /// than the sign's own footprint by `designVerticalMargin` on each side,
     /// so the sign sits centred with breathing room around it.
     static let designWidth = 840.0
     static let designHeight =
         designBadgeHeight + 2 * designOuterStrokeHalfWidth + 2 * designVerticalMargin
 
-    /// A 4K (UHD, 3840px-wide) screen's width; used to size the intro and
-    /// outro for near-full-screen display.
+    /// A 4K (UHD) screen's size; the intro and outro fill it, so their
+    /// background image shows uncropped and they need no pillarboxing.
     static let uhd4KWidth = 3840.0
+    static let uhd4KHeight = 2160.0
 
-    /// Width and height for rendering at 80% of a 4K screen's width, with
-    /// height scaled to preserve the sign's design aspect ratio.
-    static var wideScreenSize: (width: Int, height: Int) {
-        let width = Int((uhd4KWidth * 0.8).rounded())
-        return (width: width, height: height(forWidth: width))
+    /// Canvas size for rendering a full 4K frame, with the sign itself drawn
+    /// at 80% of the screen's width (its height following the design aspect
+    /// ratio), centred on the frame.
+    static var wideScreenSize: (width: Int, height: Int, signWidth: Int) {
+        (
+            width: Int(uhd4KWidth), height: Int(uhd4KHeight),
+            signWidth: Int((uhd4KWidth * 0.8).rounded()))
     }
 
     /// The height that preserves the design aspect ratio for a given width.
@@ -42,7 +52,16 @@ struct RoadSignArtwork {
 
     /// How far the actual canvas is scaled up from the design canvas; every
     /// design-space measurement below is multiplied by this before drawing.
-    private var scale: Double { Double(width) / Self.designWidth }
+    private var scale: Double { Double(signWidth ?? width) / Self.designWidth }
+
+    /// Where the scaled design canvas's origin lands, centring it on the
+    /// actual canvas (zero when `signWidth` is nil and the canvas has the
+    /// design aspect ratio).
+    private var signOrigin: CGPoint {
+        CGPoint(
+            x: (Double(width) - Self.designWidth * scale) / 2,
+            y: (Double(height) - Self.designHeight * scale) / 2)
+    }
 
     /// Space kept clear around the visible sign (its outer stroke's edge),
     /// equal on every side, so it lands centred on the canvas.
@@ -56,7 +75,9 @@ struct RoadSignArtwork {
             y: (Self.designHeight - Self.designBadgeHeight) / 2,
             width: Self.designWidth - 2 * Self.designBadgeSideMargin,
             height: Self.designBadgeHeight)
-        return designRect.applying(CGAffineTransform(scaleX: scale, y: scale))
+        return designRect.applying(
+            CGAffineTransform(translationX: signOrigin.x, y: signOrigin.y)
+                .scaledBy(x: scale, y: scale))
     }
     private var badgeCornerRadius: Double { Self.designBadgeCornerRadius * scale }
 

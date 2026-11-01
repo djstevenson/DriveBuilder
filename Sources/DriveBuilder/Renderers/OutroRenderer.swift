@@ -36,6 +36,9 @@ struct OutroRenderer {
 
     var width = 840
     var height = 526
+    /// How wide the sign is drawn, centred on the canvas; `nil` fills the
+    /// canvas width. See `RoadSignArtwork.signWidth`.
+    var signWidth: Int? = nil
     var framesPerSecond: Int32 = 30
 
     /// How long the sign holds showing the real road, destinations, and
@@ -56,7 +59,9 @@ struct OutroRenderer {
             + Self.finalHoldFrames
     }
 
-    private var sign: RoadSignArtwork { RoadSignArtwork(width: width, height: height) }
+    private var sign: RoadSignArtwork {
+        RoadSignArtwork(width: width, height: height, signWidth: signWidth)
+    }
 
     /// `roadType` followed by `roadNumber`, e.g. "A" and `3088` -> "A3088".
     var roadText: String { "\(roadType)\(roadNumber)" }
