@@ -153,6 +153,8 @@ struct FinalVideoComposer {
     /// One rendered annotation banner (see `Annotations`) to composite over
     /// the drive segment.
     struct AnnotationClip {
+        /// The annotation's video name, for errors.
+        let name: String
         let url: URL
         /// Drive seconds (into the synced drive segment) at which the
         /// annotation should finish: when the track passes its end location.
@@ -829,17 +831,26 @@ struct FinalVideoComposer {
         // dial column, whose bottom map also finishes on the bottom edge), each
         // ending when the track passes its end location and playing through
         // its own built-in opening/scrolling/closing animation, so it only
-        // fades if it overlaps a join's dip to black.
+        // fades if it overlaps a join's dip to black. One that would start
+        // before the drive is an error, not a skip: it's always a placement
+        // mistake, and a skip only logs to stdout, which Studio never shows.
+        // One finishing after the drive's end is still skipped, as a
+        // shortened (--drive-segment-seconds) render legitimately cuts it.
         for annotationClip in annotationClips {
             let clip = try await loadClip(at: annotationClip.url)
             let end = finalTime(
                 atDriveSeconds: annotationClip.endSeconds, in: placed, timescale: timescale)
             let start = end - clip.duration
-            guard start >= dialsStart, end <= dialsEnd else {
+            if start < dialsStart {
+                throw AnnotationTooEarlyError(
+                    name: annotationClip.name, bannerSeconds: clip.duration.seconds,
+                    endDriveSeconds: annotationClip.endSeconds)
+            }
+            guard end <= dialsEnd else {
                 print(
                     String(
-                        format: "final: skipping %@ — it doesn't fall within the drive "
-                            + "segment (%.1fs to %.1fs).",
+                        format: "final: skipping %@ — it finishes after the drive "
+                            + "segment ends (%.1fs to %.1fs).",
                         annotationClip.url.lastPathComponent, dialsStart.seconds, dialsEnd.seconds))
                 continue
             }
@@ -1376,5 +1387,41 @@ struct FinalVideoComposer {
             x: cameraLabelPadding, y: (Double(height) - ink.height) / 2 - ink.minY)
         CTLineDraw(line, context)
         return context.makeImage()
+    }
+}
+
+/// An annotation whose banner is longer than the drive before its end
+/// location, so it would have to start before the drive does.
+package struct AnnotationTooEarlyError: Error, Equatable, CustomStringConvertible {
+    /// The annotation's video name, if known.
+    package let name: String?
+    package let bannerSeconds: Double
+    /// Drive seconds at which the track passes the end location.
+    package let endDriveSeconds: Double
+
+    package init(name: String?, bannerSeconds: Double, endDriveSeconds: Double) {
+        self.name = name
+        self.bannerSeconds = bannerSeconds
+        self.endDriveSeconds = endDriveSeconds
+    }
+
+    /// Whether a banner this long fits before `endDriveSeconds`.
+    package static func check(
+        name: String?, bannerSeconds: Double, endDriveSeconds: Double
+    ) throws(Self) {
+        guard bannerSeconds <= endDriveSeconds else {
+            throw Self(
+                name: name, bannerSeconds: bannerSeconds, endDriveSeconds: endDriveSeconds)
+        }
+    }
+
+    package var description: String {
+        let subject = name.map { "Annotation \u{201C}\($0)\u{201D}" } ?? "The annotation"
+        return String(
+            format: "%@ starts too early: its banner runs %.1f s but finishes %.1f s into "
+                + "the drive, so it would start %.1f s before the drive does. Move its end "
+                + "location at least %.1f s further along, or shorten its text.",
+            subject, bannerSeconds, endDriveSeconds,
+            bannerSeconds - endDriveSeconds, bannerSeconds - endDriveSeconds)
     }
 }

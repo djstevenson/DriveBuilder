@@ -535,3 +535,25 @@ private func wrongTurnPlacement() throws -> JourneyPlacement {
     #expect(left.clock == .left && left.segment == 1)
     #expect(!placement.segment(0, has: .left) && placement.segment(1, has: .left))
 }
+
+@Test func annotationTimingProblemFlagsABannerLongerThanTheDriveBeforeIt() throws {
+    let records = track(seconds: 100)
+    let placement = JourneyPlacement(
+        track: try DriveTrack(records: records, segments: [segment(0, telemetry: 0, length: nil)]))
+    let text = "A short note"
+    let banner = AnnotationRenderer(text: text).durationSeconds
+
+    func problem(atRecord index: Int) throws -> AnnotationTooEarlyError? {
+        let location = TrackLocation(
+            latitude: records[index].latitude, longitude: records[index].longitude)
+        return placement.annotationTimingProblem(
+            name: nil, text: text, finishingAt: try placement.place(location).get())
+    }
+
+    // Finishing 3 s in, the (several-second) banner would start too early.
+    let early = try #require(try problem(atRecord: 30))
+    #expect(abs(early.bannerSeconds - banner) < 1e-9)
+    #expect(abs(early.endDriveSeconds - 3) < 1e-6)
+    // Finishing 50 s in, it fits.
+    #expect(try problem(atRecord: 500) == nil)
+}

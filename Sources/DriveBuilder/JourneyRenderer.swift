@@ -564,6 +564,7 @@ package struct JourneyRenderer: Sendable {
             composer.annotationClips = try store.annotations(journeyID: journeyID).map {
                 annotation in
                 FinalVideoComposer.AnnotationClip(
+                    name: annotation.video,
                     url: outputDirectory.appending(path: "\(annotation.video).mov"),
                     endSeconds: try placer.driveSeconds(
                         at: annotation.endLocation, for: "Annotation \"\(annotation.video)\""))
