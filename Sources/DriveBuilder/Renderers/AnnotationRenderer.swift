@@ -100,6 +100,12 @@ struct AnnotationRenderer {
         return Int((duration * Double(framesPerSecond)).rounded(.up)) + 1
     }
 
+    /// The movie's length: how long before its end location the banner
+    /// starts in the final video.
+    var durationSeconds: Double {
+        Double(frameCount) / Double(framesPerSecond)
+    }
+
     // MARK: - Artwork
 
     func makeArtwork() throws -> Artwork {

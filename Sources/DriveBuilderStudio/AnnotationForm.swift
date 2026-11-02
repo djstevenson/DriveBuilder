@@ -60,6 +60,13 @@ struct AnnotationForm: View {
                         + "longitude, as copied from a map",
                     placement: placement, identifier: "annotation-end")
             }
+            if let timingProblem {
+                Label(timingProblem, systemImage: "exclamationmark.triangle")
+                    .font(.appCallout)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("annotation-timing-problem")
+            }
             if let saveError {
                 Text(saveError)
                     .font(.appCallout)
@@ -80,6 +87,17 @@ struct AnnotationForm: View {
         }
         .padding()
         .frame(width: 520)
+    }
+
+    /// A warning, not a block on saving: the banner would start before the
+    /// drive, so the final render will refuse it until it's moved or
+    /// shortened.
+    private var timingProblem: String? {
+        guard let placement, let endLocation,
+            case .success(let placed) = placement.place(endLocation)
+        else { return nil }
+        return placement.annotationTimingProblem(
+            name: nil, text: text, finishingAt: placed)?.description
     }
 
     /// The video name becomes a file name, so it can't be empty or contain

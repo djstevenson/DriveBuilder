@@ -429,3 +429,36 @@ func aSpedUpRenderPlaysTheRouteMapAndDriveFaster() async throws {
     #expect(isClose(try rgb(second, backdrop.0, backdrop.1), to: [255, 255, 0]), "front-2.mov")
     #expect(isClose(try rgb(second, slotMiddle.0, slotMiddle.1), to: [0, 255, 255]), "rear.mov later")
 }
+
+@Test func anAnnotationThatWouldStartBeforeTheDriveIsAnErrorNamingIt() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try await writeCommonClips(in: directory)
+    let banner = directory.appending(path: "Start.mov")
+    try await writeClip(banner, width: 64, height: 16, seconds: 2) { _ in red }
+
+    // A 2 s banner finishing 0.5 s into the drive would start 1.5 s early.
+    var composer = composer(in: directory)
+    composer.annotationClips = [.init(name: "Start", url: banner, endSeconds: 0.5)]
+    await #expect(
+        throws: AnnotationTooEarlyError(name: "Start", bannerSeconds: 2, endDriveSeconds: 0.5)
+    ) {
+        try await composer.writeMovie(to: directory.appending(path: "final.mov"))
+    }
+}
+
+@Test func annotationTooEarlyErrorSaysHowFarToMoveIt() {
+    #expect(
+        throws: AnnotationTooEarlyError(name: "Start", bannerSeconds: 25.9, endDriveSeconds: 19.7)
+    ) {
+        try AnnotationTooEarlyError.check(name: "Start", bannerSeconds: 25.9, endDriveSeconds: 19.7)
+    }
+    #expect(throws: Never.self) {
+        try AnnotationTooEarlyError.check(name: "Start", bannerSeconds: 19.7, endDriveSeconds: 19.7)
+    }
+    let message = AnnotationTooEarlyError(
+        name: "Start", bannerSeconds: 25.9, endDriveSeconds: 19.7
+    ).description
+    #expect(message.contains("\u{201C}Start\u{201D}"))
+    #expect(message.contains("start 6.2 s before the drive"))
+}

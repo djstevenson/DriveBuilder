@@ -93,6 +93,24 @@ package struct JourneyPlacement: Sendable {
         return result
     }
 
+    /// Why an annotation with `text` finishing at `placement` won't fit in
+    /// the final video - its banner would start before the drive does - or
+    /// nil if it fits. Works from the text, so needs no rendered banner.
+    package func annotationTimingProblem(
+        name: String?, text: String, finishingAt placement: Placement
+    ) -> AnnotationTooEarlyError? {
+        let text = DriveBuilder.Annotations.normalizedText(text)
+        guard !text.isEmpty else { return nil }
+        do {
+            try AnnotationTooEarlyError.check(
+                name: name, bannerSeconds: AnnotationRenderer(text: text).durationSeconds,
+                endDriveSeconds: placement.driveSeconds)
+            return nil
+        } catch {
+            return error
+        }
+    }
+
     /// `placement` as read off `clock`, in the movie of the segment playing
     /// then (see `movieName(on:at:)`); nil for a clock that segment doesn't
     /// have.

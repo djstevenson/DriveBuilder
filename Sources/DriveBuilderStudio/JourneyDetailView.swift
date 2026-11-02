@@ -383,12 +383,19 @@ struct JourneyDetailView: View {
     }
 
     /// The annotation row's extra caption: when the banner finishes (or
-    /// where, until the track loads), or why it can't be placed.
+    /// where, until the track loads), or why it can't be placed or won't fit.
     private func annotationDetail(_ annotation: Annotation) -> String {
         guard let placement else { return "Finishes at \(annotation.endLocation.text)" }
-        return switch placement.place(annotation.endLocation) {
-        case .success(let placed): "Finishes at \(placement.timeText(placed))"
-        case .failure(let error): "Not placeable: \(error)"
+        switch placement.place(annotation.endLocation) {
+        case .success(let placed):
+            let finishes = "Finishes at \(placement.timeText(placed))"
+            guard
+                let problem = placement.annotationTimingProblem(
+                    name: nil, text: annotation.text, finishingAt: placed)
+            else { return finishes }
+            return "\(finishes) \u{00B7} \u{26A0}\u{FE0E} \(problem)"
+        case .failure(let error):
+            return "Not placeable: \(error)"
         }
     }
 

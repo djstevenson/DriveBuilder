@@ -34,17 +34,17 @@ private func record(
     #expect(AltitudeRenderer.altitudeFeet(for: record(altitudeMetres: -25.2)) == -82)
 }
 
-@Test func rowTextsFormatLatitudeLongitudeToFourDecimalPlacesWithAHemisphereLetterInsteadOfASign() {
+@Test func rowTextsFormatLatitudeLongitudeToFiveDecimalPlacesWithAHemisphereLetterInsteadOfASign() {
     let texts = AltitudeRenderer.rowTexts(
         for: record(latitude: 51.5, longitude: -1.25, altitudeMetres: 100, odometerMetres: 0),
         startTimestamp: .distantPast)
-    #expect(texts == ["51.5000°N", "1.2500°W", "328 ft", "0.0 mi", "00:00:00"])
+    #expect(texts == ["51.50000°N", "1.25000°W", "328 ft", "0.0 mi", "00:00:00"])
 
     let southAndEast = AltitudeRenderer.rowTexts(
         for: record(latitude: -33.8, longitude: 151.2, altitudeMetres: 0),
         startTimestamp: .distantPast)
-    #expect(southAndEast[0] == "33.8000°S")
-    #expect(southAndEast[1] == "151.2000°E")
+    #expect(southAndEast[0] == "33.80000°S")
+    #expect(southAndEast[1] == "151.20000°E")
 }
 
 @Test func odometerTextConvertsMetresToMilesToOneDecimalPlace() {
