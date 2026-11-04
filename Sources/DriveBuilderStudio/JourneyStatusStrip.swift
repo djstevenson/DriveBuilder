@@ -141,6 +141,10 @@ struct JourneyStatusStrip: View {
 
 /// One status icon, with an optional count after it.
 private struct StatusIcon: View {
+    /// `.increased` on a selected row, whose accent-coloured highlight
+    /// would swallow the tint.
+    @Environment(\.backgroundProminence) private var backgroundProminence
+
     let systemImage: String
     let state: IconState
     var count: String?
@@ -189,7 +193,8 @@ private struct StatusIcon: View {
 
     private var style: AnyShapeStyle {
         switch state {
-        case .done: AnyShapeStyle(.tint)
+        case .done:
+            backgroundProminence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint)
         case .problem: AnyShapeStyle(.orange)
         case .missing: AnyShapeStyle(.secondary)
         case .unused: AnyShapeStyle(.quaternary)
