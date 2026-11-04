@@ -13,7 +13,7 @@ struct RenderComponent: Identifiable, Equatable {
         case allAnnotations
         case outro
         case final
-        /// The sped-up final video, at `StudioModel.fastDriveSpeed`.
+        /// The sped-up final video, at the window's `RenderSettings.fastDriveSpeed`.
         case fastFinal
         /// Every component in programme order, then the final assembly.
         case project

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ComponentRow: View {
     @Environment(StudioModel.self) private var model
+    @Environment(\.renderSettings) private var renderSettings
     let component: RenderComponent
     let journey: JourneySummary
     /// An extra caption line after the file status, e.g. when an
@@ -38,7 +39,8 @@ struct ComponentRow: View {
                     .padding(.trailing, 4)
             }
             Button("Render") {
-                model.render(component, journey: journey)
+                model.render(
+                    component, journey: journey, settings: renderSettings, origin: .journeyWindow)
             }
             .disabled(model.isRendering)
             Button("Play", systemImage: "play.fill") {

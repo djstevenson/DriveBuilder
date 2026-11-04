@@ -30,6 +30,8 @@ extension RouteMapLabel {
 
 struct JourneyDetailView: View {
     @Environment(StudioModel.self) private var model
+    @Environment(\.renderSettings) private var renderSettings
+    @Environment(\.dismiss) private var dismiss
     let journey: JourneySummary
 
     @State private var annotations: [Annotation] = []
@@ -52,9 +54,6 @@ struct JourneyDetailView: View {
     /// joined (see `placementError`).
     @State private var placement: JourneyPlacement?
     @State private var placementError: String?
-    /// The journey whose telemetry is being extracted, if any; by id so the
-    /// spinner stays with that journey if the selection changes meanwhile.
-    @State private var extractingJourneyID: Int64?
     @State private var extractError: String?
 
     var body: some View {
@@ -298,14 +297,10 @@ struct JourneyDetailView: View {
     }
 
     private func extractTelemetry() async {
-        extractingJourneyID = journey.id
-        defer { extractingJourneyID = nil }
         do {
-            _ = try await JourneyLibrary(databasePath: model.databasePath)
-                .extractTelemetry(journeyID: journey.id)
-            // Re-reads the journey's sample count, span, and distance, which
+            // Reloads the journey's sample count, span, and distance, which
             // hides this button and re-places the journey's items.
-            await model.reload()
+            try await model.extractTelemetry(journeyID: journey.id)
         } catch {
             extractError = String(describing: error)
         }
@@ -315,9 +310,8 @@ struct JourneyDetailView: View {
         do {
             try await JourneyLibrary(databasePath: model.databasePath)
                 .deleteJourney(id: journey.id)
-            // Reload moves the sidebar selection to the newest remaining
-            // journey, since this one's id is gone.
             await model.reload()
+            dismiss()
         } catch {
             deleteError = String(describing: error)
         }
@@ -422,7 +416,7 @@ struct JourneyDetailView: View {
             journeySummaryHeader
             Spacer()
             if journey.sampleCount == 0 {
-                if extractingJourneyID == journey.id {
+                if model.extractingJourneyID == journey.id {
                     ProgressView()
                         .controlSize(.small)
                         .padding(.trailing, 4)
@@ -433,7 +427,7 @@ struct JourneyDetailView: View {
                 .help(
                     "Read the GPS and accelerometer data from the NextBase/front clips in "
                         + "the journey's directory into the database. Takes a few minutes.")
-                .disabled(extractingJourneyID != nil)
+                .disabled(model.extractingJourneyID != nil)
             }
             Button("Edit", systemImage: "pencil") {
                 editingJourney = true
@@ -450,7 +444,8 @@ struct JourneyDetailView: View {
                     .padding(.trailing, 4)
             }
             Button("Render All") {
-                model.render(.project, journey: journey)
+                model.render(
+                    .project, journey: journey, settings: renderSettings, origin: .journeyWindow)
             }
             .disabled(model.isRendering)
         }
@@ -469,7 +464,9 @@ struct JourneyDetailView: View {
                 addingAnnotation = true
             }
             Button("Render All") {
-                model.render(.allAnnotations, journey: journey)
+                model.render(
+                    .allAnnotations, journey: journey, settings: renderSettings,
+                    origin: .journeyWindow)
             }
             .disabled(model.isRendering || annotations.isEmpty)
         }
