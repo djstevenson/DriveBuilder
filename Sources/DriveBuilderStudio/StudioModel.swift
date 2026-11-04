@@ -1,14 +1,38 @@
 import DriveBuilder
 import Foundation
 import Observation
+import Synchronization
 import SwiftUI
 
-/// One render in flight: which journey and component, and how far along.
-struct ActiveRender {
+/// One render in flight: which journey and component. How far along it is
+/// lives apart, in `StudioModel.renderProgress`, so the many views that
+/// only ask what's rendering aren't rebuilt on every progress update.
+struct ActiveRender: Equatable {
     let journeyID: Int64
     let componentID: String
     let componentName: String
-    var progress: RenderProgress
+}
+
+/// Thins a renderer's per-frame progress reports down to ones worth
+/// redrawing for: each change of phase, and every 0.2% of the way.
+nonisolated private final class ProgressThrottle: Sendable {
+    private let lastReported = Mutex<Double?>(nil)
+
+    func shouldReport(_ update: RenderProgress) -> Bool {
+        lastReported.withLock { last in
+            switch update {
+            case .preparing:
+                last = nil
+                return true
+            case .fraction(let fraction):
+                if let previous = last, fraction < 1, fraction - previous < 0.002 {
+                    return false
+                }
+                last = fraction
+                return true
+            }
+        }
+    }
 }
 
 /// Where a render was started, so its failure is reported in that window.
@@ -64,6 +88,10 @@ final class StudioModel {
     private(set) var extractingJourneyID: Int64?
 
     private(set) var activeRender: ActiveRender?
+    /// How far along `activeRender` is. Read it only from the progress
+    /// indicators themselves (see `RenderProgressIndicator`): it changes
+    /// hundreds of times a render.
+    private(set) var renderProgress = RenderProgress.preparing
     var renderError: RenderFailure?
 
     /// Bumped when a render finishes, on Reload, and when files change in a
@@ -131,8 +159,8 @@ final class StudioModel {
     ) {
         guard renderTask == nil else { return }
         activeRender = ActiveRender(
-            journeyID: journey.id, componentID: component.id, componentName: component.name,
-            progress: .preparing)
+            journeyID: journey.id, componentID: component.id, componentName: component.name)
+        renderProgress = .preparing
 
         var renderer = JourneyRenderer(journeyID: journey.id, databasePath: databasePath)
         let driveSegmentSeconds: Double? = settings.quickPreview ? 30 : nil
@@ -145,9 +173,11 @@ final class StudioModel {
         let fastDriveSpeed = settings.fastDriveSpeed
 
         renderTask = Task {
+            let throttle = ProgressThrottle()
             let progress: RenderProgressHandler = { update in
+                guard throttle.shouldReport(update) else { return }
                 Task { @MainActor in
-                    self.activeRender?.progress = update
+                    self.renderProgress = update
                 }
             }
             do {

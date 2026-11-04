@@ -98,10 +98,15 @@ struct JourneyDetailView: View {
                     .padding()
                 Divider()
                 sectionView
-                if let active = model.activeRender, active.journeyID == journey.id {
+                if model.activeRender?.journeyID == journey.id {
                     Divider()
-                    progressBar(for: active)
-                        .padding()
+                    HStack(spacing: 12) {
+                        RenderProgressIndicator(style: .bar)
+                        Button("Cancel") {
+                            model.cancel()
+                        }
+                    }
+                    .padding()
                 }
             }
             .environment(\.renderStates, renderStates)
@@ -370,26 +375,5 @@ struct JourneyDetailView: View {
         }
         parts.append("\(journey.sampleCount.formatted()) samples")
         return parts.joined(separator: " \u{00B7} ")
-    }
-
-    private func progressBar(for active: ActiveRender) -> some View {
-        HStack(spacing: 12) {
-            switch active.progress {
-            case .preparing:
-                ProgressView()
-                    .controlSize(.small)
-                Text("Preparing \(active.componentName)\u{2026}")
-                    .foregroundStyle(.secondary)
-            case .fraction(let fraction):
-                ProgressView(value: fraction)
-                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, alignment: .trailing)
-            }
-            Button("Cancel") {
-                model.cancel()
-            }
-        }
     }
 }

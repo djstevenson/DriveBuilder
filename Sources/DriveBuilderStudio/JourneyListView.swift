@@ -212,8 +212,8 @@ struct JourneyRow: View {
                         + "the journey's directory into the database. Takes a few minutes.")
                 .disabled(model.extractingJourneyID != nil)
         }
-        if let activeRender {
-            renderProgress(activeRender)
+        if activeRender != nil {
+            RenderProgressIndicator(style: .ringWithPercentage)
             Button("Cancel") {
                 model.cancel()
             }
@@ -226,24 +226,6 @@ struct JourneyRow: View {
         }
         Button("Open", action: onOpen)
             .accessibilityIdentifier("journey-open-\(journey.id)")
-    }
-
-    private func renderProgress(_ active: ActiveRender) -> some View {
-        HStack(spacing: 6) {
-            switch active.progress {
-            case .preparing:
-                ProgressView()
-                    .controlSize(.small)
-            case .fraction(let fraction):
-                ProgressView(value: fraction)
-                    .progressViewStyle(.circular)
-                    .controlSize(.small)
-                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
-                    .font(.appCaption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36, alignment: .trailing)
-            }
-        }
     }
 
     private var summaryLine: String {

@@ -12,7 +12,7 @@ private enum IconState {
     /// Not applicable, e.g. a side camera the journey doesn't use.
     case unused
     /// Rendering right now: a progress ring replaces the icon.
-    case rendering(RenderProgress)
+    case rendering
 }
 
 /// The journeys list's pipeline-order row of status icons: source cameras
@@ -106,7 +106,7 @@ struct JourneyStatusStrip: View {
             let renderState = status.renderStates[component.relativePath] ?? .missing
             let state: IconState =
                 if let activeRender, activeRender.componentID == component.id {
-                    .rendering(activeRender.progress)
+                    .rendering
                 } else {
                     switch renderState {
                     case .missing: .missing
@@ -136,8 +136,8 @@ struct JourneyStatusStrip: View {
         let missing = states.count { $0 == .missing }
         let stale = total - upToDate - missing
         let state: IconState =
-            if let activeRender, isRenderingAnnotations {
-                .rendering(activeRender.progress)
+            if isRenderingAnnotations {
+                .rendering
             } else if total == 0 {
                 .unused
             } else if missing > 0 {
@@ -185,13 +185,8 @@ private struct StatusIcon: View {
     @ViewBuilder
     private var icon: some View {
         switch state {
-        case .rendering(.preparing):
-            ProgressView()
-                .controlSize(.small)
-        case .rendering(.fraction(let fraction)):
-            ProgressView(value: fraction)
-                .progressViewStyle(.circular)
-                .controlSize(.small)
+        case .rendering:
+            RenderProgressIndicator(style: .ring)
         case .done:
             Image(systemName: systemImage)
                 .symbolVariant(.fill)
