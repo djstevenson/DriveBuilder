@@ -7,6 +7,7 @@ import SwiftUI
 struct ActiveRender {
     let journeyID: Int64
     let componentID: String
+    let componentName: String
     var progress: RenderProgress
 }
 
@@ -105,7 +106,8 @@ final class StudioModel {
     ) {
         guard renderTask == nil else { return }
         activeRender = ActiveRender(
-            journeyID: journey.id, componentID: component.id, progress: .preparing)
+            journeyID: journey.id, componentID: component.id, componentName: component.name,
+            progress: .preparing)
 
         var renderer = JourneyRenderer(journeyID: journey.id, databasePath: databasePath)
         let driveSegmentSeconds: Double? = settings.quickPreview ? 30 : nil
