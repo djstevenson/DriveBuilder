@@ -268,7 +268,7 @@ struct JourneyRow: View {
 
 /// Keeps a selected row's buttons legible: macOS draws bordered buttons
 /// on the selection highlight as translucent accent over accent, so swap
-/// in solid white ones while the row is selected.
+/// in solid ones drawn like an unselected row's while the row is selected.
 private struct SelectedRowButtons: ViewModifier {
     @Environment(\.backgroundProminence) private var backgroundProminence
 
@@ -295,9 +295,11 @@ private struct SelectedRowButtonStyle: ButtonStyle {
             configuration.label
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .foregroundStyle(Color.accentColor)
+                // The system's control colours, as on an unselected row's
+                // buttons, rather than inheriting the selection's white text.
+                .foregroundStyle(Color(nsColor: .controlTextColor))
                 .background(
-                    .white.opacity(configuration.isPressed ? 0.75 : 1),
+                    Color(nsColor: .controlColor).opacity(configuration.isPressed ? 0.75 : 1),
                     in: RoundedRectangle(cornerRadius: 6))
                 .opacity(isEnabled ? 1 : 0.5)
         }
