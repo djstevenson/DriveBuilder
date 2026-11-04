@@ -66,10 +66,19 @@ final class StudioModel {
     private(set) var activeRender: ActiveRender?
     var renderError: RenderFailure?
 
-    /// Bumped when a render finishes so file-status rows re-read the disk.
+    /// Bumped when a render finishes, on Reload, and when files change in a
+    /// journey's output directory, so file-status rows re-read the disk.
     private(set) var outputsVersion = 0
 
     private var renderTask: Task<Void, Never>?
+
+    @ObservationIgnored private var outputWatcher: OutputDirectoryWatcher?
+
+    init() {
+        outputWatcher = OutputDirectoryWatcher { [weak self] in
+            self?.outputsChangedOnDisk()
+        }
+    }
 
     var isRendering: Bool { activeRender != nil }
 
@@ -86,6 +95,22 @@ final class StudioModel {
         }
         hasLoaded = true
         outputsVersion += 1
+        watchOutputDirectories()
+    }
+
+    /// Something outside the Studio (or a render) added, removed, or
+    /// renamed an output file.
+    private func outputsChangedOnDisk() {
+        outputsVersion += 1
+        // Drops the watch on a directory that was itself deleted.
+        watchOutputDirectories()
+    }
+
+    private func watchOutputDirectories() {
+        outputWatcher?.watch(
+            Set(journeys.map {
+                URL(filePath: $0.directory).appending(path: "output").path(percentEncoded: false)
+            }))
     }
 
     /// Reads the journey's GPS and accelerometer data from its dashcam
@@ -160,6 +185,8 @@ final class StudioModel {
             activeRender = nil
             renderTask = nil
             outputsVersion += 1
+            // The render may have created the journey's output directory.
+            watchOutputDirectories()
         }
     }
 
