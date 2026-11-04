@@ -193,6 +193,7 @@ struct JourneyRow: View {
             }
             Spacer()
             actions(activeRender: activeRender)
+                .modifier(SelectedRowButtons())
         }
         .padding(.vertical, 6)
         .accessibilityIdentifier("journey-row-\(journey.id)")
@@ -262,5 +263,43 @@ struct JourneyRow: View {
             parts.append("No telemetry")
         }
         return parts.joined(separator: " \u{00B7} ")
+    }
+}
+
+/// Keeps a selected row's buttons legible: macOS draws bordered buttons
+/// on the selection highlight as translucent accent over accent, so swap
+/// in solid white ones while the row is selected.
+private struct SelectedRowButtons: ViewModifier {
+    @Environment(\.backgroundProminence) private var backgroundProminence
+
+    func body(content: Content) -> some View {
+        if backgroundProminence == .increased {
+            content.buttonStyle(SelectedRowButtonStyle())
+        } else {
+            content
+        }
+    }
+}
+
+private struct SelectedRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SelectedRowButton(configuration: configuration)
+    }
+
+    /// A view rather than inline in `makeBody`, to read `isEnabled`.
+    private struct SelectedRowButton: View {
+        @Environment(\.isEnabled) private var isEnabled
+        let configuration: ButtonStyleConfiguration
+
+        var body: some View {
+            configuration.label
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .foregroundStyle(Color.accentColor)
+                .background(
+                    .white.opacity(configuration.isPressed ? 0.75 : 1),
+                    in: RoundedRectangle(cornerRadius: 6))
+                .opacity(isEnabled ? 1 : 0.5)
+        }
     }
 }
