@@ -71,6 +71,9 @@ struct JourneyStatusStrip: View {
             }
         }
         .font(.appCallout)
+        // Never squeeze the strip: SwiftUI would wrap the counts a
+        // character per line rather than shrink the icons.
+        .fixedSize()
     }
 
     private func group(@ViewBuilder _ content: () -> some View) -> some View {
@@ -157,6 +160,7 @@ private struct StatusIcon: View {
             if let count {
                 Text(count)
                     .font(.appCaption.monospacedDigit())
+                    .fixedSize()
             }
         }
         .foregroundStyle(style)

@@ -18,7 +18,9 @@ struct DriveBuilderStudioApp: App {
             JourneyListView()
                 .environment(model)
                 .font(.appBody)
-                .frame(minWidth: 760, minHeight: 400)
+                // Wide enough for the status strip plus all three row
+                // buttons (Extract Telemetry, Render All, Open).
+                .frame(minWidth: 960, minHeight: 400)
                 .onAppear {
                     NSApplication.shared.activate()
                 }
