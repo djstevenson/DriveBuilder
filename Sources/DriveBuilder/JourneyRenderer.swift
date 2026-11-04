@@ -309,7 +309,9 @@ package struct JourneyRenderer: Sendable {
             spinEntries: spinEntries, width: size.width, height: size.height,
             signWidth: size.signWidth)
         let url = outputDirectory.appending(path: "intro.mov")
-        return try await write(url) {
+        // Only a preview if the limit actually cut the movie short.
+        let preview = frameLimit.map { $0 < renderer.frameCount } ?? false
+        return try await write(url, preview: preview) {
             try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
         }
     }
@@ -329,7 +331,9 @@ package struct JourneyRenderer: Sendable {
             roadType: road.type, roadNumber: road.number, title: title,
             width: size.width, height: size.height, signWidth: size.signWidth)
         let url = outputDirectory.appending(path: "outro.mov")
-        return try await write(url) {
+        // Only a preview if the limit actually cut the movie short.
+        let preview = frameLimit.map { $0 < renderer.frameCount } ?? false
+        return try await write(url, preview: preview) {
             try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
         }
     }
@@ -360,7 +364,7 @@ package struct JourneyRenderer: Sendable {
             dialsSecondsLimit.map {
                 Int(($0 * Double(ProgressMapZoomedRenderer.framesPerSecond)).rounded(.up))
             } ?? frameLimit
-        return try await write(url) {
+        return try await write(url, preview: limit != nil) {
             try await renderer.writeMovie(to: url, frameLimit: limit, progress: progress)
         }
     }
@@ -402,7 +406,7 @@ package struct JourneyRenderer: Sendable {
             tileRenderer: tileRenderer,
             config: config)
         let url = outputDirectory.appending(path: "route_map.mov")
-        return try await write(url) {
+        return try await write(url, preview: frameLimit != nil) {
             try await renderer.writeMovie(
                 nationalTileRenderer: nationalTileRenderer,
                 to: url, frameLimit: frameLimit, progress: progress)
@@ -462,7 +466,9 @@ package struct JourneyRenderer: Sendable {
         }
         let renderer = AnnotationRenderer(text: text)
         let url = outputDirectory.appending(path: "\(annotation.video).mov")
-        return try await write(url) {
+        // Only a preview if the limit actually cut the movie short.
+        let preview = frameLimit.map { $0 < renderer.frameCount } ?? false
+        return try await write(url, preview: preview) {
             try await renderer.writeMovie(to: url, frameLimit: frameLimit, progress: progress)
         }
     }
@@ -574,7 +580,7 @@ package struct JourneyRenderer: Sendable {
             composer.progressHandler = { fraction in progress(.fraction(fraction)) }
         }
         let url = outputDirectory.appending(path: "\(name).mov")
-        return try await write(url) {
+        return try await write(url, preview: driveSegmentSeconds != nil) {
             try await composer.writeMovie(to: url)
         }
     }
@@ -688,12 +694,22 @@ package struct JourneyRenderer: Sendable {
 
     /// Runs one movie write, deleting the partial output if it's cancelled
     /// so a half-written .mov never masquerades as a finished component.
-    private func write(_ url: URL, _ body: () async throws -> Void) async throws -> URL {
+    /// A finished movie is recorded in the output directory's render
+    /// records (see `RenderInputs`), with whether it's a quick `preview`.
+    private func write(
+        _ url: URL, preview: Bool, _ body: () async throws -> Void
+    ) async throws -> URL {
         do {
             try await body()
         } catch is CancellationError {
             try? FileManager.default.removeItem(at: url)
             throw CancellationError()
+        }
+        // Best effort: a movie without a record just can't be checked for
+        // changes later, which isn't worth failing the render over.
+        if let journey = try? store.journeySummary(journeyID: journeyID) {
+            try? RenderInputs(store: store, journey: journey)
+                .record(url.lastPathComponent, preview: preview)
         }
         return url
     }

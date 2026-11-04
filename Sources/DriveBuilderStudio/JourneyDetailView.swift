@@ -73,6 +73,9 @@ struct JourneyDetailView: View {
     /// joined (see `placementError`).
     @State private var placement: JourneyPlacement?
     @State private var placementError: String?
+    /// Each output's state, keyed by `RenderComponent.id`; re-read whenever
+    /// an output or anything it's rendered from changes.
+    @State private var renderStates: [String: RenderState] = [:]
 
     @State private var editingJourney = false
     @State private var confirmingJourneyDelete = false
@@ -101,12 +104,14 @@ struct JourneyDetailView: View {
                         .padding()
                 }
             }
+            .environment(\.renderStates, renderStates)
         }
         .task(id: ItemsLoadKey(journeyID: journey.id, outputsVersion: model.outputsVersion)) {
             await loadSegments()
             await loadAnnotations()
             await loadRouteMapLabels()
             await loadCameraOverrides()
+            await loadRenderStates()
         }
         .task(
             id: PlacementLoadKey(
@@ -172,26 +177,26 @@ struct JourneyDetailView: View {
         case .sources:
             SourcesSection(
                 journey: journey, segments: segments, placementError: placementError,
-                reload: loadSegments)
+                reload: { await loadSegments(); await loadRenderStates() })
         case .annotations:
             AnnotationsSection(
                 journey: journey, annotations: annotations, placement: placement,
-                reload: loadAnnotations)
+                reload: { await loadAnnotations(); await loadRenderStates() })
         case .routeMapLabels:
             RouteMapLabelsSection(
                 journey: journey, labels: routeMapLabels, placement: placement,
-                reload: loadRouteMapLabels)
+                reload: { await loadRouteMapLabels(); await loadRenderStates() })
         case .cameraOverrides:
             CameraOverridesSection(
                 journey: journey, overrides: cameraOverrides, placement: placement,
-                reload: loadCameraOverrides)
+                reload: { await loadCameraOverrides(); await loadRenderStates() })
         }
     }
 
     /// The sidebar row's badge: for the sections with movies, how many are
-    /// rendered out of how many (red while any are missing); otherwise how
-    /// many items the section holds, a warning when the segments can't be
-    /// joined, or nothing.
+    /// up to date out of how many (red while any are missing, orange while
+    /// any are out of date); otherwise how many items the section holds, a
+    /// warning when the segments can't be joined, or nothing.
     private func badge(for section: JourneySection) -> Text? {
         func count(_ n: Int) -> Text? { n > 0 ? Text("\(n)") : nil }
         switch section {
@@ -209,20 +214,20 @@ struct JourneyDetailView: View {
         }
     }
 
-    /// "rendered/total" for these components' movies, red unless all are
-    /// on disk; nil when there are none.
+    /// "up-to-date/total" for these components' movies: red if any is
+    /// missing, else orange if any is out of date; nil when there are none
+    /// or the states haven't loaded.
     private func renderedBadge(_ components: [RenderComponent]) -> Text? {
-        guard !components.isEmpty else { return nil }
-        // Reading outputsVersion re-checks the disk whenever a render
-        // finishes, Reload runs, or an output file changes.
-        let _ = model.outputsVersion
-        let rendered = components.count {
-            FileManager.default.fileExists(
-                atPath: $0.outputURL(journeyDirectory: journey.directory)
-                    .path(percentEncoded: false))
+        guard !components.isEmpty, !renderStates.isEmpty else { return nil }
+        let states = components.map { renderStates[$0.id] ?? .missing }
+        let text = Text("\(states.count { $0 == .upToDate })/\(components.count)")
+        if states.contains(.missing) {
+            return text.foregroundColor(.red)
         }
-        let text = Text("\(rendered)/\(components.count)")
-        return rendered < components.count ? text.foregroundColor(.red) : text
+        if states.contains(where: { $0 != .upToDate }) {
+            return text.foregroundColor(.orange)
+        }
+        return text
     }
 
     private func extractTelemetry() async {
@@ -262,6 +267,12 @@ struct JourneyDetailView: View {
         routeMapLabels =
             (try? await JourneyLibrary(databasePath: model.databasePath)
                 .routeMapLabels(journeyID: journey.id)) ?? []
+    }
+
+    private func loadRenderStates() async {
+        renderStates =
+            (try? await JourneyLibrary(databasePath: model.databasePath)
+                .renderStates(journey: journey)) ?? [:]
     }
 
     private func loadCameraOverrides() async {

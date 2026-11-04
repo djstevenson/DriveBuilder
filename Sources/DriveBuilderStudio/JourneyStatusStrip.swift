@@ -103,15 +103,21 @@ struct JourneyStatusStrip: View {
     private func outputIcon(_ kind: RenderComponent.Kind, systemImage: String) -> some View {
         if let component = RenderComponent.standardComponents.first(where: { $0.kind == kind }) {
             let file = status.outputs[component.relativePath]
+            let renderState = status.renderStates[component.relativePath] ?? .missing
             let state: IconState =
                 if let activeRender, activeRender.componentID == component.id {
                     .rendering(activeRender.progress)
                 } else {
-                    file == nil ? .missing : .done
+                    switch renderState {
+                    case .missing: .missing
+                    case .upToDate: .done
+                    case .changed, .preview: .problem
+                    }
                 }
+            let detail = [file?.summary ?? "not rendered", renderState.staleReason]
+                .compactMap { $0 }.joined(separator: " \u{00B7} ")
             StatusIcon(
-                systemImage: systemImage, state: state,
-                help: "\(component.name): \(file?.summary ?? "not rendered")")
+                systemImage: systemImage, state: state, help: "\(component.name): \(detail)")
         }
     }
 
@@ -125,20 +131,27 @@ struct JourneyStatusStrip: View {
 
     private var annotationsIcon: some View {
         let total = status.annotationCount
-        let rendered = status.renderedAnnotationCount
+        let states = status.annotationStates
+        let upToDate = states.count { $0 == .upToDate }
+        let missing = states.count { $0 == .missing }
+        let stale = total - upToDate - missing
         let state: IconState =
             if let activeRender, isRenderingAnnotations {
                 .rendering(activeRender.progress)
             } else if total == 0 {
                 .unused
+            } else if missing > 0 {
+                .missing
             } else {
-                rendered == total ? .done : .missing
+                stale > 0 ? .problem : .done
             }
+        var help = "Annotations: \(upToDate) of \(total) up to date"
+        if missing > 0 { help += ", \(missing) not rendered" }
+        if stale > 0 { help += ", \(stale) out of date" }
         return StatusIcon(
             systemImage: "text.bubble", state: state,
-            count: total == 0 ? "0" : "\(rendered)/\(total)",
-            help: total == 0
-                ? "No annotations" : "Annotations: \(rendered) of \(total) rendered")
+            count: total == 0 ? "0" : "\(upToDate)/\(total)",
+            help: total == 0 ? "No annotations" : help)
     }
 }
 

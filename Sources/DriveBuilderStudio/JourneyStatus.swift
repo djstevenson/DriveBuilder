@@ -51,8 +51,12 @@ nonisolated struct JourneyStatus: Sendable {
     /// The rendered standard outputs, keyed by `RenderComponent.relativePath`;
     /// absent means not rendered.
     let outputs: [String: OutputFile]
+    /// Every output's state (standard clips, finals, and annotation
+    /// banners), keyed by its path relative to the journey directory.
+    let renderStates: [String: RenderState]
     let annotationCount: Int
-    let renderedAnnotationCount: Int
+    /// The annotation banners' states, one per annotation.
+    let annotationStates: [RenderState]
     let routeMapLabelCount: Int
     let cameraOverrideCount: Int
 
@@ -118,14 +122,16 @@ nonisolated struct JourneyStatus: Sendable {
                 modified: attributes[.modificationDate] as? Date)
         }
 
+        let renderStates = try await library.renderStates(journey: journey)
         // The same output path as `RenderComponent.component(for:)`.
-        let renderedAnnotations = annotations.count {
-            exists(directory.appending(path: "output/\($0.video).mov"))
+        let annotationStates = annotations.map {
+            renderStates["output/\($0.video).mov"] ?? .missing
         }
 
         return JourneyStatus(
             segmentCount: segments.count, cameras: cameras, outputs: outputs,
-            annotationCount: annotations.count, renderedAnnotationCount: renderedAnnotations,
-            routeMapLabelCount: labels.count, cameraOverrideCount: overrides.count)
+            renderStates: renderStates, annotationCount: annotations.count,
+            annotationStates: annotationStates, routeMapLabelCount: labels.count,
+            cameraOverrideCount: overrides.count)
     }
 }
