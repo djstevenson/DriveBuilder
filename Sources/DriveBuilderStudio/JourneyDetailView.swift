@@ -188,23 +188,41 @@ struct JourneyDetailView: View {
         }
     }
 
-    /// The sidebar row's badge: how many items the section holds, a
-    /// warning when the segments can't be joined, or nothing.
+    /// The sidebar row's badge: for the sections with movies, how many are
+    /// rendered out of how many (red while any are missing); otherwise how
+    /// many items the section holds, a warning when the segments can't be
+    /// joined, or nothing.
     private func badge(for section: JourneySection) -> Text? {
         func count(_ n: Int) -> Text? { n > 0 ? Text("\(n)") : nil }
         switch section {
         case .clips:
-            return nil
+            return renderedBadge(RenderComponent.standardComponents)
         case .sources:
             if placementError != nil { return Text("\u{26A0}\u{FE0E}") }
             return segments.count > 1 ? Text("\(segments.count)") : nil
         case .annotations:
-            return count(annotations.count)
+            return renderedBadge(annotations.map(RenderComponent.component(for:)))
         case .routeMapLabels:
             return count(routeMapLabels.count)
         case .cameraOverrides:
             return count(cameraOverrides.count)
         }
+    }
+
+    /// "rendered/total" for these components' movies, red unless all are
+    /// on disk; nil when there are none.
+    private func renderedBadge(_ components: [RenderComponent]) -> Text? {
+        guard !components.isEmpty else { return nil }
+        // Reading outputsVersion re-checks the disk whenever a render
+        // finishes, Reload runs, or an output file changes.
+        let _ = model.outputsVersion
+        let rendered = components.count {
+            FileManager.default.fileExists(
+                atPath: $0.outputURL(journeyDirectory: journey.directory)
+                    .path(percentEncoded: false))
+        }
+        let text = Text("\(rendered)/\(components.count)")
+        return rendered < components.count ? text.foregroundColor(.red) : text
     }
 
     private func extractTelemetry() async {
