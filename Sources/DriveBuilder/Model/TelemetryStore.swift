@@ -636,6 +636,17 @@ struct TelemetryStore {
     /// first. Journeys with no telemetry still appear, with a zero sample
     /// count and nil timestamps.
     func allJourneys() throws -> [JourneySummary] {
+        try journeySummaries(journeyID: nil)
+    }
+
+    /// One journey's summary, without aggregating every other journey's
+    /// telemetry; nil if there's no such journey.
+    func journeySummary(journeyID: Int64) throws -> JourneySummary? {
+        try journeySummaries(journeyID: journeyID).first
+    }
+
+    /// Every journey's summary, or just the one with `journeyID`.
+    private func journeySummaries(journeyID: Int64?) throws -> [JourneySummary] {
         let database = try open(flags: SQLITE_OPEN_READONLY)
         defer { sqlite3_close(database) }
 
@@ -645,6 +656,7 @@ struct TelemetryStore {
                    MAX(t.odometer) - MIN(t.odometer)
             FROM journeys j
             LEFT JOIN telemetry t ON t.journey_id = j.id
+            \(journeyID == nil ? "" : "WHERE j.id = ?")
             GROUP BY j.id
             ORDER BY j.id DESC
             """
@@ -654,6 +666,9 @@ struct TelemetryStore {
             throw TelemetryStoreError.queryFailed(message: Self.lastErrorMessage(database))
         }
         defer { sqlite3_finalize(statement) }
+        if let journeyID {
+            sqlite3_bind_int64(statement, 1, journeyID)
+        }
 
         var journeys: [JourneySummary] = []
         while true {

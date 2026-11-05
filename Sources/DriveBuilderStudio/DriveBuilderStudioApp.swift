@@ -13,14 +13,25 @@ struct DriveBuilderStudioApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("DriveBuilder Studio") {
-            ContentView()
+        // The main window, opened at launch: every journey and its status.
+        Window("Journeys", id: "journeys") {
+            JourneyListView()
                 .environment(model)
                 .font(.appBody)
-                .frame(minWidth: 900, minHeight: 560)
+                // Wide enough for the status strip plus all three row
+                // buttons (Extract Telemetry, Render All, Open).
+                .frame(minWidth: 960, minHeight: 400)
                 .onAppear {
                     NSApplication.shared.activate()
                 }
+        }
+        // One window per journey, keyed by its id, so opening a journey
+        // that's already open brings its window to the front.
+        WindowGroup("Journey", for: Int64.self) { $journeyID in
+            JourneyWindow(journeyID: journeyID)
+                .environment(model)
+                .font(.appBody)
+                .frame(minWidth: 700, minHeight: 560)
         }
     }
 }

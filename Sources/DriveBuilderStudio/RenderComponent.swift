@@ -1,5 +1,6 @@
 import DriveBuilder
 import Foundation
+import SwiftUI
 
 /// One renderable clip of a journey: its display name, where its output
 /// lands, and (via `kind`) which facade call builds it.
@@ -13,7 +14,7 @@ struct RenderComponent: Identifiable, Equatable {
         case allAnnotations
         case outro
         case final
-        /// The sped-up final video, at `StudioModel.fastDriveSpeed`.
+        /// The sped-up final video, at the window's `RenderSettings.fastDriveSpeed`.
         case fastFinal
         /// Every component in programme order, then the final assembly.
         case project
@@ -67,6 +68,25 @@ struct RenderComponent: Identifiable, Equatable {
         RenderComponent(
             kind: .fastFinal, name: "Fast final video", relativePath: "output/final_fast.mov"),
     ]
+}
+
+extension EnvironmentValues {
+    /// The enclosing journey window's output states, keyed by
+    /// `RenderComponent.id` (the output's relative path); empty until
+    /// loaded.
+    @Entry var renderStates: [String: RenderState] = [:]
+}
+
+extension RenderState {
+    /// Why an output on disk needs rendering again; nil when it doesn't
+    /// (or isn't there at all).
+    var staleReason: String? {
+        switch self {
+        case .changed: "Changed since rendered"
+        case .preview: "Quick preview only"
+        case .missing, .upToDate: nil
+        }
+    }
 }
 
 /// What's on disk for one component's output right now.
