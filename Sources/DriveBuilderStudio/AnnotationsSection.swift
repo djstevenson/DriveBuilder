@@ -6,18 +6,12 @@ import SwiftUI
 struct AnnotationsSection: View {
     @Environment(StudioModel.self) private var model
     @Environment(\.renderSettings) private var renderSettings
+    @Environment(\.journeyPresenter) private var presenter
     let journey: JourneySummary
     let annotations: [Annotation]
     /// The journey's track, for when each banner finishes; nil while
     /// loading.
     let placement: JourneyPlacement?
-    /// Re-reads the annotations after an add, edit, or delete.
-    let reload: () async -> Void
-
-    @State private var adding = false
-    @State private var editing: Annotation?
-    @State private var toDelete: Annotation?
-    @State private var deleteError: String?
 
     var body: some View {
         SectionPage(title: "Annotations") {
@@ -33,7 +27,7 @@ struct AnnotationsSection: View {
             }
             .disabled(model.isRendering || annotations.isEmpty)
             Button("Add Annotation", systemImage: "plus") {
-                adding = true
+                presenter.showSheet(.addAnnotation)
             }
         } content: {
             List(sortedAnnotations) { annotation in
@@ -42,10 +36,10 @@ struct AnnotationsSection: View {
                         component: .component(for: annotation), journey: journey,
                         detail: detail(annotation))
                     Button("Edit", systemImage: "pencil") {
-                        editing = annotation
+                        presenter.showSheet(.editAnnotation(annotation))
                     }
                     Button("Delete", systemImage: "trash", role: .destructive) {
-                        toDelete = annotation
+                        presenter.confirmDeletion(.annotation(annotation))
                     }
                 }
             }
@@ -56,48 +50,6 @@ struct AnnotationsSection: View {
                         description: Text("Banners that appear over the drive."))
                 }
             }
-        }
-        .sheet(isPresented: $adding) {
-            AnnotationForm(
-                journey: journey, databasePath: model.databasePath, placement: placement
-            ) {
-                Task { await reload() }
-            }
-        }
-        .sheet(item: $editing) { annotation in
-            AnnotationForm(
-                journey: journey, databasePath: model.databasePath, annotation: annotation,
-                placement: placement
-            ) {
-                Task { await reload() }
-            }
-        }
-        .alert(
-            "Delete annotation?",
-            isPresented: Binding(
-                get: { toDelete != nil },
-                set: { if !$0 { toDelete = nil } }),
-            presenting: toDelete
-        ) { annotation in
-            Button("Delete", role: .destructive) {
-                Task { await delete(annotation) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { annotation in
-            Text(
-                "\u{201C}\(annotation.video)\u{201D} will be removed from the database. "
-                    + "Its rendered movie, if any, stays on disk.")
-        }
-        .alert(
-            "Could not delete",
-            isPresented: Binding(
-                get: { deleteError != nil },
-                set: { if !$0 { deleteError = nil } }),
-            presenting: deleteError
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { message in
-            Text(message)
         }
     }
 
@@ -126,16 +78,6 @@ struct AnnotationsSection: View {
             return "\(finishes) \u{00B7} \u{26A0}\u{FE0E} \(problem)"
         case .failure(let error):
             return "Not placeable: \(error)"
-        }
-    }
-
-    private func delete(_ annotation: Annotation) async {
-        do {
-            try await JourneyLibrary(databasePath: model.databasePath)
-                .deleteAnnotation(id: annotation.id)
-            await reload()
-        } catch {
-            deleteError = String(describing: error)
         }
     }
 }

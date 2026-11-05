@@ -5,24 +5,16 @@ import SwiftUI
 /// during which the camera slot shows a side camera (or relabels the rear
 /// view), with add, edit, and delete.
 struct CameraOverridesSection: View {
-    @Environment(StudioModel.self) private var model
-    let journey: JourneySummary
+    @Environment(\.journeyPresenter) private var presenter
     let overrides: [CameraOverride]
     /// The journey's track, for when each window opens and closes; nil
     /// while loading.
     let placement: JourneyPlacement?
-    /// Re-reads the overrides after an add, edit, or delete.
-    let reload: () async -> Void
-
-    @State private var adding = false
-    @State private var editing: CameraOverride?
-    @State private var toDelete: CameraOverride?
-    @State private var deleteError: String?
 
     var body: some View {
         SectionPage(title: "Secondary Camera Selection") {
             Button("Add Camera Selection", systemImage: "plus") {
-                adding = true
+                presenter.showSheet(.addCameraOverride)
             }
         } content: {
             List(sortedOverrides) { cameraOverride in
@@ -35,10 +27,10 @@ struct CameraOverridesSection: View {
                     }
                     Spacer()
                     Button("Edit", systemImage: "pencil") {
-                        editing = cameraOverride
+                        presenter.showSheet(.editCameraOverride(cameraOverride))
                     }
                     Button("Delete", systemImage: "trash", role: .destructive) {
-                        toDelete = cameraOverride
+                        presenter.confirmDeletion(.cameraOverride(cameraOverride))
                     }
                 }
                 .padding(.vertical, 4)
@@ -50,50 +42,6 @@ struct CameraOverridesSection: View {
                         description: Text("The camera slot shows the rear camera for the whole drive."))
                 }
             }
-        }
-        .sheet(isPresented: $adding) {
-            CameraOverrideForm(
-                journey: journey, databasePath: model.databasePath, otherOverrides: overrides,
-                placement: placement
-            ) {
-                Task { await reload() }
-            }
-        }
-        .sheet(item: $editing) { cameraOverride in
-            CameraOverrideForm(
-                journey: journey, databasePath: model.databasePath,
-                cameraOverride: cameraOverride, otherOverrides: overrides, placement: placement
-            ) {
-                Task { await reload() }
-            }
-        }
-        .alert(
-            "Delete secondary camera selection?",
-            isPresented: Binding(
-                get: { toDelete != nil },
-                set: { if !$0 { toDelete = nil } }),
-            presenting: toDelete
-        ) { cameraOverride in
-            Button("Delete", role: .destructive) {
-                Task { await delete(cameraOverride) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { cameraOverride in
-            Text(
-                "The \(cameraOverride.camera.displayName.lowercased()) view from "
-                    + "\(cameraOverride.startLocation.text) will be removed; the slot "
-                    + "shows the rear view there instead.")
-        }
-        .alert(
-            "Could not delete",
-            isPresented: Binding(
-                get: { deleteError != nil },
-                set: { if !$0 { deleteError = nil } }),
-            presenting: deleteError
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { message in
-            Text(message)
         }
     }
 
@@ -112,15 +60,5 @@ struct CameraOverridesSection: View {
             }
             ?? "\(cameraOverride.startLocation.text) \u{2192} \(cameraOverride.endLocation.text)"
         return "\(cameraOverride.camera.displayName) camera \u{00B7} \(window)"
-    }
-
-    private func delete(_ cameraOverride: CameraOverride) async {
-        do {
-            try await JourneyLibrary(databasePath: model.databasePath)
-                .deleteCameraOverride(id: cameraOverride.id)
-            await reload()
-        } catch {
-            deleteError = String(describing: error)
-        }
     }
 }

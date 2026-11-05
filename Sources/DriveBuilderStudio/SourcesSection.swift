@@ -5,6 +5,7 @@ import SwiftUI
 /// telemetry offset, and length, with reordering and adding segments.
 struct SourcesSection: View {
     @Environment(StudioModel.self) private var model
+    @Environment(\.journeyPresenter) private var presenter
     let journey: JourneySummary
     let segments: [JourneySegment]
     /// Why the segments can't be joined into one drive, if they can't.
@@ -12,10 +13,6 @@ struct SourcesSection: View {
     /// Re-reads the segments after a change (which re-places the journey's
     /// items on the new drive).
     let reload: () async -> Void
-
-    @State private var editingSegment: SegmentEdit?
-    @State private var segmentToDelete: JourneySegment?
-    @State private var segmentError: String?
 
     var body: some View {
         SectionPage(title: "Sources") {
@@ -42,41 +39,6 @@ struct SourcesSection: View {
                 }
             }
         }
-        .sheet(item: $editingSegment) { edit in
-            SegmentForm(
-                databasePath: model.databasePath, segment: edit.segment, field: edit.field,
-                isLast: edit.segment.id == segments.last?.id
-            ) {
-                Task { await reload() }
-            }
-        }
-        .alert(
-            "Delete segment?",
-            isPresented: Binding(
-                get: { segmentToDelete != nil },
-                set: { if !$0 { segmentToDelete = nil } }),
-            presenting: segmentToDelete
-        ) { segment in
-            Button("Delete", role: .destructive) {
-                Task { await changeSegments { try await $0.deleteSegment(segment) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { segment in
-            Text(
-                "Segment \(segment.position + 1) will be removed from the journey. Its "
-                    + "source videos stay on disk.")
-        }
-        .alert(
-            "Could not change the segments",
-            isPresented: Binding(
-                get: { segmentError != nil },
-                set: { if !$0 { segmentError = nil } }),
-            presenting: segmentError
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { message in
-            Text(message)
-        }
     }
 
     /// Runs a change to the journey's segments, then re-reads them.
@@ -84,7 +46,9 @@ struct SourcesSection: View {
         do {
             try await change(JourneyLibrary(databasePath: model.databasePath))
         } catch {
-            segmentError = String(describing: error)
+            presenter.showFailure(
+                JourneyFailure(
+                    title: "Could not change the segments", message: String(describing: error)))
         }
         await reload()
     }
@@ -107,7 +71,7 @@ struct SourcesSection: View {
                 }
                 .disabled(index == segments.count - 1)
                 Button("Delete", systemImage: "trash", role: .destructive) {
-                    segmentToDelete = segment
+                    presenter.confirmDeletion(.segment(segment))
                 }
             }
         }
@@ -120,7 +84,7 @@ struct SourcesSection: View {
         let video = URL(filePath: journey.directory).appending(path: "video")
         let offsets = segment.startOffsets
         let edit = { (field: SegmentField) in
-            editingSegment = SegmentEdit(segment: segment, field: field)
+            presenter.showSheet(.editSegment(SegmentEdit(segment: segment, field: field)))
         }
         SourceVideoRow(
             name: "Front camera", file: segment.frontFile,

@@ -6,13 +6,12 @@ struct ComponentRow: View {
     @Environment(StudioModel.self) private var model
     @Environment(\.renderSettings) private var renderSettings
     @Environment(\.renderStates) private var renderStates
+    @Environment(\.journeyPresenter) private var presenter
     let component: RenderComponent
     let journey: JourneySummary
     /// An extra caption line after the file status, e.g. when an
     /// annotation finishes.
     var detail: String?
-
-    @State private var showingPlayer = false
 
     var body: some View {
         // Reading outputsVersion re-evaluates the row (and so re-stats the
@@ -50,7 +49,7 @@ struct ComponentRow: View {
             }
             .disabled(model.isRendering)
             Button("Play", systemImage: "play.fill") {
-                showingPlayer = true
+                presenter.showSheet(.movie(url: url, title: component.name))
             }
             .disabled(!status.exists)
             Button("Reveal", systemImage: "folder") {
@@ -59,9 +58,6 @@ struct ComponentRow: View {
             .disabled(!status.exists)
         }
         .padding(.vertical, 4)
-        .sheet(isPresented: $showingPlayer) {
-            MoviePlayerView(url: url, title: component.name)
-        }
     }
 
     private var isRenderingThis: Bool {

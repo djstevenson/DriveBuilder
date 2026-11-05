@@ -79,8 +79,11 @@ struct JourneyDetailView: View {
 
     @State private var editingJourney = false
     @State private var confirmingJourneyDelete = false
-    @State private var deleteError: String?
-    @State private var extractError: String?
+    /// What the sections have asked this window to present (see
+    /// `JourneySheet` for why the window presents for them).
+    @State private var sheet: JourneySheet?
+    @State private var deletion: JourneyDeletion?
+    @State private var failure: JourneyFailure?
 
     var body: some View {
         NavigationSplitView {
@@ -110,6 +113,11 @@ struct JourneyDetailView: View {
                 }
             }
             .environment(\.renderStates, renderStates)
+            .environment(
+                \.journeyPresenter,
+                JourneyPresenter(
+                    showSheet: { sheet = $0 }, confirmDeletion: { deletion = $0 },
+                    showFailure: { failure = $0 }))
         }
         .task(id: ItemsLoadKey(journeyID: journey.id, outputsVersion: model.outputsVersion)) {
             await loadSegments()
@@ -150,27 +158,33 @@ struct JourneyDetailView: View {
                     + "route map labels will be removed from the database. Source videos "
                     + "and rendered output on disk stay put.")
         }
-        .alert(
-            "Could not extract telemetry",
-            isPresented: Binding(
-                get: { extractError != nil },
-                set: { if !$0 { extractError = nil } }),
-            presenting: extractError
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { message in
-            Text(message)
+        .sheet(item: $sheet) { sheet in
+            sheetContent(sheet)
         }
         .alert(
-            "Could not delete",
+            deletion?.title ?? "",
             isPresented: Binding(
-                get: { deleteError != nil },
-                set: { if !$0 { deleteError = nil } }),
-            presenting: deleteError
+                get: { deletion != nil },
+                set: { if !$0 { deletion = nil } }),
+            presenting: deletion
+        ) { deletion in
+            Button("Delete", role: .destructive) {
+                Task { await perform(deletion) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { deletion in
+            Text(deletion.message)
+        }
+        .alert(
+            failure?.title ?? "",
+            isPresented: Binding(
+                get: { failure != nil },
+                set: { if !$0 { failure = nil } }),
+            presenting: failure
         ) { _ in
             Button("OK", role: .cancel) {}
-        } message: { message in
-            Text(message)
+        } message: { failure in
+            Text(failure.message)
         }
     }
 
@@ -182,20 +196,101 @@ struct JourneyDetailView: View {
         case .sources:
             SourcesSection(
                 journey: journey, segments: segments, placementError: placementError,
-                reload: { await loadSegments(); await loadRenderStates() })
+                reload: { await reload(.sources) })
         case .annotations:
-            AnnotationsSection(
-                journey: journey, annotations: annotations, placement: placement,
-                reload: { await loadAnnotations(); await loadRenderStates() })
+            AnnotationsSection(journey: journey, annotations: annotations, placement: placement)
         case .routeMapLabels:
-            RouteMapLabelsSection(
-                journey: journey, labels: routeMapLabels, placement: placement,
-                reload: { await loadRouteMapLabels(); await loadRenderStates() })
+            RouteMapLabelsSection(labels: routeMapLabels, placement: placement)
         case .cameraOverrides:
-            CameraOverridesSection(
-                journey: journey, overrides: cameraOverrides, placement: placement,
-                reload: { await loadCameraOverrides(); await loadRenderStates() })
+            CameraOverridesSection(overrides: cameraOverrides, placement: placement)
         }
+    }
+
+    // MARK: - Presentations
+
+    @ViewBuilder
+    private func sheetContent(_ sheet: JourneySheet) -> some View {
+        let path = model.databasePath
+        switch sheet {
+        case .addAnnotation:
+            AnnotationForm(journey: journey, databasePath: path, placement: placement) {
+                Task { await reload(.annotations) }
+            }
+        case .editAnnotation(let annotation):
+            AnnotationForm(
+                journey: journey, databasePath: path, annotation: annotation, placement: placement
+            ) {
+                Task { await reload(.annotations) }
+            }
+        case .addRouteMapLabel:
+            RouteMapLabelForm(journey: journey, databasePath: path, placement: placement) {
+                Task { await reload(.routeMapLabels) }
+            }
+        case .editRouteMapLabel(let label):
+            RouteMapLabelForm(
+                journey: journey, databasePath: path, label: label, placement: placement
+            ) {
+                Task { await reload(.routeMapLabels) }
+            }
+        case .addCameraOverride:
+            CameraOverrideForm(
+                journey: journey, databasePath: path, otherOverrides: cameraOverrides,
+                placement: placement
+            ) {
+                Task { await reload(.cameraOverrides) }
+            }
+        case .editCameraOverride(let cameraOverride):
+            CameraOverrideForm(
+                journey: journey, databasePath: path, cameraOverride: cameraOverride,
+                otherOverrides: cameraOverrides, placement: placement
+            ) {
+                Task { await reload(.cameraOverrides) }
+            }
+        case .editSegment(let edit):
+            SegmentForm(
+                databasePath: path, segment: edit.segment, field: edit.field,
+                isLast: edit.segment.id == segments.last?.id
+            ) {
+                Task { await reload(.sources) }
+            }
+        case .movie(let url, let title):
+            MoviePlayerView(url: url, title: title)
+        }
+    }
+
+    private func perform(_ deletion: JourneyDeletion) async {
+        let library = JourneyLibrary(databasePath: model.databasePath)
+        do {
+            switch deletion {
+            case .annotation(let annotation):
+                try await library.deleteAnnotation(id: annotation.id)
+                await reload(.annotations)
+            case .routeMapLabel(let label):
+                try await library.deleteRouteMapLabel(id: label.id)
+                await reload(.routeMapLabels)
+            case .cameraOverride(let cameraOverride):
+                try await library.deleteCameraOverride(id: cameraOverride.id)
+                await reload(.cameraOverrides)
+            case .segment(let segment):
+                try await library.deleteSegment(segment)
+                await reload(.sources)
+            }
+        } catch {
+            failure = JourneyFailure(title: "Could not delete", message: String(describing: error))
+        }
+    }
+
+    /// Re-reads one section's items after a change, then the output states
+    /// that depend on them.
+    private func reload(_ section: JourneySection) async {
+        switch section {
+        case .clips: break
+        case .sources: await loadSegments()
+        case .annotations: await loadAnnotations()
+        case .routeMapLabels: await loadRouteMapLabels()
+        case .cameraOverrides: await loadCameraOverrides()
+        }
+        await loadRenderStates()
     }
 
     /// The sidebar row's badge: for the sections with movies, how many are
@@ -241,7 +336,8 @@ struct JourneyDetailView: View {
             // hides this button and re-places the journey's items.
             try await model.extractTelemetry(journeyID: journey.id)
         } catch {
-            extractError = String(describing: error)
+            failure = JourneyFailure(
+                title: "Could not extract telemetry", message: String(describing: error))
         }
     }
 
@@ -252,7 +348,7 @@ struct JourneyDetailView: View {
             await model.reload()
             dismiss()
         } catch {
-            deleteError = String(describing: error)
+            failure = JourneyFailure(title: "Could not delete", message: String(describing: error))
         }
     }
 
