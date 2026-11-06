@@ -1,0 +1,82 @@
+<!-- Low-detail national stylesheet for country-wide renders: land, trunk
+     roads, and motorways only. Same palette as map.xml, but thinner lines
+     (designed for a 1920px-wide render, like map.xml) and no ref shields,
+     which would be unreadable clutter at this scale. -->
+<Map srs="EPSG:27700"
+     background-color="#aad3df">
+
+  <Style name="land">
+    <Rule>
+      <PolygonSymbolizer fill="#e8e5dc"/>
+    </Rule>
+  </Style>
+
+  <Style name="motorway-casing">
+    <Rule>
+      <LineSymbolizer stroke="#26456b" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+  <Style name="motorways">
+    <Rule>
+      <LineSymbolizer stroke="#4472b0" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="trunk-casing">
+    <Rule>
+      <LineSymbolizer stroke="#456e38" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+  <Style name="trunk-roads">
+    <Rule>
+      <LineSymbolizer stroke="#009669" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Layer name="land" srs="EPSG:4326">
+    <StyleName>land</StyleName>
+    <Datasource>
+      <Parameter name="type">shape</Parameter>
+      <Parameter name="file">./osm_data/land-polygons-split-4326/land_polygons.shp</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="trunk" srs="EPSG:27700">
+    <StyleName>trunk-casing</StyleName>
+    <StyleName>trunk-roads</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('trunk', 'trunk_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="motorways" srs="EPSG:27700">
+    <StyleName>motorway-casing</StyleName>
+    <StyleName>motorways</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('motorway', 'motorway_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+</Map>
