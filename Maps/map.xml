@@ -9,6 +9,86 @@
     </Rule>
   </Style>
 
+  <!-- Woodland, bare rock and scree from OSM, kept muted so the route
+       and roads still stand out. -->
+  <Style name="landcover">
+    <Rule>
+      <Filter>[kind] = 'wood' and [area_m2] &gt;= 2000</Filter>
+      <PolygonSymbolizer fill="#cbd8b4"/>
+    </Rule>
+    <Rule>
+      <Filter>[kind] = 'bare_rock' and [area_m2] &gt;= 2000</Filter>
+      <PolygonSymbolizer fill="#d6d1c8"/>
+    </Rule>
+    <Rule>
+      <Filter>[kind] = 'scree' and [area_m2] &gt;= 2000</Filter>
+      <PolygonSymbolizer fill="#dcd7cd"/>
+    </Rule>
+  </Style>
+
+  <!-- OS Terrain 50 hill shading, pre-scaled so flat ground is white:
+       multiplying it in only darkens slopes facing away from the light.
+       Lighter close in, where the 50 m grid is magnified into broad,
+       soft bands across steep faces. -->
+  <Style name="hillshade">
+    <Rule>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <RasterSymbolizer comp-op="multiply" opacity="0.25" scaling="bilinear"/>
+    </Rule>
+    <Rule>
+      <MinScaleDenominator>50000</MinScaleDenominator>
+      <RasterSymbolizer comp-op="multiply" opacity="0.45" scaling="bilinear"/>
+    </Rule>
+  </Style>
+
+  <!-- OS Terrain 50 contours (10 m interval), every 50 m drawn heavier.
+       Further out than the zoomed dial, only the 50 m ones. -->
+  <Style name="contours">
+    <Rule>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <Filter>[property_value] % 50 != 0</Filter>
+      <LineSymbolizer stroke="#b49a7c" stroke-width="0.5" stroke-opacity="0.6"/>
+    </Rule>
+    <Rule>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <Filter>[property_value] % 50 = 0</Filter>
+      <LineSymbolizer stroke="#b49a7c" stroke-width="0.9" stroke-opacity="0.75"/>
+    </Rule>
+    <Rule>
+      <MinScaleDenominator>50000</MinScaleDenominator>
+      <MaxScaleDenominator>150000</MaxScaleDenominator>
+      <Filter>[property_value] % 50 = 0</Filter>
+      <LineSymbolizer stroke="#b49a7c" stroke-width="0.5" stroke-opacity="0.5"/>
+    </Rule>
+  </Style>
+
+  <Style name="cliffs">
+    <Rule>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <LineSymbolizer stroke="#8c7d6c" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <!-- Hill tops: every one close in, only the big ones further out. -->
+  <Style name="peaks">
+    <Rule>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <Filter>[name] != null</Filter>
+      <ShieldSymbolizer base="symbols" file="peak.svg"
+        face-name="DejaVu Sans Oblique" size="11" fill="#5a4a3a"
+        halo-fill="rgba(255,255,255,0.8)" halo-radius="1.5"
+        unlock-image="true" dy="12" allow-overlap="false">[label]</ShieldSymbolizer>
+    </Rule>
+    <Rule>
+      <MinScaleDenominator>50000</MinScaleDenominator>
+      <Filter>[name] != null and [ele] &gt;= 700</Filter>
+      <ShieldSymbolizer base="symbols" file="peak.svg"
+        face-name="DejaVu Sans Oblique" size="11" fill="#5a4a3a"
+        halo-fill="rgba(255,255,255,0.8)" halo-radius="1.5"
+        unlock-image="true" dy="12" allow-overlap="false">[label]</ShieldSymbolizer>
+    </Rule>
+  </Style>
+
   <Style name="motorway-refs">
     <Rule>
       <Filter>[ref] != null</Filter>
@@ -179,6 +259,23 @@
     </Datasource>
   </Layer>
 
+  <Layer name="landcover" srs="EPSG:27700">
+    <StyleName>landcover</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT area_id, kind, area_m2, geom
+          FROM osm_landcover
+        ) AS landcover
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
   <Layer name="water-areas" srs="EPSG:27700">
     <StyleName>water-areas</StyleName>
     <Datasource>
@@ -208,6 +305,40 @@
           FROM osm_waterways
           WHERE NOT tunnel
         ) AS waterways
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="hillshade" srs="EPSG:27700">
+    <StyleName>hillshade</StyleName>
+    <Datasource>
+      <Parameter name="type">gdal</Parameter>
+      <Parameter name="file">./terrain/shade.tif</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="contours" srs="EPSG:27700">
+    <StyleName>contours</StyleName>
+    <Datasource>
+      <Parameter name="type">ogr</Parameter>
+      <Parameter name="file">./terr50_gpkg_gb/Data/terr50_gb.gpkg</Parameter>
+      <Parameter name="layer">contour_line</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="cliffs" srs="EPSG:27700">
+    <StyleName>cliffs</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, geom
+          FROM osm_cliffs
+        ) AS cliffs
       ]]></Parameter>
       <Parameter name="geometry_field">geom</Parameter>
       <Parameter name="srid">27700</Parameter>
@@ -379,5 +510,27 @@
       <Parameter name="srid">27700</Parameter>
     </Datasource>
   </Layer>
-  
+
+  <!-- Last, so road shields win any label collisions. Highest first, so
+       the summit gets its label rather than a nearby top. -->
+  <Layer name="peaks" srs="EPSG:27700">
+    <StyleName>peaks</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT node_id, name, ele,
+                 name || COALESCE(E'\n' || round(ele)::int || ' m', '') AS label,
+                 geom
+          FROM osm_peaks
+          ORDER BY ele DESC NULLS LAST
+        ) AS peaks
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
 </Map>

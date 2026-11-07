@@ -34,7 +34,7 @@ struct RenderRecord: Codable, Sendable {
 /// should mark existing movies out of date.
 struct RenderInputs {
     private static let versions = [
-        "intro": 1, "outro": 1, "dials": 2, "route_map": 2, "annotation": 1, "final": 1,
+        "intro": 1, "outro": 1, "dials": 3, "route_map": 3, "annotation": 1, "final": 1,
         "final_fast": 1,
     ]
 

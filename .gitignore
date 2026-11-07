@@ -18,3 +18,8 @@ Sources/DriveBuilder/Resources/telemetry.sqlite3.pre-compass-labels
 
 # Coastline polygons for the maps: 1.2 GB, downloaded (see Maps/README.md)
 /Maps/osm_data/
+# OS Terrain 50 downloads, and the hill shading generated from them
+/Maps/terr50_*/
+/Maps/terrain/
+# OpenStreetMap extract the gb database is imported from (see Maps/README.md)
+/Maps/*.osm.pbf
