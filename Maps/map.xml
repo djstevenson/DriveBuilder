@@ -1,0 +1,383 @@
+<Map srs="EPSG:27700"
+     background-color="#aad3df">
+
+  <FileSource name="symbols">./symbols/</FileSource>
+
+  <Style name="land">
+    <Rule>
+      <PolygonSymbolizer fill="#e8e5dc"/>
+    </Rule>
+  </Style>
+
+  <Style name="motorway-refs">
+    <Rule>
+      <Filter>[ref] != null</Filter>
+
+      <ShieldSymbolizer
+        base="symbols"
+        file="motorway.svg"
+        face-name="DejaVu Sans Bold"
+        size="13"
+        fill="#ffffff"
+        placement="line"
+        spacing="300"
+        repeat-distance="250"
+        allow-overlap="false">
+          [ref]
+      </ShieldSymbolizer>
+    </Rule>
+  </Style>
+  <Style name="motorway-casing">
+    <Rule>
+      <LineSymbolizer stroke="#26456b" stroke-width="10" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+  <Style name="motorways">
+    <Rule>
+      <LineSymbolizer stroke="#4472b0" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="trunk-refs">
+    <Rule>
+      <Filter>[ref] != null</Filter>
+      <ShieldSymbolizer
+        base="symbols"
+        file="trunk.svg"
+        face-name="DejaVu Sans Bold"
+        size="12"
+        fill="#cccc00"
+        placement="line"
+        spacing="300"
+        repeat-distance="250">
+          [ref]
+        </ShieldSymbolizer>
+    </Rule>
+  </Style>
+  <Style name="trunk-casing">
+    <Rule>
+      <LineSymbolizer stroke="#456e38" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="trunk-roads">
+    <Rule>
+      <LineSymbolizer stroke="#009669" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="primary-refs">
+    <Rule>
+      <Filter>[ref] != null</Filter>
+      <ShieldSymbolizer
+        base="symbols"
+        file="primary.svg"
+        face-name="DejaVu Sans Bold"
+        size="12"
+        fill="#000000"
+        placement="line"
+        spacing="300"
+        repeat-distance="250">
+          [ref]
+        </ShieldSymbolizer>
+    </Rule>
+  </Style>
+  <Style name="primary-roads">
+    <Rule>
+      <LineSymbolizer stroke="#e1235a" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="secondary-roads">
+    <Rule>
+      <LineSymbolizer stroke="#be7837" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="tertiary-roads">
+    <Rule>
+      <LineSymbolizer stroke="#9f9f95" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="minor-roads">
+    <Rule>
+      <LineSymbolizer stroke="#c2c2bc" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <Style name="service-roads">
+    <Rule>
+      <LineSymbolizer stroke="#c2c2bc" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+  <!-- Inland water, in the background's sea colour. Close in (the zoomed
+       progress map is ~1:7,000) everything but garden ponds is drawn;
+       further out only water big enough to be more than a speck. -->
+  <Style name="water-areas">
+    <Rule>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <Filter>[area_m2] &gt;= 200</Filter>
+      <PolygonSymbolizer fill="#aad3df"/>
+    </Rule>
+    <Rule>
+      <MinScaleDenominator>50000</MinScaleDenominator>
+      <Filter>[area_m2] &gt;= 20000</Filter>
+      <PolygonSymbolizer fill="#aad3df"/>
+    </Rule>
+  </Style>
+
+  <Style name="waterways">
+    <Rule>
+      <Filter>[waterway] = 'river' or [waterway] = 'canal'</Filter>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <LineSymbolizer stroke="#aad3df" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+    <Rule>
+      <Filter>[waterway] = 'river' or [waterway] = 'canal'</Filter>
+      <MinScaleDenominator>50000</MinScaleDenominator>
+      <LineSymbolizer stroke="#aad3df" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+    <Rule>
+      <Filter>[waterway] = 'stream'</Filter>
+      <MaxScaleDenominator>50000</MaxScaleDenominator>
+      <LineSymbolizer stroke="#aad3df" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+    <Rule>
+      <Filter>[waterway] = 'drain' or [waterway] = 'ditch'</Filter>
+      <MaxScaleDenominator>25000</MaxScaleDenominator>
+      <LineSymbolizer stroke="#aad3df" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+    </Rule>
+  </Style>
+
+
+
+  <!-- Layer name="service" srs="EPSG:27700">
+    <StyleName>service-roads</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('service')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer -->
+  
+  <Layer name="land" srs="EPSG:4326">
+    <StyleName>land</StyleName>
+    <Datasource>
+      <Parameter name="type">shape</Parameter>
+      <Parameter name="file">./osm_data/land-polygons-split-4326/land_polygons.shp</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="water-areas" srs="EPSG:27700">
+    <StyleName>water-areas</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT area_id, kind, area_m2, geom
+          FROM osm_water_areas
+        ) AS water_areas
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="waterways" srs="EPSG:27700">
+    <StyleName>waterways</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, waterway, geom
+          FROM osm_waterways
+          WHERE NOT tunnel
+        ) AS waterways
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="minor" srs="EPSG:27700">
+    <StyleName>minor-roads</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('residential', 'unclassified', 'living_street')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="tertiary" srs="EPSG:27700">
+    <StyleName>tertiary-roads</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('tertiary', 'tertiary_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="secondary" srs="EPSG:27700">
+    <StyleName>secondary-roads</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('secondary', 'secondary_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="primary" srs="EPSG:27700">
+    <StyleName>primary-roads</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('primary', 'primary_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="trunk" srs="EPSG:27700">
+    <StyleName>trunk-casing</StyleName>
+    <StyleName>trunk-roads</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('trunk', 'trunk_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="motorways" srs="EPSG:27700">
+    <StyleName>motorway-casing</StyleName>
+    <StyleName>motorways</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('motorway', 'motorway_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <!-- Draw every road before any route shield, so a higher-class road
+       crossing a lower-class one cannot erase the lower-class label. -->
+  <Layer name="primary-refs" srs="EPSG:27700">
+    <StyleName>primary-refs</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('primary', 'primary_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="trunk-refs" srs="EPSG:27700">
+    <StyleName>trunk-refs</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('trunk', 'trunk_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+
+  <Layer name="motorway-refs" srs="EPSG:27700">
+    <StyleName>motorway-refs</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">gb</Parameter>
+      <Parameter name="user">davids</Parameter>
+      <Parameter name="table"><![CDATA[
+        (
+          SELECT way_id, highway, name, ref, geom_bng
+          FROM osm_roads
+          WHERE highway IN ('motorway', 'motorway_link')
+        ) AS roads
+      ]]></Parameter>
+      <Parameter name="geometry_field">geom_bng</Parameter>
+      <Parameter name="srid">27700</Parameter>
+    </Datasource>
+  </Layer>
+  
+</Map>

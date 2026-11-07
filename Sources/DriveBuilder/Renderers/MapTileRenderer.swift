@@ -50,12 +50,11 @@ enum MapTileError: Error, CustomStringConvertible {
     }
 }
 
-/// Renders map tiles by running the Perl project's `maprender.py`, a thin
-/// Mapnik wrapper over `map.xml` and its local OSM extract, so the Swift
-/// port produces identical cartography.
+/// Renders map tiles by running `maprender.py`, a thin Mapnik wrapper over
+/// `map.xml` and the `gb` PostGIS database (see `Maps/README.md`).
 struct MaprenderTileRenderer: MapTileRenderer {
-    /// The drive-builder Perl project checkout, containing `maprender.py`,
-    /// `map.xml`, and the OSM data they reference.
+    /// The package's `Maps` folder, containing `maprender.py`, `map.xml`,
+    /// and the coastline data they reference.
     let directory: URL
 
     /// Scales road widths, shields, and text to suit the output size;

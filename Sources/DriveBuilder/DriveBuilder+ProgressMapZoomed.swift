@@ -1,14 +1,13 @@
 import ArgumentParser
 import Foundation
 
-/// Where the Perl drive-builder checkout lives: the zoomed progress map
-/// shells out to its `maprender.py` (Mapnik over a local OSM extract) so the
-/// two pipelines produce identical cartography.
+/// Where the map stylesheets live: the map dials shell out to `maprender.py`
+/// (Mapnik over the `gb` PostGIS database) in the package's `Maps` folder.
 struct MapOptions: ParsableArguments {
     @Option(
         name: .customLong("map-dir"),
         help: "Directory containing maprender.py, map.xml, and the OSM data.")
-    var mapDirectory: String = "/Users/davids/src/perl/drive-builder"
+    var mapDirectory: String = JourneyRenderer.defaultMapDirectory
 
     var tileRenderer: MaprenderTileRenderer {
         MaprenderTileRenderer(directory: URL(filePath: mapDirectory))

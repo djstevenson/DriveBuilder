@@ -254,9 +254,14 @@ package struct JourneyRenderer: Sendable {
     /// Frame size for the progress maps: the footprint of a 2x2 dial grid,
     /// two 340px dials plus a 16px gap.
     package static let defaultMapPixelSize = TelemetryVideoRenderer.defaultMapPixelSize
-    /// Directory containing maprender.py, map.xml, and the OSM data
-    /// (see MapOptions).
-    package static let defaultMapDirectory = "/Users/davids/src/perl/drive-builder"
+    /// Directory containing maprender.py, map.xml, and the OSM data: the
+    /// package's `Maps` folder, found from this file so it works wherever
+    /// the repository is cloned (see MapOptions).
+    package static let defaultMapDirectory = URL(filePath: #filePath)
+        .deletingLastPathComponent()
+        .appending(path: "../../Maps")
+        .standardized
+        .path(percentEncoded: false)
 
     package var journeyID: Int64
     package var databasePath: String
