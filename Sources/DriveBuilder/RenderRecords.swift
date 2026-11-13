@@ -34,8 +34,8 @@ struct RenderRecord: Codable, Sendable {
 /// should mark existing movies out of date.
 struct RenderInputs {
     private static let versions = [
-        "intro": 1, "outro": 1, "dials": 3, "route_map": 3, "annotation": 1, "final": 1,
-        "final_fast": 1,
+        "intro": 1, "outro": 1, "dials": 3, "route_map": 3, "annotation": 1, "final": 2,
+        "final_fast": 2,
     ]
 
     /// The file names, under `output`, of the movies a journey's final
@@ -49,6 +49,7 @@ struct RenderInputs {
     let annotations: [Annotation]
     let routeMapLabels: [RouteMapLabel]
     let cameraOverrides: [CameraOverride]
+    let chapters: [Chapter]
     let outputDirectory: URL
 
     init(store: TelemetryStore, journey: JourneySummary) throws {
@@ -57,6 +58,7 @@ struct RenderInputs {
         annotations = try store.annotations(journeyID: journey.id)
         routeMapLabels = try store.routeMapLabels(journeyID: journey.id)
         cameraOverrides = try store.cameraOverrides(journeyID: journey.id)
+        chapters = try store.chapters(journeyID: journey.id)
         outputDirectory = URL(filePath: journey.directory).appending(path: "output")
     }
 
@@ -122,9 +124,10 @@ struct RenderInputs {
     }
 
     /// What both final videos read from the database: the footage and its
-    /// sync, the drive, and the camera overrides.
+    /// sync, the drive, the camera overrides, and the chapters.
     private var finalInputs: [String] {
         telemetry + segments.map { "\($0)" } + cameraOverrides.map { "\($0)" }
+            + chapters.map { "\($0.title) \($0.location)" }
     }
 
     /// The assembled clips' modification dates, so re-rendering one marks

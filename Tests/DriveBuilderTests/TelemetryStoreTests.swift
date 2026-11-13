@@ -187,6 +187,61 @@ private let salisbury = TrackLocation(latitude: 51.07412, longitude: -1.78681)
     #expect(try store.routeMapLabels(journeyID: 1).map(\.title) == ["A31 Near Ringwood"])
 }
 
+@Test func insertsUpdatesAndDeletesChapters() throws {
+    // Copy the fixture database rather than mutating the checked-in fixture.
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    // The fixture predates chapters: no table yet reads as none.
+    let store = TelemetryStore(path: databaseURL.path)
+    #expect(try store.chapters(journeyID: 1).isEmpty)
+
+    // The first insert creates the table.
+    try store.insertChapter(journeyID: 1, title: "Ringwood", location: ringwood)
+    try store.insertChapter(journeyID: 1, title: "Salisbury", location: salisbury)
+    var chapters = try store.chapters(journeyID: 1)
+    #expect(chapters.map(\.title) == ["Ringwood", "Salisbury"])
+    #expect(chapters.map(\.location) == [ringwood, salisbury])
+    #expect(chapters.map(\.journeyID) == [1, 1])
+    #expect(try store.chapters(journeyID: 999).isEmpty)
+
+    try store.updateChapter(id: chapters[0].id, title: "Leaving Bournemouth", location: bournemouth)
+    chapters = try store.chapters(journeyID: 1)
+    #expect(chapters[0].title == "Leaving Bournemouth")
+    #expect(chapters[0].location == bournemouth)
+    #expect(chapters[1].title == "Salisbury")
+
+    try store.deleteChapter(id: chapters[1].id)
+    #expect(try store.chapters(journeyID: 1).map(\.title) == ["Leaving Bournemouth"])
+
+    // Deleting the journey takes its chapters with it.
+    try store.deleteJourney(id: 1)
+    #expect(try store.chapters(journeyID: 1).isEmpty)
+}
+
+@Test func deletingAJourneyWorksBeforeTheChaptersTableExists() throws {
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "telemetry-store-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+        at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let databaseURL = tempDirectory.appending(path: "telemetry.sqlite3")
+    try FileManager.default.copyItem(
+        at: fixtureDirectory.appending(path: "telemetry.sqlite3"), to: databaseURL)
+
+    let store = TelemetryStore(path: databaseURL.path)
+    try store.deleteJourney(id: 1)
+    #expect(try store.journeyID(source: "Fixtures/A338 Northbound") == nil)
+}
+
 @Test func cachesAndReadsBackARoadsEndpoints() throws {
     // Copy the fixture database rather than mutating the checked-in fixture.
     let tempDirectory = FileManager.default.temporaryDirectory

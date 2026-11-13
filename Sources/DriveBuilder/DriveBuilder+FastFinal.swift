@@ -10,7 +10,8 @@ extension DriveBuilder {
                 + "but with the route map at 2x speed and the drive (footage, rear view, "
                 + "dials, and camera overrides) at --speed, silently and without the "
                 + "annotation banners, which would scroll past too fast to read. The intro "
-                + "and outro still play at real time. Requires intro.mov, route_map.mov, "
+                + "and outro still play at real time, and the chapter list is the same as "
+                + "the final command's, at the sped-up times. Requires intro.mov, route_map.mov, "
                 + "dials.mov, and outro.mov to have been rendered already.")
 
         @OptionGroup var telemetry: TelemetryOptions

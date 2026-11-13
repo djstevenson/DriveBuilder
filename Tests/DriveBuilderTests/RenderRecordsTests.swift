@@ -123,6 +123,28 @@ private struct Workspace {
     #expect(states["final.mov"] == .changed)
 }
 
+@Test func addingAChapterOnlyAffectsTheFinalVideos() throws {
+    let workspace = try Workspace()
+    defer { workspace.remove() }
+    for clip in RenderInputs.clipFiles {
+        try workspace.render(clip, secondsAgo: 120)
+    }
+    try workspace.render("final.mov")
+    try workspace.render("final_fast.mov")
+    #expect(try workspace.states()["final.mov"] == .upToDate)
+    #expect(try workspace.states()["final_fast.mov"] == .upToDate)
+
+    try workspace.store.insertChapter(
+        journeyID: 1, title: "Ringwood",
+        location: TrackLocation(latitude: 50.83991, longitude: -1.81230))
+
+    let states = try workspace.states()
+    #expect(states["dials.mov"] == .upToDate)
+    #expect(states["route_map.mov"] == .upToDate)
+    #expect(states["final.mov"] == .changed)
+    #expect(states["final_fast.mov"] == .changed)
+}
+
 @Test func reRenderingAClipMarksTheFinalVideoOutOfDate() throws {
     let workspace = try Workspace()
     defer { workspace.remove() }

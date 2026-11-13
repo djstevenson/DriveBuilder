@@ -30,7 +30,8 @@ package struct StartOffsets: Sendable, Equatable {
 
 /// Stitches the already-rendered clips into the final programme:
 /// intro → route map → (drive footage with the rear-view inset and dials on
-/// top) → outro, with a one-second cross-fade between each. The drive plays
+/// top) → outro, with a one-second cross-fade between each, and a chapter
+/// list for the player's menu (see `chapters`). The drive plays
 /// the journey's segments one after another, dipping to black at each join
 /// where something was cut out. The dials clip
 /// (dials.mov) is a standalone semi-transparent overlay (see
@@ -164,6 +165,27 @@ struct FinalVideoComposer {
     /// Annotations to composite over the drive segment, in the frame's
     /// bottom-left corner, each ending at its own `endSeconds`.
     var annotationClips: [AnnotationClip] = []
+
+    /// One chapter marker of the journey's own (see `Chapter`), to place
+    /// on the drive.
+    struct ChapterMark: Sendable, Equatable {
+        let title: String
+        /// Drive seconds (into the synced drive segment) at which the
+        /// chapter starts: when the track passes its location.
+        let driveSeconds: Double
+    }
+
+    /// The journey's own chapter markers, in any order. The movie's chapter
+    /// list is these at their final-video times, between two automatic
+    /// markers: `introChapterTitle` at the start, and `outroChapterTitle`
+    /// halfway through the drive's cross-fade into the outro. A chapter the
+    /// drive reaches during its cross-fade in from the route map is held
+    /// back to halfway through that fade too, so no chapter starts on a
+    /// frame that's mostly the previous part.
+    var chapters: [ChapterMark] = []
+
+    static let introChapterTitle = "Intro + Route Map"
+    static let outroChapterTitle = "Outro"
 
     var framesPerSecond: Int32 = 30
 
@@ -394,6 +416,9 @@ struct FinalVideoComposer {
 
         let cameraWindows = try await placeCameraOverrides(
             in: placed, visibleRange: CMTimeRange(start: routeEnd, end: outroStart),
+            timescale: timescale)
+        let chapterList = try placeChapters(
+            in: placed, dialsStart: dialsStart, outroStart: outroStart, fade: fade,
             timescale: timescale)
 
         let composition = AVMutableComposition()
@@ -932,12 +957,62 @@ struct FinalVideoComposer {
         defer { monitor.cancel() }
         try await session.export(to: url, as: .mov)
 
+        // The chapter list goes on afterwards: an export session can't
+        // carry one, and adding it only appends to the finished file.
+        try await ChapterTrackWriter.write(chapterList, to: url)
+        print("final: chapters:")
+        for chapter in chapterList {
+            print("  \(ClockTime.text(for: chapter.start.seconds.rounded(.down)))  \(chapter.title)")
+        }
+
         let elapsed = started.duration(to: .now)
         let seconds = elapsed / .seconds(1)
         print(
             String(
                 format: "final: wrote %.1fs in %.1fs to %@",
                 outroEnd.seconds, seconds, url.path(percentEncoded: false)))
+    }
+
+    // MARK: - Chapters
+
+    /// The movie's chapter list: the intro marker at zero, each of
+    /// `chapters` where the drive reaches it (held back to halfway through
+    /// the route map's cross-fade out, if it falls earlier), and the outro
+    /// marker halfway through the drive's cross-fade out, in time order. A
+    /// chapter that would fall at or after the outro marker - the drive
+    /// ends sooner than the telemetry, or the render is capped - is
+    /// skipped; two at the same moment are an error, as a player can't
+    /// show both.
+    private func placeChapters(
+        in segments: [PlacedSegment], dialsStart: CMTime, outroStart: CMTime, fade: CMTime,
+        timescale: CMTimeScale
+    ) throws -> [ChapterTrackWriter.Chapter] {
+        let halfFade = CMTimeMultiplyByRatio(fade, multiplier: 1, divisor: 2)
+        let earliest = dialsStart + halfFade
+        let outroMark = outroStart + halfFade
+        var list = [ChapterTrackWriter.Chapter(title: Self.introChapterTitle, start: .zero)]
+        for chapter in chapters.sorted(by: { $0.driveSeconds < $1.driveSeconds }) {
+            let reached = finalTime(
+                atDriveSeconds: chapter.driveSeconds, in: segments, timescale: timescale)
+            let start = max(reached, earliest)
+            guard start < outroMark else {
+                print(
+                    String(
+                        format: "final: skipping chapter \u{201C}%@\u{201D} - the drive doesn't "
+                            + "reach it before the outro (%.1fs into the drive).",
+                        chapter.title, chapter.driveSeconds))
+                continue
+            }
+            list.append(ChapterTrackWriter.Chapter(title: chapter.title, start: start))
+        }
+        list.append(ChapterTrackWriter.Chapter(title: Self.outroChapterTitle, start: outroMark))
+        for index in list.indices.dropFirst() where list[index].start <= list[index - 1].start {
+            throw CompositionError(
+                message: "Chapters \u{201C}\(list[index - 1].title)\u{201D} and "
+                    + "\u{201C}\(list[index].title)\u{201D} both start at "
+                    + "\(ClockTime.text(for: list[index].start.seconds)); move one of them.")
+        }
+        return list
     }
 
     // MARK: - Camera slot

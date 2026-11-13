@@ -961,17 +961,19 @@ struct TelemetryStore {
     }
 
     /// Removes a journey and its segments, telemetry, annotations,
-    /// route-map labels, and camera overrides in one transaction. The deletes are explicit
+    /// route-map labels, camera overrides, and chapters in one transaction. The deletes are explicit
     /// rather than relying on the schema's cascades: foreign keys aren't
     /// enforced without PRAGMA foreign_keys, and route_map_labels has no
     /// cascade anyway. Rendered output on disk stays put.
     func deleteJourney(id: Int64) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
+        try createChaptersTableIfNeeded(database)
 
         try execute(database, "BEGIN IMMEDIATE")
         do {
             for sql in [
+                "DELETE FROM chapters WHERE journey_id = ?",
                 "DELETE FROM route_map_labels WHERE journey_id = ?",
                 "DELETE FROM camera_overrides WHERE journey_id = ?",
                 "DELETE FROM annotations WHERE journey_id = ?",
@@ -1368,7 +1370,7 @@ struct TelemetryStore {
     }
 
     /// The location in a latitude column and the longitude column after it.
-    private static func location(_ statement: OpaquePointer?, column: Int32) -> TrackLocation {
+    static func location(_ statement: OpaquePointer?, column: Int32) -> TrackLocation {
         TrackLocation(
             latitude: sqlite3_column_double(statement, column),
             longitude: sqlite3_column_double(statement, column + 1))
