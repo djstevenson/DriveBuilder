@@ -13,6 +13,8 @@ enum JourneySheet: Identifiable {
     case editAnnotation(Annotation)
     case addRouteMapLabel
     case editRouteMapLabel(RouteMapLabel)
+    case addChapter
+    case editChapter(Chapter)
     case addCameraOverride
     case editCameraOverride(CameraOverride)
     case editSegment(SegmentEdit)
@@ -24,6 +26,8 @@ enum JourneySheet: Identifiable {
         case .editAnnotation(let annotation): "annotation-\(annotation.id)"
         case .addRouteMapLabel: "add-route-map-label"
         case .editRouteMapLabel(let label): "route-map-label-\(label.id)"
+        case .addChapter: "add-chapter"
+        case .editChapter(let chapter): "chapter-\(chapter.id)"
         case .addCameraOverride: "add-camera-override"
         case .editCameraOverride(let cameraOverride): "camera-override-\(cameraOverride.id)"
         case .editSegment(let edit): "segment-\(edit.id)"
@@ -37,6 +41,7 @@ enum JourneySheet: Identifiable {
 enum JourneyDeletion: Identifiable {
     case annotation(Annotation)
     case routeMapLabel(RouteMapLabel)
+    case chapter(Chapter)
     case cameraOverride(CameraOverride)
     case segment(JourneySegment)
 
@@ -44,6 +49,7 @@ enum JourneyDeletion: Identifiable {
         switch self {
         case .annotation(let annotation): "annotation-\(annotation.id)"
         case .routeMapLabel(let label): "route-map-label-\(label.id)"
+        case .chapter(let chapter): "chapter-\(chapter.id)"
         case .cameraOverride(let cameraOverride): "camera-override-\(cameraOverride.id)"
         case .segment(let segment): "segment-\(segment.id)"
         }
@@ -53,6 +59,7 @@ enum JourneyDeletion: Identifiable {
         switch self {
         case .annotation: "Delete annotation?"
         case .routeMapLabel: "Delete route map label?"
+        case .chapter: "Delete chapter?"
         case .cameraOverride: "Delete secondary camera selection?"
         case .segment: "Delete segment?"
         }
@@ -65,6 +72,9 @@ enum JourneyDeletion: Identifiable {
                 + "Its rendered movie, if any, stays on disk."
         case .routeMapLabel(let label):
             "\u{201C}\(label.title)\u{201D} will be removed from the database."
+        case .chapter(let chapter):
+            "\u{201C}\(chapter.title)\u{201D} will be removed from the database; the final "
+                + "videos need rendering again to lose the marker."
         case .cameraOverride(let cameraOverride):
             "The \(cameraOverride.camera.displayName.lowercased()) view from "
                 + "\(cameraOverride.startLocation.text) will be removed; the slot "

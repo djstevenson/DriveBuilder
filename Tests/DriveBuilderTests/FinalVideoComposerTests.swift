@@ -407,6 +407,7 @@ func aSpedUpRenderPlaysTheRouteMapAndDriveFaster() async throws {
     ) { _ in grey }
     composer.routeMapSpeed = 2
     composer.driveSpeed = 2
+    composer.chapters = [.init(title: "Second segment", driveSeconds: 5)]
 
     let output = directory.appending(path: "final.mov")
     try await composer.writeMovie(to: output)
@@ -416,6 +417,13 @@ func aSpedUpRenderPlaysTheRouteMapAndDriveFaster() async throws {
     // 4.5 s, half a second into the outro's 1 s.
     let duration = try await AVURLAsset(url: output).load(.duration).seconds
     #expect(abs(duration - 5) < 0.05, "duration \(duration)")
+
+    // Chapters at the sped-up times: 5 s into the drive is 2 s into the
+    // second segment, 1 s of final video after its 2.5 s start; the outro
+    // marker sits halfway through the 0.5 s fade that starts at 4 s.
+    let chapters = try await AVURLAsset(url: output).chapterList()
+    #expect(chapters.map(\.title) == ["Intro + Route Map", "Second segment", "Outro"])
+    #expect(chapters.map(\.start.seconds) == [0, 3.5, 4.25])
 
     let first = try await frame(of: output, at: 1.75)
     #expect(isClose(try rgb(first, backdrop.0, backdrop.1), to: [204, 204, 204]), "front.mov")
@@ -461,4 +469,79 @@ func aSpedUpRenderPlaysTheRouteMapAndDriveFaster() async throws {
     ).description
     #expect(message.contains("\u{201C}Start\u{201D}"))
     #expect(message.contains("start 6.2 s before the drive"))
+}
+
+// MARK: - Chapters
+
+@Test(.timeLimit(.minutes(2)))
+func theFinalVideoCarriesAChapterList() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try await writeCommonClips(in: directory)
+
+    var composer = composer(in: directory)
+    // In any order: 3 s into the drive is 4 s into the video; 0.1 s in
+    // falls inside the route map's 0.5 s fade out (1...1.5 s), so is held
+    // back to halfway through it; 20 s in is past the 8 s drive, so
+    // dropped.
+    composer.chapters = [
+        .init(title: "Past the end", driveSeconds: 20),
+        .init(title: "Salisbury", driveSeconds: 3),
+        .init(title: "Setting off", driveSeconds: 0.1),
+    ]
+    let output = directory.appending(path: "final.mov")
+    try await composer.writeMovie(to: output)
+
+    // The drive ends at 9 s, the outro fading in from 8.5 s: its marker at
+    // 8.75 s. The list is a disabled text track; the picture is untouched.
+    let asset = AVURLAsset(url: output)
+    let chapters = try await asset.chapterList()
+    #expect(chapters.map(\.title) == ["Intro + Route Map", "Setting off", "Salisbury", "Outro"])
+    #expect(chapters.map(\.start.seconds) == [0, 1.25, 4, 8.75])
+    let duration = try await asset.load(.duration).seconds
+    #expect(abs(duration - 9.5) < 0.05, "duration \(duration)")
+    let textTracks = try await asset.loadTracks(withMediaType: .text)
+    #expect(textTracks.count == 1)
+    #expect(try await textTracks.first?.load(.isEnabled) == false)
+    let image = try await frame(of: output, at: 4.0)
+    #expect(isClose(try rgb(image, backdrop.0, backdrop.1), to: [204, 204, 204]), "footage")
+}
+
+@Test(.timeLimit(.minutes(2)))
+func withoutChaptersOfItsOwnTheFinalVideoStillMarksTheIntroAndOutro() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try await writeCommonClips(in: directory)
+
+    let output = directory.appending(path: "final.mov")
+    try await composer(in: directory).writeMovie(to: output)
+
+    let chapters = try await AVURLAsset(url: output).chapterList()
+    #expect(chapters.map(\.title) == ["Intro + Route Map", "Outro"])
+    #expect(chapters.map(\.start.seconds) == [0, 8.75])
+}
+
+@Test(.timeLimit(.minutes(2)))
+func chaptersAtTheSameMomentFailTheRender() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try await writeCommonClips(in: directory)
+
+    var composer = composer(in: directory)
+    composer.chapters = [
+        .init(title: "Ringwood", driveSeconds: 3), .init(title: "A31", driveSeconds: 3),
+    ]
+    let error = await #expect(throws: (any Error).self) {
+        try await composer.writeMovie(to: directory.appending(path: "final.mov"))
+    }
+    let message = String(describing: error)
+    #expect(message.contains("Ringwood") && message.contains("A31") && message.contains("0:04"))
+}
+
+@Test func chapterSamplesAreLengthPrefixedUTF8() {
+    let data = ChapterTrackWriter.sampleData(for: "Café")
+    // 5 UTF-8 bytes, then the 12-byte 'encd' atom marking them UTF-8.
+    #expect(Array(data.prefix(2)) == [0, 5])
+    #expect(Array(data[2..<7]) == Array("Café".utf8))
+    #expect(Array(data.suffix(12)) == [0, 0, 0, 12, 0x65, 0x6E, 0x63, 0x64, 0, 0, 1, 0])
 }

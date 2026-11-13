@@ -24,6 +24,7 @@ enum JourneySection: String, CaseIterable, Identifiable {
     case sources
     case annotations
     case routeMapLabels
+    case chapters
     case cameraOverrides
 
     var id: Self { self }
@@ -34,6 +35,7 @@ enum JourneySection: String, CaseIterable, Identifiable {
         case .sources: "Sources"
         case .annotations: "Annotations"
         case .routeMapLabels: "Route Map Labels"
+        case .chapters: "Chapters"
         case .cameraOverrides: "Secondary Cameras"
         }
     }
@@ -44,6 +46,7 @@ enum JourneySection: String, CaseIterable, Identifiable {
         case .sources: "video"
         case .annotations: "text.bubble"
         case .routeMapLabels: "tag"
+        case .chapters: "bookmark"
         case .cameraOverrides: "camera.viewfinder"
         }
     }
@@ -67,6 +70,7 @@ struct JourneyDetailView: View {
     @State private var segments: [JourneySegment] = []
     @State private var annotations: [Annotation] = []
     @State private var routeMapLabels: [RouteMapLabel] = []
+    @State private var chapters: [Chapter] = []
     @State private var cameraOverrides: [CameraOverride] = []
     /// The journey's track and timeline, for when items happen; nil while
     /// loading, or if the journey has no telemetry or its segments can't be
@@ -123,6 +127,7 @@ struct JourneyDetailView: View {
             await loadSegments()
             await loadAnnotations()
             await loadRouteMapLabels()
+            await loadChapters()
             await loadCameraOverrides()
             await loadRenderStates()
         }
@@ -154,9 +159,9 @@ struct JourneyDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "\u{201C}\(journey.title)\u{201D} and its telemetry, annotations, and "
-                    + "route map labels will be removed from the database. Source videos "
-                    + "and rendered output on disk stay put.")
+                "\u{201C}\(journey.title)\u{201D} and its telemetry, annotations, "
+                    + "route map labels, chapters, and camera selections will be removed "
+                    + "from the database. Source videos and rendered output on disk stay put.")
         }
         .sheet(item: $sheet) { sheet in
             sheetContent(sheet)
@@ -201,6 +206,8 @@ struct JourneyDetailView: View {
             AnnotationsSection(journey: journey, annotations: annotations, placement: placement)
         case .routeMapLabels:
             RouteMapLabelsSection(labels: routeMapLabels, placement: placement)
+        case .chapters:
+            ChaptersSection(chapters: chapters, placement: placement)
         case .cameraOverrides:
             CameraOverridesSection(overrides: cameraOverrides, placement: placement)
         }
@@ -231,6 +238,14 @@ struct JourneyDetailView: View {
                 journey: journey, databasePath: path, label: label, placement: placement
             ) {
                 Task { await reload(.routeMapLabels) }
+            }
+        case .addChapter:
+            ChapterForm(journey: journey, databasePath: path, placement: placement) {
+                Task { await reload(.chapters) }
+            }
+        case .editChapter(let chapter):
+            ChapterForm(journey: journey, databasePath: path, chapter: chapter, placement: placement) {
+                Task { await reload(.chapters) }
             }
         case .addCameraOverride:
             CameraOverrideForm(
@@ -268,6 +283,9 @@ struct JourneyDetailView: View {
             case .routeMapLabel(let label):
                 try await library.deleteRouteMapLabel(id: label.id)
                 await reload(.routeMapLabels)
+            case .chapter(let chapter):
+                try await library.deleteChapter(id: chapter.id)
+                await reload(.chapters)
             case .cameraOverride(let cameraOverride):
                 try await library.deleteCameraOverride(id: cameraOverride.id)
                 await reload(.cameraOverrides)
@@ -288,6 +306,7 @@ struct JourneyDetailView: View {
         case .sources: await loadSegments()
         case .annotations: await loadAnnotations()
         case .routeMapLabels: await loadRouteMapLabels()
+        case .chapters: await loadChapters()
         case .cameraOverrides: await loadCameraOverrides()
         }
         await loadRenderStates()
@@ -309,6 +328,8 @@ struct JourneyDetailView: View {
             return renderedBadge(annotations.map(RenderComponent.component(for:)))
         case .routeMapLabels:
             return count(routeMapLabels.count)
+        case .chapters:
+            return count(chapters.count)
         case .cameraOverrides:
             return count(cameraOverrides.count)
         }
@@ -368,6 +389,12 @@ struct JourneyDetailView: View {
         routeMapLabels =
             (try? await JourneyLibrary(databasePath: model.databasePath)
                 .routeMapLabels(journeyID: journey.id)) ?? []
+    }
+
+    private func loadChapters() async {
+        chapters =
+            (try? await JourneyLibrary(databasePath: model.databasePath)
+                .chapters(journeyID: journey.id)) ?? []
     }
 
     private func loadRenderStates() async {

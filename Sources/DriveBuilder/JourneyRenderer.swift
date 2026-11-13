@@ -189,6 +189,35 @@ package struct JourneyLibrary: Sendable {
         try TelemetryStore(path: databasePath).deleteRouteMapLabel(id: id)
     }
 
+    /// A journey's chapter markers, in the order they were added. No rows
+    /// just means none have been authored yet; the intro and outro always
+    /// get markers of their own.
+    @concurrent
+    package func chapters(journeyID: Int64) async throws -> [Chapter] {
+        try TelemetryStore(path: databasePath).chapters(journeyID: journeyID)
+    }
+
+    /// Adds one chapter marker for `journeyID`, starting where the drive
+    /// passes `location`.
+    @concurrent
+    package func addChapter(journeyID: Int64, title: String, location: TrackLocation) async throws {
+        try TelemetryStore(path: databasePath).insertChapter(
+            journeyID: journeyID, title: title, location: location)
+    }
+
+    /// Rewrites one chapter marker's fields.
+    @concurrent
+    package func updateChapter(id: Int64, title: String, location: TrackLocation) async throws {
+        try TelemetryStore(path: databasePath).updateChapter(
+            id: id, title: title, location: location)
+    }
+
+    /// Removes one chapter marker.
+    @concurrent
+    package func deleteChapter(id: Int64) async throws {
+        try TelemetryStore(path: databasePath).deleteChapter(id: id)
+    }
+
     /// Adds a journey row with no telemetry yet, returning its id. The
     /// synchronisation offsets keep their 0.0 defaults. Throws
     /// `TelemetryStoreError.duplicateJourney` if `source` already names a
@@ -229,9 +258,9 @@ package struct JourneyLibrary: Sendable {
             id: id, source: source, roadType: roadType, roadNumber: roadNumber, title: title)
     }
 
-    /// Removes a journey and its telemetry, annotations, and route-map
-    /// labels in one transaction. Rendered output and source videos on
-    /// disk stay put.
+    /// Removes a journey and its telemetry, annotations, route-map labels,
+    /// camera overrides, and chapters in one transaction. Rendered output
+    /// and source videos on disk stay put.
     @concurrent
     package func deleteJourney(id: Int64) async throws {
         try TelemetryStore(path: databasePath).deleteJourney(id: id)
@@ -478,9 +507,10 @@ package struct JourneyRenderer: Sendable {
         }
     }
 
-    /// The assembled final video: `output/final.mov`. Requires intro.mov,
-    /// route_map.mov, dials.mov, outro.mov, and every annotation banner to
-    /// have been rendered already.
+    /// The assembled final video: `output/final.mov`, with chapter markers
+    /// for the intro, the database's `chapters` table, and the outro.
+    /// Requires intro.mov, route_map.mov, dials.mov, outro.mov, and every
+    /// annotation banner to have been rendered already.
     ///
     /// `driveSegmentSeconds` caps the drive segment for a quick sync check,
     /// like the CLI's --length; the intro and outro still play in full.
@@ -503,8 +533,9 @@ package struct JourneyRenderer: Sendable {
     /// intro and outro play at real time, the route map at
     /// `fastRouteMapSpeed`, and the drive at `driveSpeed`, silently and
     /// without annotation banners, which would scroll past too fast to
-    /// read. Requires intro.mov, route_map.mov, dials.mov, and outro.mov to
-    /// have been rendered already.
+    /// read, but with the same chapter markers at their sped-up times.
+    /// Requires intro.mov, route_map.mov, dials.mov, and outro.mov to have
+    /// been rendered already.
     ///
     /// `driveSegmentSeconds` caps the drive for a quick check, as for
     /// `renderFinal`; it counts seconds of the drive, before speeding up.
@@ -567,6 +598,14 @@ package struct JourneyRenderer: Sendable {
                 start: try placer.driveSeconds(at: override.startLocation, for: "\(item)'s start"),
                 end: try placer.driveSeconds(at: override.endLocation, for: "\(item)'s end"),
                 label: override.displayLabel)
+        }
+        // Chapters likewise start where the drive passes their locations;
+        // the composer adds the intro and outro markers itself.
+        composer.chapters = try store.chapters(journeyID: journeyID).map { chapter in
+            FinalVideoComposer.ChapterMark(
+                title: chapter.title,
+                driveSeconds: try placer.driveSeconds(
+                    at: chapter.location, for: "Chapter \"\(chapter.title)\""))
         }
         composer.maxDriveSegmentSeconds = driveSegmentSeconds
         composer.driveSpeed = driveSpeed

@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="100" x2="0" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14264a"/>
+      <stop offset="0.55" stop-color="#3d4f8a"/>
+      <stop offset="0.85" stop-color="#d9826a"/>
+      <stop offset="1" stop-color="#f7c27a"/>
+    </linearGradient>
+    <radialGradient id="sunglow" cx="655" cy="462" r="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffe3a3" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ffe3a3" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hillFar" x1="0" y1="430" x2="0" y2="620" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b7a8c"/>
+      <stop offset="1" stop-color="#3f5d6a"/>
+    </linearGradient>
+    <linearGradient id="hillMid" x1="0" y1="500" x2="0" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4f8a4a"/>
+      <stop offset="1" stop-color="#2f6634"/>
+    </linearGradient>
+    <linearGradient id="hillNear" x1="0" y1="600" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6aa84f"/>
+      <stop offset="1" stop-color="#3b7a2e"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="500" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6b6f78"/>
+      <stop offset="1" stop-color="#2e3138"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+    </clipPath>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+  <g clip-path="url(#tile)">
+    <!-- Sky and setting sun -->
+    <rect x="100" y="100" width="824" height="824" fill="url(#sky)"/>
+    <circle cx="655" cy="462" r="260" fill="url(#sunglow)"/>
+    <circle cx="655" cy="462" r="52" fill="#fff1c9"/>
+
+    <!-- Speedo arc across the sky, in the style of the app's dial -->
+    <g transform="translate(512 560)">
+      <path d="M -330 0 A 330 330 0 0 1 330 0" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="10"/>
+      <g stroke="#ffffff" stroke-linecap="round" stroke-width="12" stroke-opacity="0.85">
+        <line x1="0" y1="-330" x2="0" y2="-290" transform="rotate(-80)"/>
+        <line x1="0" y1="-330" x2="0" y2="-290" transform="rotate(-53.3)"/>
+        <line x1="0" y1="-330" x2="0" y2="-290" transform="rotate(-26.7)"/>
+        <line x1="0" y1="-330" x2="0" y2="-290" transform="rotate(0)"/>
+        <line x1="0" y1="-330" x2="0" y2="-290" transform="rotate(26.7)"/>
+        <line x1="0" y1="-330" x2="0" y2="-290" transform="rotate(53.3)"/>
+        <line x1="0" y1="-330" x2="0" y2="-290" transform="rotate(80)"/>
+      </g>
+      <g stroke="#ffffff" stroke-linecap="round" stroke-width="6" stroke-opacity="0.5">
+        <line x1="0" y1="-330" x2="0" y2="-305" transform="rotate(-66.7)"/>
+        <line x1="0" y1="-330" x2="0" y2="-305" transform="rotate(-40)"/>
+        <line x1="0" y1="-330" x2="0" y2="-305" transform="rotate(-13.3)"/>
+        <line x1="0" y1="-330" x2="0" y2="-305" transform="rotate(13.3)"/>
+        <line x1="0" y1="-330" x2="0" y2="-305" transform="rotate(40)"/>
+        <line x1="0" y1="-330" x2="0" y2="-305" transform="rotate(66.7)"/>
+      </g>
+    </g>
+
+    <!-- Far hills -->
+    <path d="M 100 520 C 180 470, 260 450, 340 480 S 470 500, 540 470 S 700 430, 800 470 S 900 500, 924 490 L 924 924 L 100 924 Z" fill="url(#hillFar)"/>
+    <!-- Mid hills with contour lines -->
+    <path d="M 100 600 C 200 540, 300 520, 400 560 S 560 610, 660 560 S 840 520, 924 580 L 924 924 L 100 924 Z" fill="url(#hillMid)"/>
+    <g fill="none" stroke="#9fd18a" stroke-opacity="0.35" stroke-width="4">
+      <path d="M 120 640 C 210 590, 300 575, 390 605 S 560 650, 660 605 S 830 570, 924 625"/>
+      <path d="M 100 690 C 200 640, 300 630, 390 655 S 560 695, 660 655 S 830 625, 924 675"/>
+    </g>
+    <!-- Near hills, dipping into a valley where the road runs -->
+    <path d="M 100 700 C 220 650, 330 660, 440 715 C 490 740, 540 742, 590 718 C 690 665, 820 655, 924 690 L 924 924 L 100 924 Z" fill="url(#hillNear)"/>
+    <path d="M 100 790 C 220 740, 330 750, 430 800 C 480 825, 560 828, 610 805 C 700 760, 820 748, 924 780 L 924 924 L 100 924 Z" fill="#3f8a33"/>
+    <!-- The road, winding away to the horizon -->
+    <path d="M 300 940
+             C 360 830, 470 790, 470 720
+             C 470 660, 400 640, 420 590
+             C 435 555, 500 535, 530 512
+             L 540 512
+             C 520 540, 470 562, 466 595
+             C 462 640, 560 665, 560 725
+             C 560 800, 640 840, 730 940 Z"
+          fill="url(#road)"/>
+    <!-- Centre line -->
+    <path d="M 515 940 C 515 830, 515 780, 515 725 C 515 660, 430 640, 443 592 C 452 560, 505 535, 535 512"
+          fill="none" stroke="#f4f4f4" stroke-linecap="round"
+          stroke-width="9" stroke-dasharray="34 30"/>
+
+    <!-- Red needle from the speedo, pointing up the road -->
+    <g transform="translate(512 560) rotate(32)">
+      <polygon points="0,-300 14,0 0,-12 -14,0" fill="#e31b23" stroke="#900" stroke-width="3"/>
+      <polygon points="0,-290 7,-6 0,-12" fill="#ffffff" opacity="0.25"/>
+    </g>
+    <circle cx="512" cy="560" r="24" fill="#d8d8d8" stroke="#555" stroke-width="5"/>
+
+    <!-- Glassy top sheen -->
+    <rect x="100" y="100" width="824" height="824" fill="url(#sheen)"/>
+  </g>
+  </g>
+</svg>
