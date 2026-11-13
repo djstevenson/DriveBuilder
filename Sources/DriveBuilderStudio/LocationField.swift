@@ -44,7 +44,7 @@ struct LocationField: View {
     @State private var movie: JourneyPlacement.Movie?
 
     var body: some View {
-        TextField(title, text: $text, prompt: Text("e.g. 51.0712, -1.7983"))
+        TextField(title, text: $text, prompt: Text("e.g. 51.0712,-1.7983"))
             .help(help)
             .accessibilityIdentifier("\(identifier)-location")
         LabeledContent {
@@ -76,7 +76,7 @@ struct LocationField: View {
     @ViewBuilder private var status: some View {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
-            Text("Paste a latitude, longitude, or use a time")
+            Text("Type or paste latitude,longitude, or use a time")
                 .foregroundStyle(.tertiary)
         } else if let location = TrackLocation(parsing: trimmed) {
             if let placement {
@@ -92,7 +92,7 @@ struct LocationField: View {
                 }
             }
         } else {
-            Text("Not a latitude, longitude")
+            Text("Not a latitude,longitude pair in signed decimal degrees")
                 .foregroundStyle(.red)
         }
     }

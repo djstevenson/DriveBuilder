@@ -51,35 +51,32 @@ private func northbound(samples: Int = 1000, east: (Int) -> Double = { _ in 0 })
 
 // MARK: - TrackLocation
 
-@Test func trackLocationParsesPastedAndDisplayedCoordinates() {
+@Test func trackLocationParsesSignedDecimalDegrees() {
     let expected = TrackLocation(latitude: 51.0712, longitude: -1.7983)
+    #expect(TrackLocation(parsing: "51.0712,-1.7983") == expected)
     #expect(TrackLocation(parsing: "51.0712, -1.7983") == expected)
-    #expect(TrackLocation(parsing: " 51.0712,-1.7983 ") == expected)
-    #expect(TrackLocation(parsing: "51.0712 -1.7983") == expected)
-    #expect(TrackLocation(parsing: "51.0712° N, 1.7983° W") == expected)
-    #expect(TrackLocation(parsing: "51.0712°N, 1.7983°W") == expected)
-    #expect(TrackLocation(parsing: "51.0712n 1.7983w") == expected)
-    #expect(
-        TrackLocation(parsing: "33.8° S, 151.2° E")
-            == TrackLocation(latitude: -33.8, longitude: 151.2))
+    #expect(TrackLocation(parsing: " 51.0712 , -1.7983 ") == expected)
+    #expect(TrackLocation(parsing: "+51.0712,-1.7983") == expected)
+    #expect(TrackLocation(parsing: "-33.8,151.2") == TrackLocation(latitude: -33.8, longitude: 151.2))
 }
 
-@Test func trackLocationRejectsMalformedOrOutOfRangeCoordinates() {
+@Test func trackLocationRejectsOtherFormsAndOutOfRangeCoordinates() {
     #expect(TrackLocation(parsing: "") == nil)
     #expect(TrackLocation(parsing: "51.0712") == nil)
     #expect(TrackLocation(parsing: "51.0712, -1.7983, 4") == nil)
     #expect(TrackLocation(parsing: "abc, def") == nil)
-    // A sign and a hemisphere together would be ambiguous.
-    #expect(TrackLocation(parsing: "51.0712° N, -1.7983° W") == nil)
-    // Hemispheres in the wrong order.
-    #expect(TrackLocation(parsing: "1.7983° W, 51.0712° N") == nil)
+    // Only the comma-separated signed form: no bare spaces, degree signs,
+    // or hemisphere letters.
+    #expect(TrackLocation(parsing: "51.0712 -1.7983") == nil)
+    #expect(TrackLocation(parsing: "51.0712° N, 1.7983° W") == nil)
+    #expect(TrackLocation(parsing: "51.0712N,1.7983W") == nil)
     #expect(TrackLocation(parsing: "91, 0") == nil)
     #expect(TrackLocation(parsing: "0, 181") == nil)
 }
 
 @Test func trackLocationTextRoundTrips() throws {
     let location = TrackLocation(latitude: 51.071234, longitude: -1.798311)
-    #expect(location.text == "51.07123°N, 1.79831°W")
+    #expect(location.text == "51.07123,-1.79831")
     let parsed = try #require(TrackLocation(parsing: location.text))
     #expect(abs(parsed.latitude - location.latitude) < 0.00001)
     #expect(abs(parsed.longitude - location.longitude) < 0.00001)
