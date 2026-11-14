@@ -39,7 +39,7 @@ struct TelemetryStore {
     let path: String
 
     /// Timestamps are stored without a zone designator, e.g. "2026-07-26T14:37:55.100", and are UTC.
-    private static let timestampStrategy = Date.ISO8601FormatStyle(timeZone: .gmt)
+    static let timestampStrategy = Date.ISO8601FormatStyle(timeZone: .gmt)
         .year().month().day()
         .dateTimeSeparator(.standard)
         .time(includingFractionalSeconds: true)
@@ -692,7 +692,7 @@ struct TelemetryStore {
         return journeys
     }
 
-    private static func date(_ statement: OpaquePointer?, column: Int32) throws -> Date? {
+    static func date(_ statement: OpaquePointer?, column: Int32) throws -> Date? {
         guard let raw = string(statement, column: column) else { return nil }
         guard let date = try? Date(raw, strategy: timestampStrategy) else {
             throw TelemetryStoreError.unparsableTimestamp(raw)
@@ -961,18 +961,25 @@ struct TelemetryStore {
     }
 
     /// Removes a journey and its segments, telemetry, annotations,
-    /// route-map labels, camera overrides, and chapters in one transaction. The deletes are explicit
-    /// rather than relying on the schema's cascades: foreign keys aren't
+    /// route-map labels, camera overrides, chapters, and YouTube records in one
+    /// transaction. The deletes are explicit rather than relying on the
+    /// schema's cascades: foreign keys aren't
     /// enforced without PRAGMA foreign_keys, and route_map_labels has no
     /// cascade anyway. Rendered output on disk stays put.
     func deleteJourney(id: Int64) throws {
         let database = try open(flags: SQLITE_OPEN_READWRITE)
         defer { sqlite3_close(database) }
         try createChaptersTableIfNeeded(database)
+        try createYouTubeTablesIfNeeded(database)
 
         try execute(database, "BEGIN IMMEDIATE")
         do {
             for sql in [
+                """
+                DELETE FROM youtube_playlist_items
+                WHERE youtube_video_id IN (SELECT id FROM youtube_videos WHERE journey_id = ?)
+                """,
+                "DELETE FROM youtube_videos WHERE journey_id = ?",
                 "DELETE FROM chapters WHERE journey_id = ?",
                 "DELETE FROM route_map_labels WHERE journey_id = ?",
                 "DELETE FROM camera_overrides WHERE journey_id = ?",
