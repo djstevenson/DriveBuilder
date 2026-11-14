@@ -23,17 +23,19 @@ struct YouTubeVideoCard: View {
         let fileURL = YouTubeModel.movieURL(journey: journey, variant: variant)
         let file = FileStatus(url: fileURL)
 
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
+        // The buttons share the title's line, so the details below get
+        // the full width rather than a strip beside them.
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
                 Text(variant.displayName)
                     .font(.appHeadline)
-                Text("Movie: \(file.summary)")
-                    .font(.appCaption)
-                    .foregroundStyle(file.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-                details(fileURL: fileURL)
+                Spacer()
+                buttons(fileExists: file.exists)
             }
-            Spacer()
-            buttons(fileExists: file.exists)
+            Text("Movie: \(file.summary)")
+                .font(.appCaption)
+                .foregroundStyle(file.exists ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+            details(fileURL: fileURL)
         }
         .padding(.vertical, 6)
     }
@@ -51,6 +53,15 @@ struct YouTubeVideoCard: View {
         return modified.timeIntervalSince(uploaded) > 1
     }
 
+    /// "Private · uploaded 14 Nov 2026 at 2:56".
+    private func uploadedLine(_ video: YouTubeVideo) -> String {
+        var parts = [video.privacy.displayName]
+        if let uploadedAt = video.uploadedAt {
+            parts.append("uploaded \(uploadedAt.formatted(date: .abbreviated, time: .shortened))")
+        }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
     @ViewBuilder
     private func details(fileURL: URL) -> some View {
         if isUploadingThis {
@@ -64,16 +75,12 @@ struct YouTubeVideoCard: View {
         } else if let video, video.isUploaded, let url = video.watchURL {
             Text(video.title)
                 .font(.appCallout)
-            HStack(spacing: 6) {
-                Text(video.privacy.displayName)
-                if let uploadedAt = video.uploadedAt {
-                    Text("\u{00B7} uploaded \(uploadedAt.formatted(date: .abbreviated, time: .shortened))")
-                }
-            }
-            .font(.appCaption)
-            .foregroundStyle(.secondary)
+            Text(uploadedLine(video))
+                .font(.appCaption)
+                .foregroundStyle(.secondary)
             Link(url.absoluteString, destination: url)
                 .font(.appCaption)
+                .lineLimit(1)
             if isGone {
                 Text("No longer on YouTube")
                     .font(.appCaption)
