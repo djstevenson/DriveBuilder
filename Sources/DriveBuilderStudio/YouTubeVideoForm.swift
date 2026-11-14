@@ -30,6 +30,9 @@ struct YouTubeVideoForm: View {
     @State private var newPlaylistTitle = ""
     @State private var isBusy = false
     @State private var error: String?
+    /// The rendered movie's chapters, for the description; nil until read,
+    /// or if the movie can't be.
+    @State private var chapters: YouTubeChapterList?
 
     private static let titleLimit = 100
     private static let descriptionLimit = 5000
@@ -58,7 +61,20 @@ struct YouTubeVideoForm: View {
                         .frame(minHeight: 120)
                         .accessibilityIdentifier("youtube-description")
                 }
-                counter(description.count, limit: Self.descriptionLimit)
+                HStack(alignment: .firstTextBaseline) {
+                    Button("Insert Chapters", systemImage: "bookmark") {
+                        if let chapters {
+                            description = YouTubeChapterList.inserting(chapters.text, into: description)
+                        }
+                    }
+                    .disabled(chapters?.entries.isEmpty ?? true)
+                    .help(
+                        "Add the movie's chapter list to the description, where YouTube reads "
+                            + "its chapters from (it ignores the chapter track in the file).")
+                    Spacer()
+                    counter(description.count, limit: Self.descriptionLimit)
+                }
+                chapterNotes
                 Picker("Visibility", selection: $privacy) {
                     ForEach(YouTubeVideo.Privacy.allCases) { privacy in
                         Text(privacy.displayName).tag(privacy)
@@ -93,6 +109,32 @@ struct YouTubeVideoForm: View {
                     (try? await JourneyLibrary(databasePath: youtube.databasePath)
                         .youtubePlaylistItems(videoRowID: video.id)) ?? []
                 playlistIDs = Set(items.map(\.playlistID))
+            }
+            let movieURL = YouTubeModel.movieURL(journey: edit.journey, variant: edit.variant)
+            chapters = try? await YouTubeChapterList.read(movieURL: movieURL)
+            // A fresh description starts as the chapter list, so YouTube
+            // gets chapters without a second thought.
+            if let chapters, !chapters.entries.isEmpty,
+                description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                description = chapters.text
+            }
+        }
+    }
+
+    /// Why YouTube would ignore the chapter list, or that the movie has
+    /// none to offer.
+    @ViewBuilder
+    private var chapterNotes: some View {
+        if let chapters {
+            if chapters.entries.isEmpty {
+                Text("The movie has no chapter track.")
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+            } else if !chapters.problems.isEmpty {
+                Text("YouTube would show no chapters: " + chapters.problems.joined(separator: " "))
+                    .font(.appCaption)
+                    .foregroundStyle(.orange)
             }
         }
     }
