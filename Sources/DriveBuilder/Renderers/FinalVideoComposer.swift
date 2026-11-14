@@ -176,16 +176,17 @@ struct FinalVideoComposer {
     }
 
     /// The journey's own chapter markers, in any order. The movie's chapter
-    /// list is these at their final-video times, between two automatic
-    /// markers: `introChapterTitle` at the start, and `outroChapterTitle`
-    /// halfway through the drive's cross-fade into the outro. A chapter the
-    /// drive reaches during its cross-fade in from the route map is held
-    /// back to halfway through that fade too, so no chapter starts on a
-    /// frame that's mostly the previous part.
+    /// list is these at their final-video times, after one automatic
+    /// marker, `introChapterTitle` at the start. The outro gets no marker
+    /// of its own: at about ten seconds it's too short for YouTube, which
+    /// drops a description's whole chapter list over one short chapter. A
+    /// chapter the drive reaches during its cross-fade in from the route
+    /// map is held back to halfway through that fade, so no chapter starts
+    /// on a frame that's mostly the previous part; one it only reaches
+    /// during the fade into the outro is dropped.
     var chapters: [ChapterMark] = []
 
     static let introChapterTitle = "Intro + Route Map"
-    static let outroChapterTitle = "Outro"
 
     var framesPerSecond: Int32 = 30
 
@@ -977,11 +978,11 @@ struct FinalVideoComposer {
 
     /// The movie's chapter list: the intro marker at zero, each of
     /// `chapters` where the drive reaches it (held back to halfway through
-    /// the route map's cross-fade out, if it falls earlier), and the outro
-    /// marker halfway through the drive's cross-fade out, in time order. A
-    /// chapter that would fall at or after the outro marker - the drive
-    /// ends sooner than the telemetry, or the render is capped - is
-    /// skipped; two at the same moment are an error, as a player can't
+    /// the route map's cross-fade out, if it falls earlier), in time order.
+    /// A chapter that would fall at or after halfway through the drive's
+    /// cross-fade into the outro - the drive ends sooner than the
+    /// telemetry, or the render is capped - is skipped; two at the same
+    /// moment are an error, as a player can't
     /// show both.
     private func placeChapters(
         in segments: [PlacedSegment], dialsStart: CMTime, outroStart: CMTime, fade: CMTime,
@@ -1005,7 +1006,6 @@ struct FinalVideoComposer {
             }
             list.append(ChapterTrackWriter.Chapter(title: chapter.title, start: start))
         }
-        list.append(ChapterTrackWriter.Chapter(title: Self.outroChapterTitle, start: outroMark))
         for index in list.indices.dropFirst() where list[index].start <= list[index - 1].start {
             throw CompositionError(
                 message: "Chapters \u{201C}\(list[index - 1].title)\u{201D} and "

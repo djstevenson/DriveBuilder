@@ -508,7 +508,7 @@ package struct JourneyRenderer: Sendable {
     }
 
     /// The assembled final video: `output/final.mov`, with chapter markers
-    /// for the intro, the database's `chapters` table, and the outro.
+    /// for the intro and the database's `chapters` table.
     /// Requires intro.mov, route_map.mov, dials.mov, outro.mov, and every
     /// annotation banner to have been rendered already.
     ///
@@ -600,7 +600,7 @@ package struct JourneyRenderer: Sendable {
                 label: override.displayLabel)
         }
         // Chapters likewise start where the drive passes their locations;
-        // the composer adds the intro and outro markers itself.
+        // the composer adds the intro marker itself.
         composer.chapters = try store.chapters(journeyID: journeyID).map { chapter in
             FinalVideoComposer.ChapterMark(
                 title: chapter.title,
