@@ -74,7 +74,7 @@ private func json(_ object: Any) -> Data {
     #expect(token.isExpired(at: now.addingTimeInterval(4000)))
 }
 
-@Test func loopbackServerHandsOverTheRedirectQuery() async throws {
+@Test(.timeLimit(.minutes(1))) func loopbackServerHandsOverTheRedirectQuery() async throws {
     let server = try await LoopbackRedirectServer()
     defer { server.stop() }
     #expect(server.port != 0)
@@ -88,7 +88,14 @@ private func json(_ object: Any) -> Data {
     #expect(try await query == ["state": "xyz", "code": "4/abc", "scope": "youtube"])
 }
 
-@Test func loopbackServerIgnoresOtherRequests() async throws {
+@Test(.timeLimit(.minutes(1))) func loopbackServerKeepsARedirectThatArrivesBeforeAnyoneWaits() async throws {
+    let server = try await LoopbackRedirectServer()
+    defer { server.stop() }
+    _ = try await URLSession.shared.data(from: URL(string: "\(server.redirectURI)/?code=early&state=s")!)
+    #expect(try await server.callback() == ["code": "early", "state": "s"])
+}
+
+@Test(.timeLimit(.minutes(1))) func loopbackServerIgnoresOtherRequests() async throws {
     let server = try await LoopbackRedirectServer()
     defer { server.stop() }
     let (_, response) = try await URLSession.shared.data(
@@ -96,7 +103,7 @@ private func json(_ object: Any) -> Data {
     #expect((response as? HTTPURLResponse)?.statusCode == 404)
 }
 
-@Test func signsInThroughTheBrowserAndLoopback() async throws {
+@Test(.timeLimit(.minutes(1))) func signsInThroughTheBrowserAndLoopback() async throws {
     let (store, directory) = try temporaryCredentialStore()
     defer { try? FileManager.default.removeItem(at: directory) }
     let host = "sign-in-test.invalid"
@@ -133,7 +140,7 @@ private func json(_ object: Any) -> Data {
             #expect(fields["redirect_uri"]?.hasPrefix("http://127.0.0.1:") == true)
             let verifier = fields["code_verifier"] ?? ""
             #expect(PKCE(verifier: verifier).challenge == challengeSeen.withLock { $0 })
-            return (
+            return StubResponse(
                 200,
                 json([
                     "access_token": "ya29.first", "expires_in": 3599, "refresh_token": "1//refresh",
@@ -143,9 +150,9 @@ private func json(_ object: Any) -> Data {
         case "/channels":
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ya29.first")
             #expect(request.url?.query()?.contains("mine=true") == true)
-            return (200, json(["items": [["id": "UCtest", "snippet": ["title": "Test Drives"]]]]))
+            return StubResponse(200, json(["items": [["id": "UCtest", "snippet": ["title": "Test Drives"]]]]))
         default:
-            return (404, Data())
+            return StubResponse(404, Data())
         }
     }
 
@@ -177,7 +184,7 @@ private func json(_ object: Any) -> Data {
     #expect(try await authenticator.accessToken() == "ya29.first")
 }
 
-@Test func rejectsARedirectWithTheWrongState() async throws {
+@Test(.timeLimit(.minutes(1))) func rejectsARedirectWithTheWrongState() async throws {
     let (store, directory) = try temporaryCredentialStore()
     defer { try? FileManager.default.removeItem(at: directory) }
     try store.save(YouTubeCredentials(client: testClient))
@@ -194,7 +201,7 @@ private func json(_ object: Any) -> Data {
     #expect(try store.load().token == nil)
 }
 
-@Test func reportsASignInTheUserDeclined() async throws {
+@Test(.timeLimit(.minutes(1))) func reportsASignInTheUserDeclined() async throws {
     let (store, directory) = try temporaryCredentialStore()
     defer { try? FileManager.default.removeItem(at: directory) }
     try store.save(YouTubeCredentials(client: testClient))
@@ -236,7 +243,7 @@ private func json(_ object: Any) -> Data {
         #expect(fields["refresh_token"] == "1//refresh")
         #expect(fields["client_secret"] == testClient.clientSecret)
         // Google leaves the refresh token out of refresh responses.
-        return (200, json(["access_token": "ya29.new", "expires_in": 3599, "token_type": "Bearer"]))
+        return StubResponse(200, json(["access_token": "ya29.new", "expires_in": 3599, "token_type": "Bearer"]))
     }
 
     #expect(try await authenticator.accessToken() == "ya29.new")
@@ -247,7 +254,7 @@ private func json(_ object: Any) -> Data {
 
     // A revoked refresh token surfaces Google's explanation.
     StubURLProtocol.register(host: host) { _, _ in
-        (400, json(["error": "invalid_grant", "error_description": "Token has been expired or revoked."]))
+        StubResponse(400, json(["error": "invalid_grant", "error_description": "Token has been expired or revoked."]))
     }
     try store.update { $0.token?.expiresAt = Date().addingTimeInterval(-10) }
     await #expect(
@@ -281,7 +288,7 @@ private func json(_ object: Any) -> Data {
     StubURLProtocol.register(host: host) { request, body in
         #expect(request.url?.path() == "/revoke")
         revoked.withLock { $0 = formFields(body)["token"] }
-        return (200, Data("{}".utf8))
+        return StubResponse(200, Data("{}".utf8))
     }
 
     try await authenticator.signOut()

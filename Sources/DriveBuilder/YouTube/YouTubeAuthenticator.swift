@@ -158,12 +158,13 @@ package actor YouTubeAuthenticator {
     // MARK: - Access tokens
 
     /// A valid access token for an API request, refreshed first if the
-    /// saved one has (nearly) expired.
-    package func accessToken() async throws -> String {
+    /// saved one has (nearly) expired, or regardless with `forceRefresh`
+    /// (for when Google has just rejected the saved one).
+    package func accessToken(forceRefresh: Bool = false) async throws -> String {
         let credentials = try store.load()
         guard let client = credentials.client else { throw YouTubeAuthError.noClient }
         guard let token = credentials.token else { throw YouTubeAuthError.notSignedIn }
-        guard token.isExpired() else { return token.accessToken }
+        guard forceRefresh || token.isExpired() else { return token.accessToken }
 
         let refreshed = try await requestToken(
             client: client,

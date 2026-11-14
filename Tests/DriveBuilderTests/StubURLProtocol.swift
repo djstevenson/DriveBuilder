@@ -5,8 +5,21 @@ import Synchronization
 /// registered per host, so tests running in parallel each use their own
 /// made-up host (e.g. `https://sign-in-test.invalid`) and never see each
 /// other's requests.
+/// What a stub answers with.
+struct StubResponse {
+    let status: Int
+    let body: Data
+    let headers: [String: String]
+
+    init(_ status: Int, _ body: Data, headers: [String: String] = [:]) {
+        self.status = status
+        self.body = body
+        self.headers = headers
+    }
+}
+
 final class StubURLProtocol: URLProtocol {
-    typealias Handler = @Sendable (URLRequest, Data?) throws -> (status: Int, body: Data)
+    typealias Handler = @Sendable (URLRequest, Data?) throws -> StubResponse
 
     private static let handlers = Mutex<[String: Handler]>([:])
 
@@ -43,12 +56,14 @@ final class StubURLProtocol: URLProtocol {
             return
         }
         do {
-            let (status, body) = try handler(request, Self.body(of: request))
+            let answer = try handler(request, Self.body(of: request))
+            var headers = ["Content-Type": "application/json"]
+            headers.merge(answer.headers) { _, new in new }
             let response = HTTPURLResponse(
-                url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"])!
+                url: request.url!, statusCode: answer.status, httpVersion: "HTTP/1.1",
+                headerFields: headers)!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocol(self, didLoad: answer.body)
             client?.urlProtocolDidFinishLoading(self)
         } catch {
             client?.urlProtocol(self, didFailWithError: error)

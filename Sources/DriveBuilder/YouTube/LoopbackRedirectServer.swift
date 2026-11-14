@@ -11,10 +11,19 @@ import Synchronization
 /// registering it, so this works without a custom URL scheme, which a bare
 /// SPM executable couldn't declare anyway.
 final class LoopbackRedirectServer: Sendable {
+    private typealias Continuation = CheckedContinuation<[String: String], any Error>
+
+    /// The hand-over between the redirect arriving and `callback()` asking
+    /// for it, whichever happens first: the redirect can land before the
+    /// task awaiting it has got as far as registering its continuation.
+    private struct Handover {
+        var waiter: Continuation?
+        var pendingQuery: [String: String]?
+    }
+
     private let listener: NWListener
     private let queue = DispatchQueue(label: "LoopbackRedirectServer")
-    /// The one waiting `callback()`, resumed by the first request in.
-    private let waiter = Mutex<CheckedContinuation<[String: String], any Error>?>(nil)
+    private let handover = Mutex(Handover())
     private let connections = Mutex<[NWConnection]>([])
 
     /// Starts listening. Throws if no loopback port could be bound.
@@ -54,10 +63,21 @@ final class LoopbackRedirectServer: Sendable {
     var redirectURI: String { "http://127.0.0.1:\(port)" }
 
     /// Waits for the browser's redirect and returns its query parameters
-    /// (`code` and `state`, or `error`), decoded.
+    /// (`code` and `state`, or `error`), decoded; at once if it has
+    /// already arrived.
     func callback() async throws -> [String: String] {
         try await withCheckedThrowingContinuation { continuation in
-            waiter.withLock { $0 = continuation }
+            let arrived = handover.withLock { handover -> [String: String]? in
+                if let query = handover.pendingQuery {
+                    handover.pendingQuery = nil
+                    return query
+                }
+                handover.waiter = continuation
+                return nil
+            }
+            if let arrived {
+                continuation.resume(returning: arrived)
+            }
         }
     }
 
@@ -121,11 +141,16 @@ final class LoopbackRedirectServer: Sendable {
                 + "<body style=\"font-family: -apple-system, sans-serif; padding: 2em\">"
                 + "<h1>Sign-in cancelled</h1><p>You can close this window.</p>"
         send(status: "200 OK", body: body, on: connection)
-        let continuation = waiter.withLock { waiter -> CheckedContinuation<[String: String], any Error>? in
-            defer { waiter = nil }
+        let waiter = handover.withLock { handover -> Continuation? in
+            guard let waiter = handover.waiter else {
+                // Nobody's asked yet: keep the first redirect for them.
+                if handover.pendingQuery == nil { handover.pendingQuery = query }
+                return nil
+            }
+            handover.waiter = nil
             return waiter
         }
-        continuation?.resume(returning: query)
+        waiter?.resume(returning: query)
     }
 
     private func send(status: String, body: String, on connection: NWConnection) {
