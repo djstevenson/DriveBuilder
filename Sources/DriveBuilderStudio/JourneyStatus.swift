@@ -17,7 +17,7 @@ nonisolated struct OutputFile: Sendable {
 }
 
 /// A snapshot of how far along one journey is, for the journeys list's
-/// status icons: which source files are on disk, which outputs have been
+/// status grid: which source files are on disk, which outputs have been
 /// rendered, and how many items have been authored.
 ///
 /// Built from the database and file `stat`s only; it never loads the
@@ -46,6 +46,19 @@ nonisolated struct JourneyStatus: Sendable {
         case unused
     }
 
+    /// The journey at a glance, for the colour of its row in the list.
+    enum Readiness: Sendable {
+        /// Every output is rendered from the current inputs.
+        case complete
+        /// Something is not rendered, or has changed since it was.
+        case renderNeeded
+        /// Something a render needs isn't there: telemetry, segments, or a
+        /// source file.
+        case missingData
+    }
+
+    /// Whether the journey's telemetry has been extracted.
+    let hasTelemetry: Bool
     let segmentCount: Int
     let cameras: [Camera: SourcePresence]
     /// The rendered standard outputs, keyed by `RenderComponent.relativePath`;
@@ -59,8 +72,10 @@ nonisolated struct JourneyStatus: Sendable {
     let annotationStates: [RenderState]
     let routeMapLabelCount: Int
     let cameraOverrideCount: Int
+    let chapterCount: Int
     /// Which of the final videos are on YouTube.
     let uploadedVariants: Set<YouTubeVideo.Variant>
+    let readiness: Readiness
 
     /// Reads every journey's status, off the main actor. A journey whose
     /// database rows can't be read is left out, so the list just shows no
@@ -90,6 +105,7 @@ nonisolated struct JourneyStatus: Sendable {
         let labels = try await library.routeMapLabels(journeyID: journey.id)
         let overrides = try await library.cameraOverrides(journeyID: journey.id)
         let youtubeVideos = try await library.youtubeVideos(journeyID: journey.id)
+        let chapters = try await library.chapters(journeyID: journey.id)
 
         let directory = URL(filePath: journey.directory)
         let video = directory.appending(path: "video")
@@ -131,11 +147,25 @@ nonisolated struct JourneyStatus: Sendable {
             renderStates["output/\($0.video).mov"] ?? .missing
         }
 
+        let hasTelemetry = journey.sampleCount > 0
+        // Missing data outranks stale outputs: nothing renders without it.
+        let readiness: Readiness =
+            if !hasTelemetry || segments.isEmpty || cameras.values.contains(.missing) {
+                .missingData
+            } else if outputPaths.contains(where: { (renderStates[$0] ?? .missing) != .upToDate })
+                || annotationStates.contains(where: { $0 != .upToDate })
+            {
+                .renderNeeded
+            } else {
+                .complete
+            }
+
         return JourneyStatus(
-            segmentCount: segments.count, cameras: cameras, outputs: outputs,
-            renderStates: renderStates, annotationCount: annotations.count,
+            hasTelemetry: hasTelemetry, segmentCount: segments.count, cameras: cameras,
+            outputs: outputs, renderStates: renderStates, annotationCount: annotations.count,
             annotationStates: annotationStates, routeMapLabelCount: labels.count,
-            cameraOverrideCount: overrides.count,
-            uploadedVariants: Set(youtubeVideos.filter(\.isUploaded).map(\.variant)))
+            cameraOverrideCount: overrides.count, chapterCount: chapters.count,
+            uploadedVariants: Set(youtubeVideos.filter(\.isUploaded).map(\.variant)),
+            readiness: readiness)
     }
 }
