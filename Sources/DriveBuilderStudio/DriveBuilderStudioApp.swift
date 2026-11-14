@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct DriveBuilderStudioApp: App {
     @State private var model = StudioModel()
+    @State private var youtubeAccount = YouTubeAccountModel()
 
     init() {
         // Running as a bare SPM executable rather than an .app bundle:
@@ -17,6 +18,7 @@ struct DriveBuilderStudioApp: App {
         Window("Journeys", id: "journeys") {
             JourneyListView()
                 .environment(model)
+                .environment(youtubeAccount)
                 .font(.appBody)
                 // Wide enough for the status strip plus all three row
                 // buttons (Extract Telemetry, Render All, Open).
@@ -30,8 +32,15 @@ struct DriveBuilderStudioApp: App {
         WindowGroup("Journey", for: Int64.self) { $journeyID in
             JourneyWindow(journeyID: journeyID)
                 .environment(model)
+                .environment(youtubeAccount)
                 .font(.appBody)
                 .frame(minWidth: 700, minHeight: 560)
+        }
+        // The settings window (⌘,): the YouTube account to upload to.
+        Settings {
+            YouTubeSettingsView()
+                .environment(youtubeAccount)
+                .font(.appBody)
         }
     }
 }
