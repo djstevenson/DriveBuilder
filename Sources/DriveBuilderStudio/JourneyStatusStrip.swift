@@ -55,6 +55,7 @@ struct JourneyStatusStrip: View {
             group {
                 outputIcon(.final, systemImage: "film")
                 outputIcon(.fastFinal, systemImage: "hare")
+                youtubeIcon
             }
             Divider().frame(height: 16)
             group {
@@ -119,6 +120,19 @@ struct JourneyStatusStrip: View {
             StatusIcon(
                 systemImage: systemImage, state: state, help: "\(component.name): \(detail)")
         }
+    }
+
+    /// How many of the two final videos are on YouTube.
+    private var youtubeIcon: some View {
+        let uploaded = status.uploadedVariants.count
+        let names = YouTubeVideo.Variant.allCases
+            .filter { status.uploadedVariants.contains($0) }
+            .map { $0.displayName.lowercased() }
+        return StatusIcon(
+            systemImage: "play.rectangle", state: uploaded == 0 ? .unused : .done,
+            count: "\(uploaded)/2",
+            help: uploaded == 0
+                ? "Nothing uploaded to YouTube" : "On YouTube: \(names.joined(separator: ", "))")
     }
 
     /// Whether the render in flight is one annotation banner or all of

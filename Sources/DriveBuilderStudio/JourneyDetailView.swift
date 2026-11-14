@@ -26,6 +26,7 @@ enum JourneySection: String, CaseIterable, Identifiable {
     case routeMapLabels
     case chapters
     case cameraOverrides
+    case youtube
 
     var id: Self { self }
 
@@ -37,6 +38,7 @@ enum JourneySection: String, CaseIterable, Identifiable {
         case .routeMapLabels: "Route Map Labels"
         case .chapters: "Chapters"
         case .cameraOverrides: "Secondary Cameras"
+        case .youtube: "YouTube"
         }
     }
 
@@ -48,6 +50,7 @@ enum JourneySection: String, CaseIterable, Identifiable {
         case .routeMapLabels: "tag"
         case .chapters: "bookmark"
         case .cameraOverrides: "camera.viewfinder"
+        case .youtube: "play.rectangle"
         }
     }
 }
@@ -60,6 +63,7 @@ enum JourneySection: String, CaseIterable, Identifiable {
 /// each section its slice plus a way to re-read it.
 struct JourneyDetailView: View {
     @Environment(StudioModel.self) private var model
+    @Environment(YouTubeModel.self) private var youtube
     @Environment(\.renderSettings) private var renderSettings
     @Environment(\.dismiss) private var dismiss
     let journey: JourneySummary
@@ -72,6 +76,7 @@ struct JourneyDetailView: View {
     @State private var routeMapLabels: [RouteMapLabel] = []
     @State private var chapters: [Chapter] = []
     @State private var cameraOverrides: [CameraOverride] = []
+    @State private var youtubeVideos: [YouTubeVideo] = []
     /// The journey's track and timeline, for when items happen; nil while
     /// loading, or if the journey has no telemetry or its segments can't be
     /// joined (see `placementError`).
@@ -129,7 +134,12 @@ struct JourneyDetailView: View {
             await loadRouteMapLabels()
             await loadChapters()
             await loadCameraOverrides()
+            await loadYouTubeVideos()
             await loadRenderStates()
+        }
+        // Uploads finish and details change outside this window's control.
+        .task(id: youtube.videosVersion) {
+            await loadYouTubeVideos()
         }
         .task(
             id: PlacementLoadKey(
@@ -210,6 +220,8 @@ struct JourneyDetailView: View {
             ChaptersSection(chapters: chapters, placement: placement)
         case .cameraOverrides:
             CameraOverridesSection(overrides: cameraOverrides, placement: placement)
+        case .youtube:
+            YouTubeSection(journey: journey, videos: youtubeVideos)
         }
     }
 
@@ -270,6 +282,10 @@ struct JourneyDetailView: View {
             }
         case .movie(let url, let title):
             MoviePlayerView(url: url, title: title)
+        case .youtubeVideo(let edit):
+            YouTubeVideoForm(edit: edit) {
+                Task { await reload(.youtube) }
+            }
         }
     }
 
@@ -308,6 +324,7 @@ struct JourneyDetailView: View {
         case .routeMapLabels: await loadRouteMapLabels()
         case .chapters: await loadChapters()
         case .cameraOverrides: await loadCameraOverrides()
+        case .youtube: await loadYouTubeVideos()
         }
         await loadRenderStates()
     }
@@ -332,6 +349,8 @@ struct JourneyDetailView: View {
             return count(chapters.count)
         case .cameraOverrides:
             return count(cameraOverrides.count)
+        case .youtube:
+            return count(youtubeVideos.count { $0.isUploaded })
         }
     }
 
@@ -401,6 +420,12 @@ struct JourneyDetailView: View {
         renderStates =
             (try? await JourneyLibrary(databasePath: model.databasePath)
                 .renderStates(journey: journey)) ?? [:]
+    }
+
+    private func loadYouTubeVideos() async {
+        youtubeVideos =
+            (try? await JourneyLibrary(databasePath: model.databasePath)
+                .youtubeVideos(journeyID: journey.id)) ?? []
     }
 
     private func loadCameraOverrides() async {

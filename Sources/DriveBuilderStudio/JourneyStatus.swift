@@ -59,6 +59,8 @@ nonisolated struct JourneyStatus: Sendable {
     let annotationStates: [RenderState]
     let routeMapLabelCount: Int
     let cameraOverrideCount: Int
+    /// Which of the final videos are on YouTube.
+    let uploadedVariants: Set<YouTubeVideo.Variant>
 
     /// Reads every journey's status, off the main actor. A journey whose
     /// database rows can't be read is left out, so the list just shows no
@@ -87,6 +89,7 @@ nonisolated struct JourneyStatus: Sendable {
         let annotations = try await library.annotations(journeyID: journey.id)
         let labels = try await library.routeMapLabels(journeyID: journey.id)
         let overrides = try await library.cameraOverrides(journeyID: journey.id)
+        let youtubeVideos = try await library.youtubeVideos(journeyID: journey.id)
 
         let directory = URL(filePath: journey.directory)
         let video = directory.appending(path: "video")
@@ -132,6 +135,7 @@ nonisolated struct JourneyStatus: Sendable {
             segmentCount: segments.count, cameras: cameras, outputs: outputs,
             renderStates: renderStates, annotationCount: annotations.count,
             annotationStates: annotationStates, routeMapLabelCount: labels.count,
-            cameraOverrideCount: overrides.count)
+            cameraOverrideCount: overrides.count,
+            uploadedVariants: Set(youtubeVideos.filter(\.isUploaded).map(\.variant)))
     }
 }

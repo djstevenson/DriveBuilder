@@ -19,6 +19,7 @@ enum JourneySheet: Identifiable {
     case editCameraOverride(CameraOverride)
     case editSegment(SegmentEdit)
     case movie(url: URL, title: String)
+    case youtubeVideo(YouTubeVideoEdit)
 
     var id: String {
         switch self {
@@ -32,6 +33,7 @@ enum JourneySheet: Identifiable {
         case .editCameraOverride(let cameraOverride): "camera-override-\(cameraOverride.id)"
         case .editSegment(let edit): "segment-\(edit.id)"
         case .movie(let url, _): "movie-\(url.path(percentEncoded: false))"
+        case .youtubeVideo(let edit): edit.id
         }
     }
 }

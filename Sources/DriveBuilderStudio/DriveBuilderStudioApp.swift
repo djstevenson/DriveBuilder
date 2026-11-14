@@ -3,10 +3,18 @@ import SwiftUI
 
 @main
 struct DriveBuilderStudioApp: App {
-    @State private var model = StudioModel()
-    @State private var youtubeAccount = YouTubeAccountModel()
+    @State private var model: StudioModel
+    @State private var youtubeAccount: YouTubeAccountModel
+    @State private var youtube: YouTubeModel
 
     init() {
+        let model = StudioModel()
+        let account = YouTubeAccountModel()
+        _model = State(initialValue: model)
+        _youtubeAccount = State(initialValue: account)
+        _youtube = State(
+            initialValue: YouTubeModel(account: account, databasePath: model.databasePath))
+
         // Running as a bare SPM executable rather than an .app bundle:
         // promote the process to a regular app so it gets a Dock icon,
         // a menu bar, and key-window focus.
@@ -19,12 +27,17 @@ struct DriveBuilderStudioApp: App {
             JourneyListView()
                 .environment(model)
                 .environment(youtubeAccount)
+                .environment(youtube)
                 .font(.appBody)
                 // Wide enough for the status strip plus all three row
                 // buttons (Extract Telemetry, Render All, Open).
                 .frame(minWidth: 960, minHeight: 400)
                 .onAppear {
                     NSApplication.shared.activate()
+                }
+                .task {
+                    await youtubeAccount.task()
+                    await youtube.task()
                 }
         }
         // One window per journey, keyed by its id, so opening a journey
@@ -33,6 +46,7 @@ struct DriveBuilderStudioApp: App {
             JourneyWindow(journeyID: journeyID)
                 .environment(model)
                 .environment(youtubeAccount)
+                .environment(youtube)
                 .font(.appBody)
                 .frame(minWidth: 700, minHeight: 560)
         }
