@@ -419,11 +419,11 @@ func aSpedUpRenderPlaysTheRouteMapAndDriveFaster() async throws {
     #expect(abs(duration - 5) < 0.05, "duration \(duration)")
 
     // Chapters at the sped-up times: 5 s into the drive is 2 s into the
-    // second segment, 1 s of final video after its 2.5 s start; the outro
-    // marker sits halfway through the 0.5 s fade that starts at 4 s.
+    // second segment, 1 s of final video after its 2.5 s start. The outro
+    // gets no marker.
     let chapters = try await AVURLAsset(url: output).chapterList()
-    #expect(chapters.map(\.title) == ["Intro + Route Map", "Second segment", "Outro"])
-    #expect(chapters.map(\.start.seconds) == [0, 3.5, 4.25])
+    #expect(chapters.map(\.title) == ["Intro + Route Map", "Second segment"])
+    #expect(chapters.map(\.start.seconds) == [0, 3.5])
 
     let first = try await frame(of: output, at: 1.75)
     #expect(isClose(try rgb(first, backdrop.0, backdrop.1), to: [204, 204, 204]), "front.mov")
@@ -492,12 +492,12 @@ func theFinalVideoCarriesAChapterList() async throws {
     let output = directory.appending(path: "final.mov")
     try await composer.writeMovie(to: output)
 
-    // The drive ends at 9 s, the outro fading in from 8.5 s: its marker at
-    // 8.75 s. The list is a disabled text track; the picture is untouched.
+    // The outro gets no marker of its own. The list is a disabled text
+    // track; the picture is untouched.
     let asset = AVURLAsset(url: output)
     let chapters = try await asset.chapterList()
-    #expect(chapters.map(\.title) == ["Intro + Route Map", "Setting off", "Salisbury", "Outro"])
-    #expect(chapters.map(\.start.seconds) == [0, 1.25, 4, 8.75])
+    #expect(chapters.map(\.title) == ["Intro + Route Map", "Setting off", "Salisbury"])
+    #expect(chapters.map(\.start.seconds) == [0, 1.25, 4])
     let duration = try await asset.load(.duration).seconds
     #expect(abs(duration - 9.5) < 0.05, "duration \(duration)")
     let textTracks = try await asset.loadTracks(withMediaType: .text)
@@ -508,7 +508,7 @@ func theFinalVideoCarriesAChapterList() async throws {
 }
 
 @Test(.timeLimit(.minutes(2)))
-func withoutChaptersOfItsOwnTheFinalVideoStillMarksTheIntroAndOutro() async throws {
+func withoutChaptersOfItsOwnTheFinalVideoStillMarksTheIntro() async throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     try await writeCommonClips(in: directory)
@@ -517,8 +517,8 @@ func withoutChaptersOfItsOwnTheFinalVideoStillMarksTheIntroAndOutro() async thro
     try await composer(in: directory).writeMovie(to: output)
 
     let chapters = try await AVURLAsset(url: output).chapterList()
-    #expect(chapters.map(\.title) == ["Intro + Route Map", "Outro"])
-    #expect(chapters.map(\.start.seconds) == [0, 8.75])
+    #expect(chapters.map(\.title) == ["Intro + Route Map"])
+    #expect(chapters.map(\.start.seconds) == [0])
 }
 
 @Test(.timeLimit(.minutes(2)))

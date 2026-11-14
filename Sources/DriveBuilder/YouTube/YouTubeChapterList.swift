@@ -7,7 +7,7 @@ import Foundation
 ///
 /// Read from the rendered movie rather than the database, so the times are
 /// the ones in the file: the fast final's are sped up, and the automatic
-/// intro and outro markers are included.
+/// intro marker is included.
 package struct YouTubeChapterList: Sendable, Equatable {
     package struct Entry: Sendable, Equatable {
         package let title: String

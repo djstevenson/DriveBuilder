@@ -3,8 +3,8 @@ import SwiftUI
 
 /// The journey window's Chapters section: the journey's own chapter
 /// markers in the final videos, in track order, with add, edit, and
-/// delete. The intro and outro markers are added at render time, so they
-/// aren't listed here.
+/// delete. The intro's marker is added at render time, so it isn't listed
+/// here.
 struct ChaptersSection: View {
     @Environment(\.journeyPresenter) private var presenter
     let chapters: [Chapter]
@@ -41,9 +41,8 @@ struct ChaptersSection: View {
                     ContentUnavailableView(
                         "No chapters yet", systemImage: "bookmark",
                         description: Text(
-                            "Markers in the final videos' chapter menus, between the automatic "
-                                + "\u{201C}Intro + Route Map\u{201D} and \u{201C}Outro\u{201D} "
-                                + "chapters."))
+                            "Markers in the final videos' chapter menus, after the automatic "
+                                + "\u{201C}Intro + Route Map\u{201D} chapter."))
                 }
             }
         }

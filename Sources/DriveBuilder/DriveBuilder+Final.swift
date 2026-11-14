@@ -19,8 +19,8 @@ extension DriveBuilder {
                 + "bottom of the drive segment, each ending as the journey passes its end "
                 + "location; camera overrides likewise run between the locations bounding "
                 + "them. The movie gets a chapter list: \"Intro + Route Map\" at the start, "
-                + "each of the database's \"chapters\" rows where the drive passes its "
-                + "location, and \"Outro\" halfway through the fade into the outro. Requires "
+                + "then each of the database's \"chapters\" rows where the drive passes its "
+                + "location (the outro, too short a chapter for YouTube, gets none). Requires "
                 + "intro.mov, route_map.mov, dials.mov, and outro.mov "
                 + "to have been rendered already.")
 
