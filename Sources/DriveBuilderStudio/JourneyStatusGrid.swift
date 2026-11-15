@@ -140,10 +140,8 @@ struct JourneyStatusGrid: View {
         let file = status.outputs[component.relativePath]
         let renderState = status.renderStates[component.relativePath] ?? .missing
         let state: CellState =
-            if let activeRender, activeRender.componentID == component.id {
-                .rendering(.overall)
-            } else if isProjectStep(component.id) {
-                .rendering(.step)
+            if let source = model.progressSource(journeyID: journey.id, componentID: component.id) {
+                .rendering(source)
             } else {
                 switch renderState {
                 case .missing: .notRendered
@@ -153,13 +151,6 @@ struct JourneyStatusGrid: View {
             }
         let detail = renderState.staleReason ?? file?.summary ?? "Not rendered"
         return StatusItem(name: component.name, detail: detail, state: state)
-    }
-
-    /// Whether a whole-project render of this journey is on the step that
-    /// produces the component.
-    private func isProjectStep(_ componentID: String) -> Bool {
-        activeRender?.componentID == RenderComponent.project.id
-            && model.activeStepComponentID == componentID
     }
 
     /// Whether the render in flight is one annotation banner or all of
@@ -179,8 +170,10 @@ struct JourneyStatusGrid: View {
         let state: CellState =
             if isRenderingAnnotations {
                 .rendering(.overall)
-            } else if isProjectStep(RenderComponent.allAnnotations.id) {
-                .rendering(.step)
+            } else if let source = model.progressSource(
+                journeyID: journey.id, componentID: RenderComponent.allAnnotations.id)
+            {
+                .rendering(source)
             } else if total == 0 {
                 .unused
             } else if missing > 0 {

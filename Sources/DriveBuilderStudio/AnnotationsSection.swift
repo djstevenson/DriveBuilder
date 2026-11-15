@@ -15,9 +15,10 @@ struct AnnotationsSection: View {
 
     var body: some View {
         SectionPage(title: "Annotations") {
-            if isRenderingAll {
-                ProgressView()
-                    .controlSize(.small)
+            if let source = model.progressSource(
+                journeyID: journey.id, componentID: RenderComponent.allAnnotations.id)
+            {
+                RenderProgressIndicator(style: .ringWithPercentage, source: source)
                     .padding(.trailing, 4)
             }
             Button("Render All Annotations") {
@@ -51,12 +52,6 @@ struct AnnotationsSection: View {
                 }
             }
         }
-    }
-
-    private var isRenderingAll: Bool {
-        guard let active = model.activeRender else { return false }
-        return active.journeyID == journey.id
-            && active.componentID == RenderComponent.allAnnotations.id
     }
 
     /// The annotations in the order they finish, once the track's loaded.

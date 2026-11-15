@@ -117,6 +117,25 @@ final class StudioModel {
 
     var isRendering: Bool { activeRender != nil }
 
+    /// Which progress a component's own dial should show, or nil when the
+    /// component isn't being rendered: the whole render's when it's the
+    /// component itself, the step's when a whole-project render of the
+    /// journey is on the step that produces it.
+    func progressSource(
+        journeyID: Int64, componentID: String
+    ) -> RenderProgressIndicator.Source? {
+        guard let activeRender, activeRender.journeyID == journeyID else { return nil }
+        if activeRender.componentID == componentID {
+            return .overall
+        }
+        if activeRender.componentID == RenderComponent.project.id,
+            activeStepComponentID == componentID
+        {
+            return .step
+        }
+        return nil
+    }
+
     func journey(id: Int64) -> JourneySummary? {
         journeys.first { $0.id == id }
     }
