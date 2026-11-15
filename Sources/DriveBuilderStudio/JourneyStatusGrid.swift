@@ -13,8 +13,9 @@ private enum CellState {
     case problem
     /// Not applicable, e.g. a side camera the journey doesn't use.
     case unused
-    /// Rendering right now: a progress ring replaces the indicator.
-    case rendering
+    /// Rendering right now: a progress ring replaces the indicator,
+    /// reading either the whole render's progress or the current step's.
+    case rendering(RenderProgressIndicator.Source)
 }
 
 /// One row of a column: a named item with its state and a word or two of
@@ -50,6 +51,7 @@ extension JourneyStatus.Readiness {
 /// grid of named items with a coloured state indicator and a short detail,
 /// so nothing needs a tooltip to be understood.
 struct JourneyStatusGrid: View {
+    @Environment(StudioModel.self) private var model
     let journey: JourneySummary
     let status: JourneyStatus
     /// The render in flight, if it's for this journey.
@@ -139,7 +141,9 @@ struct JourneyStatusGrid: View {
         let renderState = status.renderStates[component.relativePath] ?? .missing
         let state: CellState =
             if let activeRender, activeRender.componentID == component.id {
-                .rendering
+                .rendering(.overall)
+            } else if isProjectStep(component.id) {
+                .rendering(.step)
             } else {
                 switch renderState {
                 case .missing: .notRendered
@@ -149,6 +153,13 @@ struct JourneyStatusGrid: View {
             }
         let detail = renderState.staleReason ?? file?.summary ?? "Not rendered"
         return StatusItem(name: component.name, detail: detail, state: state)
+    }
+
+    /// Whether a whole-project render of this journey is on the step that
+    /// produces the component.
+    private func isProjectStep(_ componentID: String) -> Bool {
+        activeRender?.componentID == RenderComponent.project.id
+            && model.activeStepComponentID == componentID
     }
 
     /// Whether the render in flight is one annotation banner or all of
@@ -167,7 +178,9 @@ struct JourneyStatusGrid: View {
         let stale = total - upToDate - missing
         let state: CellState =
             if isRenderingAnnotations {
-                .rendering
+                .rendering(.overall)
+            } else if isProjectStep(RenderComponent.allAnnotations.id) {
+                .rendering(.step)
             } else if total == 0 {
                 .unused
             } else if missing > 0 {
@@ -221,8 +234,8 @@ private struct StateIndicator: View {
     var body: some View {
         Group {
             switch state {
-            case .rendering:
-                RenderProgressIndicator(style: .ring)
+            case .rendering(let source):
+                RenderProgressIndicator(style: .ring, source: source)
             case .done:
                 dot(.green)
             case .stale:

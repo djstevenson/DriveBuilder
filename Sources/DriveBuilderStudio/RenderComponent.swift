@@ -54,6 +54,22 @@ struct RenderComponent: Identifiable, Equatable {
             relativePath: "output/\(annotation.video).mov")
     }
 
+    /// The component a whole-project render's step produces, for the
+    /// step's own progress dial.
+    static func component(for step: ProjectStep) -> RenderComponent {
+        let kind: Kind
+        switch step {
+        case .intro: kind = .intro
+        case .routeMap: kind = .routeMap
+        case .dials: kind = .dials
+        case .annotations: return allAnnotations
+        case .outro: kind = .outro
+        case .final: kind = .final
+        }
+        // Every standard kind has a row in `standardComponents`.
+        return standardComponents.first { $0.kind == kind } ?? project
+    }
+
     /// The clip rows for a journey, in programme order. Annotations are not
     /// included: they live in their own section of the journey pane (see
     /// `JourneyDetailView`).

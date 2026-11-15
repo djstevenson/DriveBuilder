@@ -92,6 +92,13 @@ final class StudioModel {
     /// indicators themselves (see `RenderProgressIndicator`): it changes
     /// hundreds of times a render.
     private(set) var renderProgress = RenderProgress.preparing
+    /// During a whole-project render, the component of the step it's on
+    /// (a standard component or `RenderComponent.allAnnotations`); nil
+    /// otherwise. Changes once a step, unlike `stepProgress`.
+    private(set) var activeStepComponentID: String?
+    /// How far along the step in `activeStepComponentID` is. As with
+    /// `renderProgress`, read it only from the progress indicators.
+    private(set) var stepProgress = RenderProgress.preparing
     var renderError: RenderFailure?
 
     /// Bumped when a render finishes, on Reload, and when files change in a
@@ -161,6 +168,8 @@ final class StudioModel {
         activeRender = ActiveRender(
             journeyID: journey.id, componentID: component.id, componentName: component.name)
         renderProgress = .preparing
+        activeStepComponentID = nil
+        stepProgress = .preparing
 
         var renderer = JourneyRenderer(journeyID: journey.id, databasePath: databasePath)
         let driveSegmentSeconds: Double? = settings.quickPreview ? 30 : nil
@@ -178,6 +187,19 @@ final class StudioModel {
                 guard throttle.shouldReport(update) else { return }
                 Task { @MainActor in
                     self.renderProgress = update
+                }
+            }
+            // A step's `.preparing` resets the throttle, so each step's
+            // dial starts afresh.
+            let stepThrottle = ProgressThrottle()
+            let stepProgress: ProjectStepProgressHandler = { step, update in
+                guard stepThrottle.shouldReport(update) else { return }
+                Task { @MainActor in
+                    let componentID = RenderComponent.component(for: step).id
+                    if self.activeStepComponentID != componentID {
+                        self.activeStepComponentID = componentID
+                    }
+                    self.stepProgress = update
                 }
             }
             do {
@@ -203,7 +225,8 @@ final class StudioModel {
                         progress: progress)
                 case .project:
                     _ = try await renderer.renderProject(
-                        driveSegmentSeconds: driveSegmentSeconds, progress: progress)
+                        driveSegmentSeconds: driveSegmentSeconds, progress: progress,
+                        stepProgress: stepProgress)
                 }
             } catch is CancellationError {
                 // Cancelled from the progress bar; nothing to report.
@@ -213,6 +236,7 @@ final class StudioModel {
                     message: String(describing: error))
             }
             activeRender = nil
+            activeStepComponentID = nil
             renderTask = nil
             outputsVersion += 1
             // The render may have created the journey's output directory.

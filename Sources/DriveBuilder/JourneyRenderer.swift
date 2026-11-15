@@ -11,6 +11,22 @@ package enum RenderProgress: Sendable {
 
 package typealias RenderProgressHandler = @Sendable (RenderProgress) -> Void
 
+/// The stages of `JourneyRenderer.renderProject`, in order.
+package enum ProjectStep: Sendable, CaseIterable {
+    case intro
+    case routeMap
+    case dials
+    /// Every annotation banner, as one stage.
+    case annotations
+    case outro
+    case final
+}
+
+/// Progress of the stage a whole-project render is on: the stage, and
+/// its own 0...1 progress (not its slice of the whole, which goes to the
+/// render's `RenderProgressHandler`).
+package typealias ProjectStepProgressHandler = @Sendable (ProjectStep, RenderProgress) -> Void
+
 /// One journey's row for the Studio sidebar: the journeys table columns
 /// plus cheap aggregates over its telemetry.
 package struct JourneySummary: Identifiable, Sendable {
@@ -634,23 +650,44 @@ package struct JourneyRenderer: Sendable {
     /// equal slice of the progress fraction. Returns the final video's URL.
     @concurrent
     package func renderProject(
-        driveSegmentSeconds: Double? = nil, progress: RenderProgressHandler? = nil
+        driveSegmentSeconds: Double? = nil, progress: RenderProgressHandler? = nil,
+        stepProgress: ProjectStepProgressHandler? = nil
     ) async throws -> URL {
         progress?(.preparing)
-        let steps: [(RenderProgressHandler?) async throws -> Void] = [
-            { _ = try await self.renderIntro(progress: $0) },
-            { _ = try await self.renderRouteMap(progress: $0) },
-            { _ = try await self.renderDials(progress: $0) },
-            { _ = try await self.renderAnnotations(progress: $0) },
-            { _ = try await self.renderOutro(progress: $0) },
+        let steps: [(ProjectStep, (RenderProgressHandler?) async throws -> Void)] = [
+            (.intro, { _ = try await self.renderIntro(progress: $0) }),
+            (.routeMap, { _ = try await self.renderRouteMap(progress: $0) }),
+            (.dials, { _ = try await self.renderDials(progress: $0) }),
+            (.annotations, { _ = try await self.renderAnnotations(progress: $0) }),
+            (.outro, { _ = try await self.renderOutro(progress: $0) }),
         ]
         let count = steps.count + 1
-        for (phase, step) in steps.enumerated() {
-            try await step(Self.slice(progress, phase: phase, of: count))
+        for (phase, (step, run)) in steps.enumerated() {
+            try await run(
+                Self.stepHandler(
+                    step, phase: phase, of: count, progress: progress, stepProgress: stepProgress))
         }
         return try await renderFinal(
             driveSegmentSeconds: driveSegmentSeconds,
-            progress: Self.slice(progress, phase: steps.count, of: count))
+            progress: Self.stepHandler(
+                .final, phase: steps.count, of: count, progress: progress,
+                stepProgress: stepProgress))
+    }
+
+    /// One step's progress handler: feeds the step's own progress to
+    /// `stepProgress`, and its slice of the whole to `progress`.
+    private static func stepHandler(
+        _ step: ProjectStep, phase: Int, of count: Int,
+        progress: RenderProgressHandler?, stepProgress: ProjectStepProgressHandler?
+    ) -> RenderProgressHandler? {
+        let slice = slice(progress, phase: phase, of: count)
+        guard let stepProgress else { return slice }
+        // Announce the step even before its renderer reports anything.
+        stepProgress(step, .preparing)
+        return { update in
+            slice?(update)
+            stepProgress(step, update)
+        }
     }
 
     /// Maps one phase's progress into its 1/count slice of the whole; a
