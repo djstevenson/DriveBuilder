@@ -232,7 +232,9 @@ private struct StateIndicator: View {
             case .notRendered:
                 hollowDot(.orange)
             case .unused:
-                hollowDot(.quaternary)
+                // The same grey as the detail text beside it: quaternary all
+                // but vanished against either appearance's background.
+                hollowDot(.secondary)
             }
         }
         .frame(width: 16, height: 16)
@@ -243,6 +245,6 @@ private struct StateIndicator: View {
     }
 
     private func hollowDot(_ style: some ShapeStyle) -> some View {
-        Circle().strokeBorder(style, lineWidth: 1.5).frame(width: 10, height: 10)
+        Circle().strokeBorder(style, lineWidth: 2).frame(width: 10, height: 10)
     }
 }
