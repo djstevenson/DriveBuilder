@@ -22,6 +22,8 @@ struct JourneyListView: View {
 
     @State private var selection: Int64?
     @State private var statuses: [Int64: JourneyStatus] = [:]
+    /// The journeys whose detail grids are open.
+    @State private var expandedJourneyIDs: Set<Int64> = []
     @State private var showingNewJourney = false
     @State private var newJourneySource = ""
     @State private var isDropTargeted = false
@@ -31,6 +33,15 @@ struct JourneyListView: View {
         List(model.journeys, selection: $selection) { journey in
             JourneyRow(
                 journey: journey, status: statuses[journey.id],
+                isExpanded: Binding(
+                    get: { expandedJourneyIDs.contains(journey.id) },
+                    set: { expanded in
+                        if expanded {
+                            expandedJourneyIDs.insert(journey.id)
+                        } else {
+                            expandedJourneyIDs.remove(journey.id)
+                        }
+                    }),
                 onOpen: { openWindow(value: journey.id) },
                 onExtractTelemetry: { Task { await extractTelemetry(journey) } })
         }
@@ -52,6 +63,16 @@ struct JourneyListView: View {
         }
         .navigationTitle("Journeys")
         .toolbar {
+            ToolbarItem {
+                let allExpanded = expandedJourneyIDs.isSuperset(of: model.journeys.map(\.id))
+                Button(
+                    allExpanded ? "Collapse All" : "Expand All",
+                    systemImage: allExpanded ? "rectangle.compress.vertical" : "rectangle.expand.vertical"
+                ) {
+                    expandedJourneyIDs = allExpanded ? [] : Set(model.journeys.map(\.id))
+                }
+                .help(allExpanded ? "Hide every journey's details." : "Show every journey's details.")
+            }
             ToolbarItem {
                 Button("New journey", systemImage: "plus") {
                     newJourneySource = ""
@@ -157,22 +178,61 @@ struct JourneyListView: View {
     }
 }
 
-/// One journey in the list: its title, road, and vital statistics, its
-/// status icons, and the journey-wide actions.
+/// One journey in the list: a header with its title, road, and vital
+/// statistics, coloured by how ready it is, with the journey-wide actions;
+/// and, when expanded, the grid of everything that goes into it.
 struct JourneyRow: View {
     @Environment(StudioModel.self) private var model
     let journey: JourneySummary
     /// Nil until the statuses load, or if the journey's rows can't be read.
     let status: JourneyStatus?
+    @Binding var isExpanded: Bool
     let onOpen: () -> Void
     let onExtractTelemetry: () -> Void
+
+    /// Width of the coloured bar down the header's leading edge.
+    private let barWidth: CGFloat = 5
 
     var body: some View {
         let activeRender = model.activeRender.flatMap {
             $0.journeyID == journey.id ? $0 : nil
         }
 
-        HStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
+            header(activeRender: activeRender)
+            if isExpanded, let status {
+                JourneyStatusGrid(journey: journey, status: status, activeRender: activeRender)
+                    .padding(.leading, barWidth + 12 + 20 + 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.vertical, 6)
+        .accessibilityIdentifier("journey-row-\(journey.id)")
+    }
+
+    private func header(activeRender: ActiveRender?) -> some View {
+        HStack(spacing: 12) {
+            // The readiness colour, as a bar the selection highlight can't
+            // swallow. Grey until the status has loaded.
+            RoundedRectangle(cornerRadius: barWidth / 2)
+                .fill(status?.readiness.color ?? Color.secondary.opacity(0.3))
+                .frame(width: barWidth)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.appCaption.bold())
+                    .rotationEffect(isExpanded ? .degrees(90) : .zero)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(isExpanded ? "Hide the journey's details." : "Show the journey's details.")
+            .accessibilityLabel(isExpanded ? "Collapse" : "Expand")
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(journey.roadName)
@@ -187,16 +247,21 @@ struct JourneyRow: View {
                 Text(summaryLine)
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
-                if let status {
-                    JourneyStatusStrip(journey: journey, status: status, activeRender: activeRender)
-                }
             }
             Spacer()
+            if let readiness = status?.readiness {
+                Text(readiness.title)
+                    .font(.appCaption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(readiness.color, in: Capsule())
+                    .accessibilityLabel("Status: \(readiness.title)")
+            }
             actions(activeRender: activeRender)
                 .modifier(SelectedRowButtons())
         }
-        .padding(.vertical, 6)
-        .accessibilityIdentifier("journey-row-\(journey.id)")
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
