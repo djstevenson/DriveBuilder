@@ -30,9 +30,12 @@ struct YouTubeVideoForm: View {
     @State private var newPlaylistTitle = ""
     @State private var isBusy = false
     @State private var error: String?
-    /// The rendered movie's chapters, for the description; nil until read,
-    /// or if the movie can't be.
+    /// The rendered movie's chapters; nil until read, or if the movie
+    /// can't be.
     @State private var chapters: YouTubeChapterList?
+    /// The chapter lines YouTube will get after the description. They
+    /// aren't shown in it or saved with it, but count towards its limit.
+    @State private var chapterText = ""
 
     private static let titleLimit = 100
     private static let descriptionLimit = 5000
@@ -43,7 +46,10 @@ struct YouTubeVideoForm: View {
         let fallbackTitle =
             edit.variant == .final ? edit.journey.title : "\(edit.journey.title) (sped up)"
         _title = State(initialValue: edit.video?.title ?? fallbackTitle)
-        _description = State(initialValue: edit.video?.description ?? "")
+        // A row saved before chapters were added at upload time may still
+        // end with a chapter list.
+        _description = State(
+            initialValue: YouTubeChapterList.splitting(edit.video?.description ?? "").body)
         _privacy = State(initialValue: edit.video?.privacy ?? .private)
     }
 
@@ -61,19 +67,7 @@ struct YouTubeVideoForm: View {
                         .frame(minHeight: 120)
                         .accessibilityIdentifier("youtube-description")
                 }
-                HStack(alignment: .firstTextBaseline) {
-                    Button("Insert Chapters", systemImage: "bookmark") {
-                        if let chapters {
-                            description = YouTubeChapterList.inserting(chapters.text, into: description)
-                        }
-                    }
-                    .disabled(chapters?.entries.isEmpty ?? true)
-                    .help(
-                        "Add the movie's chapter list to the description, where YouTube reads "
-                            + "its chapters from (it ignores the chapter track in the file).")
-                    Spacer()
-                    counter(description.count, limit: Self.descriptionLimit)
-                }
+                counter(sentDescriptionCount, limit: Self.descriptionLimit)
                 chapterNotes
                 Picker("Visibility", selection: $privacy) {
                     ForEach(YouTubeVideo.Privacy.allCases) { privacy in
@@ -112,29 +106,44 @@ struct YouTubeVideoForm: View {
             }
             let movieURL = YouTubeModel.movieURL(journey: edit.journey, variant: edit.variant)
             chapters = try? await YouTubeChapterList.read(movieURL: movieURL)
-            // A fresh description starts as the chapter list, so YouTube
-            // gets chapters without a second thought.
-            if let chapters, !chapters.entries.isEmpty,
-                description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                description = chapters.text
-            }
+            chapterText =
+                (try? await youtube.chapterText(
+                    journey: edit.journey, variant: edit.variant, row: edit.video,
+                    isUpload: edit.isUpload)) ?? ""
         }
     }
 
-    /// Why YouTube would ignore the chapter list, or that the movie has
-    /// none to offer.
+    /// The length of the description as YouTube gets it, chapter list
+    /// included.
+    private var sentDescriptionCount: Int {
+        YouTubeChapterList.appending(chapterText, to: description).count
+    }
+
+    /// That the chapter list goes after the description, and why YouTube
+    /// would ignore it; or that the movie has none to offer.
     @ViewBuilder
     private var chapterNotes: some View {
         if let chapters {
-            if chapters.entries.isEmpty {
-                Text("The movie has no chapter track.")
+            if chapterText.isEmpty {
+                Text(
+                    chapters.entries.isEmpty
+                        ? "The movie has no chapter track." : "No chapter list will be added.")
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
-            } else if !chapters.problems.isEmpty {
-                Text("YouTube would show no chapters: " + chapters.problems.joined(separator: " "))
+            } else {
+                Text(
+                    chapterText == chapters.text
+                        ? "The movie's chapter list is added after the description "
+                            + (edit.isUpload ? "on upload." : "on saving.")
+                        : "The movie has changed since its upload, so the chapter list already "
+                            + "on YouTube is kept after the description.")
                     .font(.appCaption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
+                if chapterText == chapters.text, !chapters.problems.isEmpty {
+                    Text("YouTube would show no chapters: " + chapters.problems.joined(separator: " "))
+                        .font(.appCaption)
+                        .foregroundStyle(.orange)
+                }
             }
         }
     }
@@ -194,7 +203,7 @@ struct YouTubeVideoForm: View {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= Self.titleLimit else { return false }
         guard !trimmed.contains("<"), !trimmed.contains(">") else { return false }
-        return description.count <= Self.descriptionLimit
+        return sentDescriptionCount <= Self.descriptionLimit
     }
 
     private var details: YouTubeVideoDetails {

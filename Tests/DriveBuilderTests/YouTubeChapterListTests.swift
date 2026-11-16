@@ -44,15 +44,32 @@ private let list = YouTubeChapterList(
     #expect(late.problems == ["The first chapter must start at 0:00."])
 }
 
-@Test func insertsOrReplacesTheChapterBlockInADescription() {
-    #expect(YouTubeChapterList.inserting(list.text, into: "") == list.text)
-    #expect(YouTubeChapterList.inserting(list.text, into: "  \n") == list.text)
+@Test func appendsTheChapterBlockToADescription() {
+    #expect(YouTubeChapterList.appending(list.text, to: "") == list.text)
+    #expect(YouTubeChapterList.appending(list.text, to: "  \n") == list.text)
     #expect(
-        YouTubeChapterList.inserting(list.text, into: "A drive up the A338.")
+        YouTubeChapterList.appending(list.text, to: "A drive up the A338.\n")
             == "A drive up the A338.\n\n\(list.text)")
+    // No chapters: the description goes as written.
+    #expect(YouTubeChapterList.appending("", to: "A drive up the A338.\n") == "A drive up the A338.\n")
+}
 
-    let existing = "A drive up the A338.\n\n0:00 Intro\n5:00 Old chapter\n\nFilmed in July."
-    #expect(
-        YouTubeChapterList.inserting(list.text, into: existing)
-            == "A drive up the A338.\n\n\(list.text)\n\nFilmed in July.")
+@Test func splitsADescriptionFromItsTrailingChapterBlock() {
+    let sent = YouTubeChapterList.appending(list.text, to: "A drive up the A338.")
+    let split = YouTubeChapterList.splitting(sent)
+    #expect(split.body == "A drive up the A338.")
+    #expect(split.chapters == list.text)
+
+    // Only chapters, with a trailing newline.
+    let alone = YouTubeChapterList.splitting(list.text + "\n")
+    #expect(alone.body == "")
+    #expect(alone.chapters == list.text)
+
+    // Hour-long timestamps count too.
+    #expect(YouTubeChapterList.splitting("Long one.\n\n0:00 Start\n1:02:05 End").body == "Long one.")
+
+    // No trailing block: nothing is touched, timestamps mid-text included.
+    let plain = "Left at 7:30 sharp.\n0:00 Intro\n\nFilmed in July.\n"
+    #expect(YouTubeChapterList.splitting(plain).body == plain)
+    #expect(YouTubeChapterList.splitting(plain).chapters == "")
 }

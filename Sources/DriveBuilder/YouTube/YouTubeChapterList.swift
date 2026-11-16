@@ -79,24 +79,35 @@ package struct YouTubeChapterList: Sendable, Equatable {
             : String(format: "%d:%02d", minutes, secs)
     }
 
-    /// `description` with its chapter lines (a run of lines starting with a
-    /// timestamp) replaced by `text`; or `text` added after a blank line
-    /// if there were none, or alone if the description was empty.
-    package static func inserting(_ text: String, into description: String) -> String {
-        let lines = description.components(separatedBy: "\n")
-        let isChapterLine: (String) -> Bool = { line in
-            line.range(of: #"^\d+:\d\d(:\d\d)?\s"#, options: .regularExpression) != nil
+    /// `description` as YouTube should get it: with the chapter lines
+    /// `chapters` after a blank line, or alone if the description was
+    /// empty. The description unchanged if there are no chapters.
+    package static func appending(_ chapters: String, to description: String) -> String {
+        guard !chapters.isEmpty else { return description }
+        let body = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        return body.isEmpty ? chapters : "\(body)\n\n\(chapters)"
+    }
+
+    /// Undoes `appending`: a description from YouTube split into the
+    /// author's own words and the chapter block that ends it (the last run
+    /// of lines starting with a timestamp); empty chapters, and the
+    /// description untouched, if it doesn't end with one.
+    package static func splitting(_ description: String) -> (body: String, chapters: String) {
+        var lines = description.components(separatedBy: .newlines)
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeLast()
         }
-        if let start = lines.firstIndex(where: isChapterLine) {
-            var end = start
-            while end + 1 < lines.count, isChapterLine(lines[end + 1]) {
-                end += 1
-            }
-            var replaced = lines
-            replaced.replaceSubrange(start...end, with: [text])
-            return replaced.joined(separator: "\n")
+        var chapters: [String] = []
+        while let last = lines.last,
+            last.range(of: #"^\d+:\d\d(:\d\d)?\s"#, options: .regularExpression) != nil
+        {
+            chapters.insert(last, at: 0)
+            lines.removeLast()
         }
-        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? text : "\(trimmed)\n\n\(text)"
+        guard !chapters.isEmpty else { return (description, "") }
+        return (
+            lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines),
+            chapters.joined(separator: "\n")
+        )
     }
 }
