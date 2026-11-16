@@ -38,9 +38,8 @@ struct ComponentRow: View {
                 }
             }
             Spacer()
-            if isRenderingThis {
-                ProgressView()
-                    .controlSize(.small)
+            if let source = model.progressSource(journeyID: journey.id, componentID: component.id) {
+                RenderProgressIndicator(style: .ringWithPercentage, source: source)
                     .padding(.trailing, 4)
             }
             Button("Render") {
@@ -58,10 +57,5 @@ struct ComponentRow: View {
             .disabled(!status.exists)
         }
         .padding(.vertical, 4)
-    }
-
-    private var isRenderingThis: Bool {
-        guard let active = model.activeRender else { return false }
-        return active.journeyID == journey.id && active.componentID == component.id
     }
 }

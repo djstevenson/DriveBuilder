@@ -114,7 +114,12 @@ final class YouTubeModel {
         do {
             let fileURL = Self.movieURL(journey: journey, variant: row.variant)
             let modified = Self.modificationDate(of: fileURL)
-            let videoID = try await send(fileURL: fileURL, modified: modified, row: row, metadata: details.metadata)
+            // YouTube gets the chapter list after the description; the
+            // database keeps the description alone.
+            var metadata = details.metadata
+            metadata.description = YouTubeChapterList.appending(
+                await Self.movieChapterText(fileURL), to: metadata.description)
+            let videoID = try await send(fileURL: fileURL, modified: modified, row: row, metadata: metadata)
             try await library.markYouTubeVideoUploaded(
                 id: row.id, videoID: videoID, uploadedAt: Date(), fileModified: modified)
             // A new video has no memberships yet, whatever the old one had.
@@ -194,7 +199,11 @@ final class YouTubeModel {
                 description: details.metadata.description, privacy: details.metadata.privacy)
             return
         }
-        try await client.updateVideo(id: videoID, metadata: details.metadata)
+        var metadata = details.metadata
+        metadata.description = YouTubeChapterList.appending(
+            try await chapterText(journey: journey, variant: variant, row: row, isUpload: false),
+            to: metadata.description)
+        try await client.updateVideo(id: videoID, metadata: metadata)
         try await library.updateYouTubeVideo(
             id: row.id, title: details.metadata.title, description: details.metadata.description,
             privacy: details.metadata.privacy, syncedAt: Date())
@@ -213,14 +222,16 @@ final class YouTubeModel {
     }
 
     /// Re-reads the video from YouTube (title, description, visibility,
-    /// processing state, playlists) into the cache. Returns nil if YouTube
-    /// no longer has it.
+    /// processing state, playlists) into the cache, the description
+    /// without the chapter list that ends it. Returns nil if YouTube no
+    /// longer has it.
     func refreshButtonTapped(row: YouTubeVideo) async throws -> YouTubeClient.RemoteVideo? {
         guard let videoID = row.videoID else { return nil }
         defer { videosVersion += 1 }
         guard let remote = try await client.video(id: videoID) else { return nil }
         try await library.updateYouTubeVideo(
-            id: row.id, title: remote.metadata.title, description: remote.metadata.description,
+            id: row.id, title: remote.metadata.title,
+            description: YouTubeChapterList.splitting(remote.metadata.description).body,
             privacy: remote.metadata.privacy, syncedAt: Date())
         let memberships = try await client.memberships(videoID: videoID, in: playlists)
         try await library.replaceYouTubePlaylistItems(
@@ -229,6 +240,32 @@ final class YouTubeModel {
                 YouTubePlaylistItem(id: $0.id, videoRowID: row.id, playlistID: $0.playlistID)
             })
         return remote
+    }
+
+    // MARK: - Chapters
+
+    /// The chapter lines YouTube gets after the description, which the
+    /// database doesn't keep: the rendered movie's, or, editing an uploaded
+    /// video whose movie has been re-rendered (or deleted) since, the ones
+    /// YouTube already has, which still match the video it's showing.
+    func chapterText(
+        journey: JourneySummary, variant: YouTubeVideo.Variant, row: YouTubeVideo?, isUpload: Bool
+    ) async throws -> String {
+        let fileURL = Self.movieURL(journey: journey, variant: variant)
+        if !isUpload, let row, let videoID = row.videoID {
+            let modified = Self.modificationDate(of: fileURL)
+            if modified == nil || modified != row.uploadedFileModified {
+                guard let remote = try await client.video(id: videoID) else { return "" }
+                return YouTubeChapterList.splitting(remote.metadata.description).chapters
+            }
+        }
+        return await Self.movieChapterText(fileURL)
+    }
+
+    /// The movie's chapter lines; empty if it has no chapter track or
+    /// can't be read.
+    private static func movieChapterText(_ fileURL: URL) async -> String {
+        (try? await YouTubeChapterList.read(movieURL: fileURL))?.text ?? ""
     }
 
     /// Drops the record of a video YouTube no longer has.

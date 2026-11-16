@@ -2,9 +2,16 @@ import DriveBuilder
 import SwiftUI
 
 /// The render in flight's progress: the only view that reads
-/// `StudioModel.renderProgress`, so its many updates redraw just this,
-/// not the rows and sections around it.
+/// `StudioModel.renderProgress` (or `stepProgress`), so its many updates
+/// redraw just this, not the rows and sections around it.
 struct RenderProgressIndicator: View {
+    enum Source {
+        /// The whole render.
+        case overall
+        /// The step a whole-project render is on.
+        case step
+    }
+
     enum Style {
         /// A small ring, as in the journeys list's status icons.
         case ring
@@ -16,9 +23,15 @@ struct RenderProgressIndicator: View {
 
     @Environment(StudioModel.self) private var model
     let style: Style
+    var source: Source = .overall
 
     var body: some View {
-        switch (model.renderProgress, style) {
+        let progress =
+            switch source {
+            case .overall: model.renderProgress
+            case .step: model.stepProgress
+            }
+        switch (progress, style) {
         case (.preparing, .bar):
             HStack(spacing: 12) {
                 ProgressView()

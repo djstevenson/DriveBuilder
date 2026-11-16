@@ -464,8 +464,7 @@ struct JourneyDetailView: View {
             .help("Delete the journey from the database.")
             .disabled(model.isRendering)
             if isRendering(.project) {
-                ProgressView()
-                    .controlSize(.small)
+                RenderProgressIndicator(style: .ringWithPercentage)
                     .padding(.trailing, 4)
             }
             Button("Render All") {
